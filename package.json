@@ -1,0 +1,29 @@
+{
+  "name": "surface",
+  "version": "0.1.0",
+  "description": "The last app. A universal canvas for AI agents.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server/index.ts",
+    "mcp": "tsx server/mcp.ts",
+    "test:e2e": "tsx test/e2e.ts"
+  },
+  "bin": {
+    "surface-mcp": "./server/mcp.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^11.8.2",
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.15.3",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

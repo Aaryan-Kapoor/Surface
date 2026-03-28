@@ -1,0 +1,17 @@
+node_modules/
+dist/
+surfaces.db
+surfaces.db-shm
+surfaces.db-wal
+.env
+.env.*
+.env*
+*.save
+*.swp
+screenshots/
+.playwright-mcp/
+.gemini/
+hackathon_packet/
+Hackathon packet.zip
+video/
+structures_symmetry_symbols.*

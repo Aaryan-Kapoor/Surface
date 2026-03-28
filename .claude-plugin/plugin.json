@@ -1,0 +1,5 @@
+{
+  "name": "surface",
+  "version": "0.1.0",
+  "description": "Surface — the universal canvas for AI agents. Push HTML/CSS/JS to a PWA, receive user interactions back as channel messages."
+}
