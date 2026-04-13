@@ -43,6 +43,7 @@ import {
   getRevision,
 } from "./db.js";
 import { applyEdits, EditError, type Edit } from "./edits.js";
+import { validateSpec, renderSpecShell, SpecError, type WidgetSpec } from "./widgets.js";
 import {
   addGlobalClient,
   addSurfaceClient,
@@ -122,24 +123,30 @@ router.post("/surfaces", (req, res) => {
     res.status(400).json({ error: "title is required" });
     return;
   }
+
+  let resolvedHtml = html || "";
+  let resolvedSpec: WidgetSpec | null = null;
   if (kind === "widgets") {
-    if (!spec || typeof spec !== "object") {
-      res.status(400).json({ error: "spec is required for kind=widgets" });
+    try {
+      resolvedSpec = validateSpec(spec);
+    } catch (err) {
+      const code = err instanceof SpecError ? "spec_error" : "validation";
+      res.status(422).json({ error: (err as Error).message, code });
       return;
     }
-  } else {
-    if (!html) {
-      res.status(400).json({ error: "html is required" });
-      return;
-    }
+    // Render a shell once so /surfaces/:id/html Just Works for widgets too.
+    resolvedHtml = renderSpecShell(resolvedSpec, { title });
+  } else if (!html) {
+    res.status(400).json({ error: "html is required" });
+    return;
   }
   const surface = createSurface({
     id,
     title,
-    html: html || "",
+    html: resolvedHtml,
     metadata,
     kind: kind === "widgets" ? "widgets" : "html",
-    spec: kind === "widgets" ? spec : null,
+    spec: resolvedSpec as unknown as Record<string, unknown> | null,
   });
   broadcastGlobal("surface_created", {
     id: surface.id,
@@ -155,10 +162,48 @@ router.post("/surfaces", (req, res) => {
 
 // Update surface
 router.put("/surfaces/:id", (req, res) => {
+  const existing = getSurface(req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: "Surface not found" });
+    return;
+  }
   const { title, html, metadata, kind, spec } = req.body;
+  const targetKind = kind || existing.kind;
+
+  let resolvedSpec: WidgetSpec | null | undefined = undefined;
+  let resolvedHtml = html;
+  if (targetKind === "widgets") {
+    const incoming = spec !== undefined
+      ? spec
+      : existing.spec
+      ? JSON.parse(existing.spec)
+      : null;
+    if (!incoming) {
+      res.status(400).json({ error: "spec is required for kind=widgets" });
+      return;
+    }
+    try {
+      resolvedSpec = validateSpec(incoming);
+    } catch (err) {
+      const code = err instanceof SpecError ? "spec_error" : "validation";
+      res.status(422).json({ error: (err as Error).message, code });
+      return;
+    }
+    // Re-render the shell so iframe reloads (and previews) stay consistent.
+    resolvedHtml = renderSpecShell(resolvedSpec, {
+      title: title || existing.title,
+    });
+  }
+
   const surface = updateSurface(
     req.params.id,
-    { title, html, metadata, kind, spec },
+    {
+      title,
+      html: resolvedHtml,
+      metadata,
+      kind: targetKind,
+      spec: resolvedSpec as unknown as Record<string, unknown> | null | undefined,
+    },
     { edit_kind: "update" }
   );
   if (!surface) {
@@ -179,7 +224,7 @@ router.put("/surfaces/:id", (req, res) => {
     html: surface.html,
     metadata: surface.metadata,
     kind: surface.kind,
-    spec: surface.spec,
+    spec: surface.spec ? JSON.parse(surface.spec) : null,
     revision: surface.revision,
     updated_at: surface.updated_at,
   });

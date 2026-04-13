@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "tsx server/index.ts",
     "mcp": "tsx server/mcp.ts",
-    "test": "tsx test/edits.test.ts && tsx test/morph.test.ts",
+    "test": "tsx test/edits.test.ts && tsx test/morph.test.ts && tsx test/widgets.test.ts",
     "test:edits": "tsx test/edits.test.ts",
     "test:morph": "tsx test/morph.test.ts",
+    "test:widgets": "tsx test/widgets.test.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {

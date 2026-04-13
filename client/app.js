@@ -545,7 +545,13 @@ async function renderSurface(id) {
   surfaceSSE = new EventSource("/surfaces/" + id + "/stream");
   surfaceSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
-    if (data.html !== undefined) handleNewHtml(data.html);
+    // For widgets surfaces, prefer the spec channel — the runtime applies
+    // it in place without tearing down the DOM or losing live state.
+    if (data.kind === "widgets" && data.spec && bootloaderReady) {
+      postToSurface({ type: "surface/spec", spec: data.spec });
+    } else if (data.html !== undefined) {
+      handleNewHtml(data.html);
+    }
     if (data.title) {
       const titleEl = view.querySelector(".surface-nav-title");
       if (titleEl) titleEl.textContent = data.title;
