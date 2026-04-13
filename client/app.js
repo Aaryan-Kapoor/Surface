@@ -451,11 +451,11 @@ function createCard(s, index) {
   // Preview thumbnail
   const preview = document.createElement("div");
   preview.className = "card-preview";
-  const hasExternalScripts = s.html && (s.html.includes('<script src') || s.html.includes('import('));
-  if (s.html && s.html.length < 8000 && !hasExternalScripts) {
+  if (s.kind === "widgets") {
+    // Widgets shells reference /lib/* scripts — srcdoc's null origin would
+    // block them. Load via same-origin src so the runtime initialises.
     const iframe = document.createElement("iframe");
-    iframe.sandbox = "allow-scripts";
-    iframe.srcdoc = s.html;
+    iframe.src = "/surfaces/" + s.id + "/html";
     iframe.tabIndex = -1;
     iframe.loading = "lazy";
     preview.appendChild(iframe);
@@ -463,10 +463,23 @@ function createCard(s, index) {
     overlay.className = "card-preview-overlay";
     preview.appendChild(overlay);
   } else {
-    const iconEl = document.createElement("div");
-    iconEl.className = "card-preview-icon";
-    iconEl.textContent = meta.icon || "\u25C9";
-    preview.appendChild(iconEl);
+    const hasExternalScripts = s.html && (s.html.includes('<script src') || s.html.includes('import('));
+    if (s.html && s.html.length < 8000 && !hasExternalScripts) {
+      const iframe = document.createElement("iframe");
+      iframe.sandbox = "allow-scripts";
+      iframe.srcdoc = s.html;
+      iframe.tabIndex = -1;
+      iframe.loading = "lazy";
+      preview.appendChild(iframe);
+      const overlay = document.createElement("div");
+      overlay.className = "card-preview-overlay";
+      preview.appendChild(overlay);
+    } else {
+      const iconEl = document.createElement("div");
+      iconEl.className = "card-preview-icon";
+      iconEl.textContent = meta.icon || "\u25C9";
+      preview.appendChild(iconEl);
+    }
   }
   card.appendChild(preview);
 
@@ -749,7 +762,10 @@ async function loadMarketplace(filter, grid) {
     preview.className = "card-preview";
     if (item.type === "surface") {
       const iframe = document.createElement("iframe");
-      iframe.sandbox = "allow-scripts";
+      // Widgets previews reference /lib/* scripts; same-origin src means
+      // no sandbox null-origin to worry about. HTML-kind items get the
+      // same path for consistency (preview route is same-origin anyway).
+      if (item.kind !== "widgets") iframe.sandbox = "allow-scripts";
       iframe.src = "/marketplace/" + item.id + "/preview";
       iframe.tabIndex = -1;
       iframe.loading = "lazy";
