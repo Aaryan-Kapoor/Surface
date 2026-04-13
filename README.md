@@ -10,6 +10,45 @@ Instead of installing a weather app, a reading app, a game app — you have one 
 
 Each surface is a live HTML/CSS/JS mini-app an agent created. The PWA homescreen is your app drawer. Agents have full control — theming, navigation, overlays, live JS execution, custom renderers that replace the entire homescreen.
 
+## Two kinds of surfaces
+
+**Widgets (declarative).** An agent pushes a JSON spec that composes trusted components (`Stack`, `Card`, `Text`, `Button`, `Input`, `Checkbox`, `Image`, `ProgressBar`, `ProgressRing`, `List`, `Spacer`, `Box`). State lives client-side and mutates through a small set of declarative ops (`set`, `inc`, `dec`, `toggle`, `push`, `remove`, `post`). Bindings like `"$.count"` resolve against state at render time. Timers are declared in the spec, not scripted.
+
+```bash
+curl -X POST localhost:3000/surfaces -H 'Content-Type: application/json' -d '{
+  "title": "Counter", "kind": "widgets",
+  "spec": {
+    "root": {"type":"Stack","direction":"vertical","align":"center","gap":20,"children":[
+      {"type":"Text","value":"$.count","size":"3xl"},
+      {"type":"Button","label":"+1","variant":"accent",
+       "onClick":[{"op":"inc","path":"count"}]}
+    ]},
+    "state": {"count": 0}
+  }
+}'
+```
+
+Widgets are cheaper to author/update and state survives agent-pushed updates automatically — a mid-countdown Pomodoro keeps ticking while the agent pushes a new spec.
+
+**HTML (raw).** For anything the widget catalog can't express — games, canvas, WebGL, exotic typography. Set `kind='html'` (or omit it) and pass `html`.
+
+## Editing HTML surfaces without losing state
+
+Use `surface_edit` (MCP) / `PATCH /surfaces/:id` (HTTP) instead of `surface_update` whenever you're making targeted changes:
+
+```bash
+curl -X PATCH localhost:3000/surfaces/my-timer -H 'Content-Type: application/json' -d '{
+  "edits": [
+    {"old_string": "FOCUS",  "new_string": "BREAK"},
+    {"old_string": "#ff6b6b", "new_string": "#51cf66", "replace_all": true}
+  ]
+}'
+```
+
+Each edit's `old_string` must match exactly once (or set `replace_all=true`). The server validates, applies, bumps the revision, and broadcasts the edits to the connected client, which morphs the DOM in place. Running timers, scroll position, focus, uncontrolled input values, and canvas contexts are all preserved.
+
+`surface_revisions` shows the history; `surface_restore` rolls back.
+
 ## Quick Start
 
 ```bash
@@ -45,13 +84,16 @@ Add to your MCP config:
 }
 ```
 
-The agent gets 14 tools:
+The agent gets 18 tools:
 
 | Tool | What it does |
 |------|-------------|
-| `surface_create` | Push a new HTML mini-app |
+| `surface_create` | Push a new surface. `kind='widgets'` (declarative JSON) or `kind='html'` (raw HTML/CSS/JS). |
 | `surface_read` | Read current surface content |
-| `surface_update` | Update HTML, hot-reloads in browser |
+| `surface_update` | Replace a surface's content (html or spec). Prefer `surface_edit` for small changes. |
+| `surface_edit` | Find/replace diff edits on `kind='html'` surfaces. Cheap in tokens, preserves running state via DOM morphing. |
+| `surface_revisions` | List the revision history for a surface |
+| `surface_restore` | Roll back to a past revision |
 | `surface_delete` | Remove a surface |
 | `surface_list` | List all surfaces |
 | `surface_exec` | Run JS in a live surface without replacing HTML |
@@ -63,28 +105,33 @@ The agent gets 14 tools:
 | `display_navigate` | Force what's on screen |
 | `display_status` | See what the user is viewing |
 | `display_notify` | Push ephemeral notifications |
+| `display_widget_catalog` | Return the full widgets component reference (components, props, ops, example spec) |
 
 ### Direct HTTP
 
 All the same capabilities via REST:
 
 ```
-POST   /surfaces              Create surface
-GET    /surfaces              List surfaces
-GET    /surfaces/:id          Get surface
-PUT    /surfaces/:id          Update surface
-DELETE /surfaces/:id          Delete surface
-GET    /surfaces/:id/html     Serve surface HTML (iframe src)
-POST   /surfaces/:id/exec     Execute JS in surface iframe
-POST   /surfaces/:id/actions  Post an action from a surface
-POST   /surfaces/:id/reply    Send toast to surface
-GET    /stream                Global SSE (created/updated/deleted events)
-GET    /surfaces/:id/stream   Per-surface SSE (updates + agent replies)
-PUT    /display/config        Set theme/renderer/overlay
-POST   /display/reset         Reset to default
-POST   /display/navigate      Force navigation
-POST   /display/notify        Push notification
-GET    /display/status        Get display state
+POST   /surfaces                             Create surface (kind=html or widgets)
+GET    /surfaces                             List surfaces
+GET    /surfaces/:id                         Get surface
+PUT    /surfaces/:id                         Replace surface (html or spec)
+PATCH  /surfaces/:id                         Apply text-diff edits (kind=html only)
+DELETE /surfaces/:id                         Delete surface
+GET    /surfaces/:id/html                    Serve surface HTML (iframe src)
+GET    /surfaces/:id/revisions               List revision history
+GET    /surfaces/:id/revisions/:n            Fetch a past revision
+POST   /surfaces/:id/revisions/:n/restore    Roll back to a revision
+POST   /surfaces/:id/exec                    Execute JS in surface iframe
+POST   /surfaces/:id/actions                 Post an action from a surface
+POST   /surfaces/:id/reply                   Send toast to surface
+GET    /stream                               Global SSE (created/updated/deleted events)
+GET    /surfaces/:id/stream                  Per-surface SSE (updates, edits, exec, replies)
+PUT    /display/config                       Set theme/renderer/overlay
+POST   /display/reset                        Reset to default
+POST   /display/navigate                     Force navigation
+POST   /display/notify                       Push notification
+GET    /display/status                       Get display state
 ```
 
 ## Marketplace
