@@ -102,16 +102,36 @@ router.get("/surfaces/:id", (req, res) => {
 
 // Create surface
 router.post("/surfaces", (req, res) => {
-  const { id, title, html, metadata } = req.body;
-  if (!title || !html) {
-    res.status(400).json({ error: "title and html are required" });
+  const { id, title, html, metadata, kind, spec } = req.body;
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
     return;
   }
-  const surface = createSurface({ id, title, html, metadata });
+  if (kind === "widgets") {
+    if (!spec || typeof spec !== "object") {
+      res.status(400).json({ error: "spec is required for kind=widgets" });
+      return;
+    }
+  } else {
+    if (!html) {
+      res.status(400).json({ error: "html is required" });
+      return;
+    }
+  }
+  const surface = createSurface({
+    id,
+    title,
+    html: html || "",
+    metadata,
+    kind: kind === "widgets" ? "widgets" : "html",
+    spec: kind === "widgets" ? spec : null,
+  });
   broadcastGlobal("surface_created", {
     id: surface.id,
     title: surface.title,
     metadata: surface.metadata,
+    kind: surface.kind,
+    revision: surface.revision,
     created_at: surface.created_at,
     updated_at: surface.updated_at,
   });
@@ -120,8 +140,12 @@ router.post("/surfaces", (req, res) => {
 
 // Update surface
 router.put("/surfaces/:id", (req, res) => {
-  const { title, html, metadata } = req.body;
-  const surface = updateSurface(req.params.id, { title, html, metadata });
+  const { title, html, metadata, kind, spec } = req.body;
+  const surface = updateSurface(
+    req.params.id,
+    { title, html, metadata, kind, spec },
+    { edit_kind: "update" }
+  );
   if (!surface) {
     res.status(404).json({ error: "Surface not found" });
     return;
@@ -130,6 +154,8 @@ router.put("/surfaces/:id", (req, res) => {
     id: surface.id,
     title: surface.title,
     metadata: surface.metadata,
+    kind: surface.kind,
+    revision: surface.revision,
     updated_at: surface.updated_at,
   });
   broadcastToSurface(req.params.id, "surface_updated", {
@@ -137,6 +163,9 @@ router.put("/surfaces/:id", (req, res) => {
     title: surface.title,
     html: surface.html,
     metadata: surface.metadata,
+    kind: surface.kind,
+    spec: surface.spec,
+    revision: surface.revision,
     updated_at: surface.updated_at,
   });
   res.json(surface);
