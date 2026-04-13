@@ -82,7 +82,9 @@ router.get("/surfaces", (_req, res) => {
   res.json(surfaces);
 });
 
-// Serve surface HTML as a standalone page (used by iframe src= instead of srcdoc)
+// Serve surface HTML as a standalone page (used by iframe src= instead of srcdoc).
+// The bootloader <script> is appended so the PWA can morph the DOM in place
+// on edits instead of reloading the iframe and destroying state.
 router.get("/surfaces/:id/html", (req, res) => {
   const surface = getSurface(req.params.id);
   if (!surface) {
@@ -90,8 +92,18 @@ router.get("/surfaces/:id/html", (req, res) => {
     return;
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(surface.html);
+  res.send(injectBootloader(surface.html));
 });
+
+function injectBootloader(html: string): string {
+  const tag = `<script src="/lib/surface-bootloader.js"></script>`;
+  if (!html) return tag;
+  if (/__surfaceBoot/.test(html)) return html; // already injected
+  // Prefer before </body>, fall back to </html>, fall back to append.
+  if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tag}</body>`);
+  if (/<\/html>/i.test(html)) return html.replace(/<\/html>/i, `${tag}</html>`);
+  return html + tag;
+}
 
 // Get surface
 router.get("/surfaces/:id", (req, res) => {

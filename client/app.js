@@ -514,16 +514,51 @@ async function renderSurface(id) {
   app.innerHTML = "";
   app.appendChild(view);
 
+  // Track whether the bootloader in the iframe has reported ready. Surfaces
+  // created before this version (or that stripped the bootloader) will never
+  // fire `surface/ready`, so we fall back to an iframe.src reload on update.
+  let bootloaderReady = false;
+  const onReady = (e) => {
+    if (e.source !== iframe.contentWindow) return;
+    if (e.data && e.data.type === "surface/ready") bootloaderReady = true;
+  };
+  window.addEventListener("message", onReady);
+
+  function postToSurface(msg) {
+    try { iframe.contentWindow && iframe.contentWindow.postMessage(msg, "*"); }
+    catch (err) { console.error("[surface postMessage]", err); }
+  }
+
+  function handleNewHtml(newHtml) {
+    // Preferred path: morph in place via the bootloader. Preserves timers,
+    // canvas state, focus, form input, scroll, and event listeners on
+    // unchanged nodes.
+    if (bootloaderReady && newHtml) {
+      postToSurface({ type: "surface/morph", html: newHtml });
+      return;
+    }
+    // Fallback: hard reload. State is lost, but at least the content updates.
+    iframe.src = iframe.src;
+  }
+
   // SSE for live updates
   surfaceSSE = new EventSource("/surfaces/" + id + "/stream");
   surfaceSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
-    if (data.html) {
-      iframe.src = iframe.src;
-    }
+    if (data.html !== undefined) handleNewHtml(data.html);
     if (data.title) {
       const titleEl = view.querySelector(".surface-nav-title");
       if (titleEl) titleEl.textContent = data.title;
+    }
+  });
+  surfaceSSE.addEventListener("surface_edited", (e) => {
+    const data = JSON.parse(e.data);
+    if (bootloaderReady && Array.isArray(data.edits)) {
+      // Prefer sending edits + the canonical post-edit html so the bootloader
+      // can morph without recomputing the diff locally.
+      postToSurface({ type: "surface/edits", edits: data.edits, html: data.html });
+    } else if (data.html !== undefined) {
+      handleNewHtml(data.html);
     }
   });
   surfaceSSE.addEventListener("agent_reply", (e) => {
@@ -532,14 +567,24 @@ async function renderSurface(id) {
   });
   surfaceSSE.addEventListener("surface_exec", (e) => {
     const data = JSON.parse(e.data);
-    if (iframe.contentWindow && data.js) {
-      try {
-        iframe.contentWindow.eval(data.js);
-      } catch (err) {
-        console.error("[surface_exec]", err);
-      }
+    if (!data.js) return;
+    if (bootloaderReady) {
+      // Route exec through the bootloader so it runs inside the iframe's
+      // own global scope (indirect eval) instead of being invoked on
+      // contentWindow from the parent.
+      postToSurface({ type: "surface/exec", js: data.js });
+    } else if (iframe.contentWindow) {
+      try { iframe.contentWindow.eval(data.js); }
+      catch (err) { console.error("[surface_exec]", err); }
     }
   });
+
+  // Clean up the ready listener when we navigate away.
+  const origClose = surfaceSSE.close.bind(surfaceSSE);
+  surfaceSSE.close = () => {
+    window.removeEventListener("message", onReady);
+    origClose();
+  };
 }
 
 // ── Global SSE ──
