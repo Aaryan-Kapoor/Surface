@@ -39,7 +39,10 @@ import {
   getDisplayConfig,
   setDisplayConfig,
   resetDisplayConfig,
+  listRevisions,
+  getRevision,
 } from "./db.js";
+import { applyEdits, EditError, type Edit } from "./edits.js";
 import {
   addGlobalClient,
   addSurfaceClient,
@@ -150,6 +153,129 @@ router.put("/surfaces/:id", (req, res) => {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
+  broadcastGlobal("surface_updated", {
+    id: surface.id,
+    title: surface.title,
+    metadata: surface.metadata,
+    kind: surface.kind,
+    revision: surface.revision,
+    updated_at: surface.updated_at,
+  });
+  broadcastToSurface(req.params.id, "surface_updated", {
+    id: surface.id,
+    title: surface.title,
+    html: surface.html,
+    metadata: surface.metadata,
+    kind: surface.kind,
+    spec: surface.spec,
+    revision: surface.revision,
+    updated_at: surface.updated_at,
+  });
+  res.json(surface);
+});
+
+// Patch surface HTML via text diffs (unique find/replace edits).
+// Preserves iframe state on the client — see client-side morph handler.
+router.patch("/surfaces/:id", (req, res) => {
+  const existing = getSurface(req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: "Surface not found" });
+    return;
+  }
+  if (existing.kind !== "html") {
+    res.status(400).json({
+      error: `surface_edit only applies to kind=html surfaces (got kind=${existing.kind}). Use PUT /surfaces/:id to replace a widgets spec.`,
+    });
+    return;
+  }
+  const edits = req.body?.edits as Edit[] | undefined;
+  if (!Array.isArray(edits) || edits.length === 0) {
+    res.status(400).json({ error: "edits must be a non-empty array" });
+    return;
+  }
+  let result;
+  try {
+    result = applyEdits(existing.html, edits);
+  } catch (err) {
+    if (err instanceof EditError) {
+      res.status(422).json({ error: err.message, code: err.code, index: err.index });
+      return;
+    }
+    throw err;
+  }
+  const surface = updateSurface(
+    req.params.id,
+    { html: result.html },
+    { edit_kind: "edit", edit_summary: result.summary }
+  )!;
+  broadcastGlobal("surface_updated", {
+    id: surface.id,
+    title: surface.title,
+    metadata: surface.metadata,
+    kind: surface.kind,
+    revision: surface.revision,
+    updated_at: surface.updated_at,
+  });
+  // Per-surface channel carries the edits themselves so the client can morph
+  // in place without reloading the iframe. Falls back to full-html on clients
+  // that don't implement morphing.
+  broadcastToSurface(req.params.id, "surface_edited", {
+    id: surface.id,
+    edits,
+    html: surface.html,
+    revision: surface.revision,
+    updated_at: surface.updated_at,
+  });
+  res.json({
+    id: surface.id,
+    revision: surface.revision,
+    applied: result.applied,
+    replaced: result.replaced,
+    summary: result.summary,
+    updated_at: surface.updated_at,
+  });
+});
+
+// Revision history
+router.get("/surfaces/:id/revisions", (req, res) => {
+  const existing = getSurface(req.params.id);
+  if (!existing) { res.status(404).json({ error: "Surface not found" }); return; }
+  const limit = Math.min(parseInt((req.query.limit as string) || "50", 10) || 50, 200);
+  const rows = listRevisions(req.params.id, limit).map((r) => ({
+    revision: r.revision,
+    edit_kind: r.edit_kind,
+    edit_summary: r.edit_summary,
+    title: r.title,
+    kind: r.kind,
+    created_at: r.created_at,
+  }));
+  res.json(rows);
+});
+
+router.get("/surfaces/:id/revisions/:revision", (req, res) => {
+  const rev = parseInt(req.params.revision, 10);
+  if (!Number.isFinite(rev)) { res.status(400).json({ error: "bad revision" }); return; }
+  const r = getRevision(req.params.id, rev);
+  if (!r) { res.status(404).json({ error: "Revision not found" }); return; }
+  res.json(r);
+});
+
+router.post("/surfaces/:id/revisions/:revision/restore", (req, res) => {
+  const rev = parseInt(req.params.revision, 10);
+  const r = getRevision(req.params.id, rev);
+  if (!r) { res.status(404).json({ error: "Revision not found" }); return; }
+  const surface = updateSurface(
+    req.params.id,
+    {
+      title: r.title,
+      html: r.html,
+      metadata: JSON.parse(r.metadata || "{}"),
+      kind: r.kind,
+      spec: r.spec ? JSON.parse(r.spec) : null,
+    },
+    { edit_kind: "restore", edit_summary: `restored revision ${rev}` }
+  );
+  if (!surface) { res.status(404).json({ error: "Surface not found" }); return; }
   broadcastGlobal("surface_updated", {
     id: surface.id,
     title: surface.title,

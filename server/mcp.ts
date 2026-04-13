@@ -105,7 +105,7 @@ const TOOLS = [
   },
   {
     name: "surface_update",
-    description: "Update a surface. Hot-reloads in the user's browser.",
+    description: "Update a surface by REPLACING its content. Prefer surface_edit for small changes — it's cheaper in tokens and preserves running state (timers, inputs, scroll, animations) via DOM morphing.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -115,6 +115,54 @@ const TOOLS = [
         metadata: { type: "object", properties: { icon: { type: "string" }, description: { type: "string" } } },
       },
       required: ["id"],
+    },
+  },
+  {
+    name: "surface_edit",
+    description: "Apply precise find/replace edits to a surface's HTML. Preferred over surface_update for targeted changes: edits are cheap in tokens and the client morphs the DOM in place, so running timers, form state, scroll position, and event handlers on unchanged elements survive. Each edit's old_string must match exactly once unless replace_all=true. HTML-kind surfaces only — use surface_update for widgets.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string", description: "Surface ID" },
+        edits: {
+          type: "array",
+          description: "Ordered edits applied sequentially. Each edit sees the result of previous edits.",
+          items: {
+            type: "object",
+            properties: {
+              old_string: { type: "string", description: "Exact substring to replace (include enough context to be unique)" },
+              new_string: { type: "string", description: "Replacement text" },
+              replace_all: { type: "boolean", description: "If true, replace every occurrence instead of requiring uniqueness. Default false." },
+            },
+            required: ["old_string", "new_string"],
+          },
+        },
+      },
+      required: ["id", "edits"],
+    },
+  },
+  {
+    name: "surface_revisions",
+    description: "List the revision history for a surface. Returns the most recent N revisions with their edit_kind (create/update/edit/restore) and summary.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        limit: { type: "number", description: "Max revisions to return (default 50, max 200)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "surface_restore",
+    description: "Restore a surface to a past revision. Creates a new revision (doesn't rewrite history).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        revision: { type: "number" },
+      },
+      required: ["id", "revision"],
     },
   },
   {
@@ -259,6 +307,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "surface_update": {
       const { id, ...rest } = a;
       const r = await api("PUT", `/surfaces/${id}`, rest);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "surface_edit": {
+      const r = await api("PATCH", `/surfaces/${a.id}`, { edits: a.edits });
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "surface_revisions": {
+      const qs = a.limit ? `?limit=${encodeURIComponent(a.limit)}` : "";
+      const r = await api("GET", `/surfaces/${a.id}/revisions${qs}`);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "surface_restore": {
+      const r = await api("POST", `/surfaces/${a.id}/revisions/${a.revision}/restore`);
       return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
     }
     case "surface_delete": {
