@@ -7,7 +7,11 @@ export interface MarketplaceItem {
   author: string;
   tags: string[];
   category: string;
+  // Which surface kind this item installs. Defaults to 'html' so existing
+  // entries keep working without changes.
+  kind?: "html" | "widgets";
   html?: string;
+  spec?: Record<string, any>;
   theme?: Record<string, any>;
   renderer?: string;
   overlay?: string;
@@ -581,5 +585,190 @@ body{background:transparent;pointer-events:none;display:flex;justify-content:fle
 function u(){document.getElementById('c').textContent=new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true})}
 u();setInterval(u,1000);
 </script></body></html>`,
+  },
+
+  // ═══════════════════════════════════════
+  // WIDGETS (declarative — cheap to author + update)
+  // ═══════════════════════════════════════
+
+  {
+    id: "mp-widget-pomodoro",
+    type: "surface",
+    kind: "widgets",
+    title: "Pomodoro (widgets)",
+    description: "Declarative 25/5 focus timer. State survives agent-pushed updates.",
+    icon: "🍅",
+    author: "Surface Team",
+    tags: ["productivity", "timer", "widgets"],
+    category: "productivity",
+    spec: {
+      root: {
+        type: "Stack",
+        direction: "vertical",
+        align: "center",
+        gap: 24,
+        padding: 24,
+        children: [
+          { type: "Text", value: "$.label", size: "sm", muted: true, tracking: "4px" },
+          {
+            type: "ProgressRing",
+            value: "$.remaining",
+            max: "$.total",
+            label: "$.display",
+            color: "$.color",
+            size: 240,
+          },
+          {
+            type: "Stack",
+            direction: "horizontal",
+            gap: 12,
+            children: [
+              {
+                type: "Button",
+                label: "$.startLabel",
+                variant: "accent",
+                color: "$.color",
+                onClick: [
+                  { op: "toggle", path: "running" },
+                  { op: "set", path: "startLabel", value: "Pause" },
+                ],
+              },
+              {
+                type: "Button",
+                label: "Reset",
+                variant: "ghost",
+                onClick: [
+                  { op: "set", path: "remaining", value: 1500 },
+                  { op: "set", path: "total", value: 1500 },
+                  { op: "set", path: "running", value: false },
+                  { op: "set", path: "display", value: "25:00" },
+                  { op: "set", path: "startLabel", value: "Start" },
+                  { op: "set", path: "color", value: "#ff6b6b" },
+                  { op: "set", path: "label", value: "FOCUS" },
+                ],
+              },
+            ],
+          },
+          { type: "Text", value: "$.sessionText", size: "xs", muted: true, tracking: "2px" },
+        ],
+      },
+      state: {
+        remaining: 1500,
+        total: 1500,
+        display: "25:00",
+        running: false,
+        label: "FOCUS",
+        color: "#ff6b6b",
+        startLabel: "Start",
+        sessions: 0,
+        sessionText: "0 sessions",
+      },
+      timers: [
+        {
+          every: 1000,
+          while: "running",
+          do: [
+            { op: "dec", path: "remaining", min: 0 },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    id: "mp-widget-counter",
+    type: "surface",
+    kind: "widgets",
+    title: "Tally Counter",
+    description: "Minimal counter. Two buttons, one number. Demonstrates widgets basics.",
+    icon: "🔢",
+    author: "Surface Team",
+    tags: ["utility", "widgets", "demo"],
+    category: "utility",
+    spec: {
+      root: {
+        type: "Stack",
+        direction: "vertical",
+        align: "center",
+        gap: 24,
+        padding: 32,
+        children: [
+          { type: "Text", value: "$.count", size: "3xl", weight: "thin" },
+          {
+            type: "Stack",
+            direction: "horizontal",
+            gap: 12,
+            children: [
+              { type: "Button", label: "−", variant: "ghost", onClick: [{ op: "dec", path: "count" }] },
+              { type: "Button", label: "+", variant: "accent", onClick: [{ op: "inc", path: "count" }] },
+              { type: "Button", label: "Reset", variant: "ghost", onClick: [{ op: "set", path: "count", value: 0 }] },
+            ],
+          },
+        ],
+      },
+      state: { count: 0 },
+    },
+  },
+
+  {
+    id: "mp-widget-todo",
+    type: "surface",
+    kind: "widgets",
+    title: "Quick Todo",
+    description: "Add, check, delete. List widget + Input binding.",
+    icon: "📋",
+    author: "Surface Team",
+    tags: ["productivity", "list", "widgets"],
+    category: "productivity",
+    spec: {
+      root: {
+        type: "Stack",
+        direction: "vertical",
+        gap: 16,
+        padding: 24,
+        children: [
+          { type: "Text", value: "Quick Todo", size: "lg", weight: "medium" },
+          {
+            type: "Stack",
+            direction: "horizontal",
+            gap: 8,
+            children: [
+              {
+                type: "Input",
+                placeholder: "What to do…",
+                bind: "draft",
+                value: "$.draft",
+                onSubmit: [
+                  { op: "push", path: "items", value: "$.draft" },
+                  { op: "set", path: "draft", value: "" },
+                ],
+              },
+              {
+                type: "Button",
+                label: "Add",
+                variant: "accent",
+                onClick: [
+                  { op: "push", path: "items", value: "$.draft" },
+                  { op: "set", path: "draft", value: "" },
+                ],
+              },
+            ],
+          },
+          {
+            type: "List",
+            items: "$.items",
+            gap: 6,
+            item: {
+              type: "Card",
+              padding: 12,
+              radius: 10,
+              children: [{ type: "Text", value: "$item" }],
+            },
+          },
+          { type: "Text", value: "$.items.length", size: "xs", muted: true },
+        ],
+      },
+      state: { items: [], draft: "" },
+    },
   },
 ];

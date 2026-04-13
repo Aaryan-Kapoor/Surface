@@ -591,7 +591,13 @@ router.get("/marketplace/:id", (req, res) => {
 router.get("/marketplace/:id/preview", (req, res) => {
   const item = catalog.find(i => i.id === req.params.id);
   if (!item) { res.status(404).send("Not found"); return; }
-  const html = item.html || item.renderer || item.overlay || "";
+  let html = item.html || item.renderer || item.overlay || "";
+  // Widget previews need the shell-rendered HTML.
+  if (!html && item.kind === "widgets" && item.spec) {
+    try {
+      html = renderSpecShell(validateSpec(item.spec), { title: item.title });
+    } catch { /* fall through */ }
+  }
   if (!html) { res.status(404).send("No preview"); return; }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(html);
@@ -609,15 +615,33 @@ router.post("/marketplace/:id/install", (req, res) => {
       res.json({ action: "exists", id: existing.id });
       return;
     }
+    const kind = item.kind === "widgets" ? "widgets" : "html";
+    let resolvedHtml = item.html || "";
+    let resolvedSpec: WidgetSpec | null = null;
+    if (kind === "widgets") {
+      try {
+        resolvedSpec = validateSpec(item.spec);
+      } catch (err) {
+        res.status(500).json({
+          error: `Invalid marketplace widget spec for ${item.id}: ${(err as Error).message}`,
+        });
+        return;
+      }
+      resolvedHtml = renderSpecShell(resolvedSpec, { title: item.title });
+    }
     const surface = createSurface({
       id: item.id,
       title: item.title,
-      html: item.html!,
+      html: resolvedHtml,
       metadata: { icon: item.icon, description: item.description },
+      kind,
+      spec: resolvedSpec as unknown as Record<string, unknown> | null,
     });
     broadcastGlobal("surface_created", {
       id: surface.id, title: surface.title,
       metadata: surface.metadata,
+      kind: surface.kind,
+      revision: surface.revision,
       created_at: surface.created_at, updated_at: surface.updated_at,
     });
     res.status(201).json({ action: "installed", id: surface.id, type: "surface" });

@@ -9,6 +9,67 @@ import {
 const SURFACE_URL = process.env.SURFACE_URL || "http://localhost:3000";
 const POLL_INTERVAL = 2000;
 
+const WIDGET_CATALOG_DOC = `Surface widgets catalog (for kind='widgets' surfaces).
+
+Spec shape:
+  { root: <node>, state?: {...}, timers?: [{every: <ms>, while?: <path>, do: [<op>, ...]}] }
+
+Each node is { type: <Component>, children?: [...], ...props }.
+  - String props starting with "$.path" are resolved against state at render time.
+  - "$$literal" escapes (becomes "$literal").
+  - A node can set "when": "$.flag" to render conditionally.
+
+Ops (usable in onClick, onSubmit, timers.do):
+  {op:"set",    path, value}     — state[path] = value
+  {op:"inc",    path, by?, max?} — increment (default by=1)
+  {op:"dec",    path, by?, min?} — decrement
+  {op:"toggle", path}             — flip boolean
+  {op:"push",   path, value}     — array append
+  {op:"remove", path, index?|value} — array remove
+  {op:"post",   action, data?}   — send a surface_action to the agent
+
+Components:
+  Stack     { direction: 'vertical'|'horizontal', gap, align, justify, padding, children }
+  Card      { radius, padding, children }
+  Text      { value, size: xs|sm|md|lg|xl|2xl|3xl, weight, color, muted, align, tracking, as }
+  Button    { label, variant: 'solid'|'ghost'|'accent', color, disabled, onClick: [<op>...] }
+  Input     { type, placeholder, value, bind: <path>, onSubmit: [<op>...] }
+  Checkbox  { label, value, bind: <path> }
+  Image     { src, alt, width, height, fit, radius }
+  ProgressBar  { value, max, color, thickness }
+  ProgressRing { value, max, color, size, thickness, label }
+  List      { items: <array or $.path>, item: <template node>, gap }  — in the template, use "$item" to bind to the current item and "$index" for its position
+  Spacer    { size, grow }
+  Box       { style, class, children }  — escape hatch for light styling
+
+Example (Pomodoro):
+  {
+    root: {type:"Stack", direction:"vertical", align:"center", gap:24, children:[
+      {type:"Text", value:"$.label", size:"sm", muted:true, tracking:"4px"},
+      {type:"ProgressRing", value:"$.remaining", max:"$.total", label:"$.display", color:"$.color"},
+      {type:"Stack", direction:"horizontal", gap:12, children:[
+        {type:"Button", label:"$.startLabel", onClick:[
+          {op:"toggle", path:"running"},
+          {op:"set", path:"startLabel", value:"Running…"}
+        ]},
+        {type:"Button", variant:"ghost", label:"Reset", onClick:[
+          {op:"set", path:"remaining", value:1500},
+          {op:"set", path:"running", value:false},
+          {op:"set", path:"display", value:"25:00"},
+          {op:"set", path:"startLabel", value:"Start"}
+        ]}
+      ]}
+    ]},
+    state: {remaining:1500, total:1500, display:"25:00", running:false, label:"FOCUS", color:"#ff6b6b", startLabel:"Start"},
+    timers: [{every:1000, while:"running", do:[{op:"dec", path:"remaining", min:0}]}]
+  }
+
+When to pick kind='widgets' vs kind='html':
+  - Use widgets for timers, trackers, forms, lists, dashboards, status readouts.
+  - Use html for games, canvas/WebGL, custom typography, exotic layouts.
+  - Prefer widgets — spec updates preserve running state automatically.
+`;
+
 async function api(method: string, path: string, body?: unknown): Promise<any> {
   const res = await fetch(`${SURFACE_URL}${path}`, {
     method,
@@ -34,7 +95,16 @@ const mcp = new Server(
     instructions: [
       "Surface is the user's universal display — you own it end-to-end. It's not just a canvas for pushing HTML, it's YOUR display to control.",
       "You have full control: create/update/delete surfaces, execute JS in running surfaces, navigate the display, push notifications, and customize the entire look and feel.",
-      "IMPORTANT: Before creating a surface, ALWAYS call surface_list first to check if one already exists with a matching title or purpose. If it does, use surface_update to refresh it and display_navigate to open it — never create duplicates.",
+      "IMPORTANT: Before creating a surface, ALWAYS call surface_list first to check if one already exists with a matching title or purpose. If it does, use surface_update or surface_edit to refresh it and display_navigate to open it — never create duplicates.",
+      "",
+      "== TWO SURFACE KINDS: pick the right one ==",
+      "1. kind='widgets' (PREFER THIS FIRST). A declarative JSON spec composed from a trusted catalog (Stack, Card, Text, Button, Input, Checkbox, Image, ProgressBar, ProgressRing, List, Spacer, Box). Cheap to author, cheap to update, state survives updates automatically (a Pomodoro timer keeps ticking while you push new specs). Use for timers, trackers, forms, lists, dashboards, status views, settings panels, chat UIs. Call display_widget_catalog once for the full reference.",
+      "2. kind='html' (default, escape hatch). Full HTML/CSS/JS. Use when you need canvas, WebGL, exotic typography, games, or a specific visual effect that widgets can't express.",
+      "",
+      "== EDITING HTML SURFACES — USE surface_edit, NOT surface_update ==",
+      "For kind='html' surfaces, prefer surface_edit over surface_update for anything short of a full rewrite. surface_edit takes a list of find/replace edits (same shape as the Edit/str_replace tools). The client morphs the DOM in place: running timers, canvas state, scroll position, focus, and uncontrolled input values all survive. surface_update reloads the iframe and wipes state.",
+      "Every edit's old_string must match exactly once. If ambiguous, include more surrounding context or pass replace_all=true.",
+      "surface_revisions lists history; surface_restore rolls back.",
       "",
       "== THEMING (display_set_theme) ==",
       "Use 'css' for CSS customization. Target these classes: .surface-card (outer card), .card-preview (thumbnail area), .card-preview-overlay (gradient over preview), .card-preview-icon (icon fallback), .card-body/.card-title/.card-description/.card-time (card content), .grid (card grid), .grid-view (scroll container), .grid-header/.grid-title (header), .surface-nav/.back-btn/.surface-nav-title (surface view nav), .starfield/.star/.nebula (background effects), .empty-state/.empty-prompt/.empty-sub (empty state), .toast (notifications). Use specific selectors — wildcards like [class*=\"card\"] will break previews.",
@@ -76,12 +146,28 @@ const mcp = new Server(
 const TOOLS = [
   {
     name: "surface_create",
-    description: "Create a new surface with HTML/CSS/JS content.",
+    description: "Create a new surface. Two kinds are supported:\n" +
+      "  kind='html' (default) — pass `html` with complete HTML/CSS/JS. Use when you need full freedom (games, canvas, WebGL, complex layouts, custom typography).\n" +
+      "  kind='widgets' — pass `spec` with a declarative JSON tree using trusted components (Stack, Card, Text, Button, Input, Checkbox, Image, ProgressBar, ProgressRing, List, Spacer, Box). Prefer this for timers, forms, lists, dashboards, status views — it's cheaper in tokens, safer, and state survives agent-pushed updates automatically.\n" +
+      "Before creating, call surface_list to check for an existing surface you should surface_update or surface_edit instead.",
     inputSchema: {
       type: "object" as const,
       properties: {
         title: { type: "string", description: "Display title" },
-        html: { type: "string", description: "Complete HTML content" },
+        kind: {
+          type: "string",
+          enum: ["html", "widgets"],
+          description: "Surface kind. Default 'html'.",
+        },
+        html: { type: "string", description: "Complete HTML content (required when kind='html')." },
+        spec: {
+          type: "object",
+          description:
+            "Widgets spec (required when kind='widgets'). Shape: {root: <node>, state?: {...}, timers?: [...]}. " +
+            "Each node is {type: <ComponentName>, children?: [...], ...props}. Bindings: any string prop starting with '$.path' resolves against state. " +
+            "Ops for onClick / timers: {op:'set'|'inc'|'dec'|'toggle'|'push'|'remove'|'post', path, value?, by?, min?, max?, action?, data?}. " +
+            "Call display_widget_catalog for the full component reference.",
+        },
         id: { type: "string", description: "Optional custom ID" },
         metadata: {
           type: "object",
@@ -91,7 +177,7 @@ const TOOLS = [
           },
         },
       },
-      required: ["title", "html"],
+      required: ["title"],
     },
   },
   {
@@ -105,13 +191,16 @@ const TOOLS = [
   },
   {
     name: "surface_update",
-    description: "Update a surface by REPLACING its content. Prefer surface_edit for small changes — it's cheaper in tokens and preserves running state (timers, inputs, scroll, animations) via DOM morphing.",
+    description:
+      "Update a surface by REPLACING its content. For kind='html' surfaces, strongly prefer surface_edit (cheaper, preserves state). For kind='widgets', pass `spec` to push a new declarative tree — the runtime diffs state against the new spec and preserves existing state values, so a Pomodoro mid-countdown keeps ticking.",
     inputSchema: {
       type: "object" as const,
       properties: {
         id: { type: "string" },
         title: { type: "string" },
-        html: { type: "string" },
+        html: { type: "string", description: "New HTML (for kind='html' surfaces)." },
+        spec: { type: "object", description: "New widgets spec (for kind='widgets' surfaces)." },
+        kind: { type: "string", enum: ["html", "widgets"] },
         metadata: { type: "object", properties: { icon: { type: "string" }, description: { type: "string" } } },
       },
       required: ["id"],
@@ -277,6 +366,11 @@ const TOOLS = [
     },
   },
   {
+    name: "display_widget_catalog",
+    description: "Return the full component catalog (names, props, ops) for kind='widgets' surfaces. Call this once per session before authoring widgets specs.",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+  {
     name: "surface_exec",
     description: "Execute JavaScript in a running surface's iframe. Use for real-time updates without replacing HTML — update counters, trigger animations, read DOM state, etc.",
     inputSchema: {
@@ -366,6 +460,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "surface_exec": {
       await api("POST", `/surfaces/${a.id}/exec`, { js: a.js });
       return { content: [{ type: "text", text: `JS executed in surface ${a.id}` }] };
+    }
+    case "display_widget_catalog": {
+      return {
+        content: [
+          { type: "text", text: WIDGET_CATALOG_DOC },
+        ],
+      };
     }
     default:
       throw new Error(`Unknown tool: ${name}`);
