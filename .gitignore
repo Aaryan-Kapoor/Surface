@@ -10,6 +10,7 @@ surfaces.db-wal
 *.swp
 screenshots/
 .playwright-mcp/
+.artifact-research/
 .gemini/
 hackathon_packet/
 Hackathon packet.zip

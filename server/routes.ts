@@ -14,7 +14,7 @@ async function fanOutToOpenClaw(surfaceId: string, surfaceTitle: string, actionN
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        message: `[Surface Action] User triggered "${actionName}" on surface "${surfaceTitle}" (id: ${surfaceId}). Data: ${data}. Use the surface MCP tools (surface_read, surface_update, reply) to respond.`,
+        message: `[Surface Action] User triggered "${actionName}" on surface "${surfaceTitle}" (id: ${surfaceId}). Data: ${data}. Use the Surface MCP tools (artifact_read, artifact_update, surface_exec, reply) to respond.`,
         name: "SurfaceAction",
       }),
     });
@@ -28,10 +28,8 @@ async function fanOutToOpenClaw(surfaceId: string, surfaceTitle: string, actionN
   }
 }
 import {
-  createSurface,
+  getDb,
   getSurface,
-  listSurfaces,
-  updateSurface,
   deleteSurface,
   createAction,
   getPendingActions,
@@ -40,6 +38,23 @@ import {
   setDisplayConfig,
   resetDisplayConfig,
 } from "./db.js";
+import {
+  createArtifact,
+  deleteArtifact,
+  getArtifact,
+  getArtifactFile,
+  getArtifactFiles,
+  getCurrentArtifactVersion,
+  inferMime,
+  listArtifactCards,
+  listArtifacts,
+  listArtifactVersions,
+  presentFile,
+  readArtifact,
+  readArtifactFileContent,
+  setCurrentArtifactVersion,
+  updateArtifact,
+} from "./artifacts.js";
 import {
   addGlobalClient,
   addSurfaceClient,
@@ -65,8 +80,9 @@ router.get("/stream", (req, res) => {
 
 // Per-surface SSE stream
 router.get("/surfaces/:id/stream", (req, res) => {
-  const surface = getSurface(req.params.id);
-  if (!surface) {
+  const artifact = getArtifact(getDb(), req.params.id);
+  const surface = artifact ? undefined : getSurface(req.params.id);
+  if (!artifact && !surface) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
@@ -75,77 +91,130 @@ router.get("/surfaces/:id/stream", (req, res) => {
 
 // List surfaces
 router.get("/surfaces", (_req, res) => {
-  const surfaces = listSurfaces();
-  res.json(surfaces);
+  res.json(listArtifactCards(getDb()));
 });
 
 // Serve surface HTML as a standalone page (used by iframe src= instead of srcdoc)
 router.get("/surfaces/:id/html", (req, res) => {
-  const surface = getSurface(req.params.id);
-  if (!surface) {
-    res.status(404).send("Surface not found");
+  const artifact = getArtifact(getDb(), req.params.id);
+  const version = artifact ? getCurrentArtifactVersion(getDb(), artifact.id) : undefined;
+  const files = version ? getArtifactFiles(getDb(), version.id) : [];
+  const htmlFile = files.find((file) => file.mime === "text/html" || file.path.endsWith(".html"));
+  if (artifact && htmlFile) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(readArtifactFileContent(htmlFile));
     return;
   }
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(surface.html);
+
+  const surface = getSurface(req.params.id);
+  if (surface) {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(surface.html);
+    return;
+  }
+
+  res.status(404).send("Surface not found");
 });
 
 // Get surface
 router.get("/surfaces/:id", (req, res) => {
+  const artifactInfo = readArtifact(getDb(), req.params.id);
+  if (artifactInfo) {
+    res.json(surfaceResponseFromArtifact(artifactInfo));
+    return;
+  }
+
   const surface = getSurface(req.params.id);
   if (!surface) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
-  res.json(surface);
+  res.json({
+    ...surface,
+    preview_url: `/surfaces/${surface.id}/html`,
+    view_url: `/surfaces/${surface.id}/html`,
+  });
 });
 
-// Create surface
+// Create a displayable HTML artifact through the legacy surface route.
 router.post("/surfaces", (req, res) => {
   const { id, title, html, metadata } = req.body;
   if (!title || !html) {
     res.status(400).json({ error: "title and html are required" });
     return;
   }
-  const surface = createSurface({ id, title, html, metadata });
-  broadcastGlobal("surface_created", {
-    id: surface.id,
-    title: surface.title,
-    metadata: surface.metadata,
-    created_at: surface.created_at,
-    updated_at: surface.updated_at,
-  });
-  res.status(201).json(surface);
+  try {
+    const result = createArtifact(getDb(), {
+      id,
+      title,
+      kind: "html",
+      mime: "text/html",
+      source_type: "generated",
+      metadata,
+      files: [{ path: "index.html", content: html, mime: "text/html" }],
+      reason: "surface_create_compat",
+    });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    res.status(201).json(surfaceResponseFromArtifact(result));
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
-// Update surface
+// Update the artifact behind a surface. Legacy surface rows are only read as a migration fallback.
 router.put("/surfaces/:id", (req, res) => {
   const { title, html, metadata } = req.body;
-  const surface = updateSurface(req.params.id, { title, html, metadata });
-  if (!surface) {
+  const existingArtifact = readArtifact(getDb(), req.params.id);
+  const legacySurface = existingArtifact ? undefined : getSurface(req.params.id);
+  if (!existingArtifact && !legacySurface) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
-  broadcastGlobal("surface_updated", {
-    id: surface.id,
-    title: surface.title,
-    metadata: surface.metadata,
-    updated_at: surface.updated_at,
-  });
-  broadcastToSurface(req.params.id, "surface_updated", {
-    id: surface.id,
-    title: surface.title,
-    html: surface.html,
-    metadata: surface.metadata,
-    updated_at: surface.updated_at,
-  });
-  res.json(surface);
+  try {
+    const result = existingArtifact
+      ? updateArtifact(getDb(), req.params.id, {
+          title,
+          kind: html !== undefined ? "html" : undefined,
+          mime: html !== undefined ? "text/html" : undefined,
+          source_type: html !== undefined ? "generated" : undefined,
+          metadata,
+          files: html !== undefined ? [{ path: "index.html", content: html, mime: "text/html" }] : undefined,
+          reason: "surface_update_compat",
+        })
+      : createArtifact(getDb(), {
+          id: req.params.id,
+          title: title ?? legacySurface!.title,
+          kind: "html",
+          mime: "text/html",
+          source_type: "generated",
+          metadata: metadata ?? parseMetadataObject(legacySurface!.metadata),
+          files: [{ path: "index.html", content: html ?? legacySurface!.html, mime: "text/html" }],
+          reason: "surface_update_compat",
+        });
+    if (!result) {
+      res.status(404).json({ error: "Surface not found" });
+      return;
+    }
+    broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+    broadcastToSurface(req.params.id, "surface_updated", {
+      id: result.artifact.id,
+      title: result.artifact.title,
+      metadata: result.artifact.metadata,
+      updated_at: result.artifact.updated_at,
+      version_id: result.version?.id,
+      reload: true,
+    });
+    res.json(surfaceResponseFromArtifact(result));
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Delete surface
 router.delete("/surfaces/:id", (req, res) => {
-  const deleted = deleteSurface(req.params.id);
-  if (!deleted) {
+  const artifactDeleted = deleteArtifact(getDb(), req.params.id);
+  const legacyDeleted = artifactDeleted ? false : deleteSurface(req.params.id);
+  if (!artifactDeleted && !legacyDeleted) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
@@ -153,12 +222,210 @@ router.delete("/surfaces/:id", (req, res) => {
   res.json({ deleted: true });
 });
 
+// ─── Artifacts ───
+
+router.get("/artifacts", (_req, res) => {
+  res.json(listArtifacts(getDb()));
+});
+
+router.post("/artifacts/present-file", (req, res) => {
+  const { path: filePath, title, metadata, copy, open } = req.body;
+  if (!filePath) {
+    res.status(400).json({ error: "path is required" });
+    return;
+  }
+  try {
+    const result = presentFile(getDb(), { filePath, title, metadata, copy, open });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post("/artifacts", (req, res) => {
+  const { id, title, kind, mime, renderer, source_type, metadata, files, content, path: filePath } = req.body;
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+  const inputFiles = Array.isArray(files)
+    ? files
+    : content !== undefined
+      ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
+      : [];
+  try {
+    const result = createArtifact(getDb(), {
+      id,
+      title,
+      kind,
+      mime,
+      renderer,
+      source_type,
+      metadata,
+      files: inputFiles,
+      reason: "artifact_create",
+    });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get("/artifacts/:id", (req, res) => {
+  const result = readArtifact(getDb(), req.params.id);
+  if (!result) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  res.json(result);
+});
+
+router.get("/artifacts/:id/versions", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  res.json(listArtifactVersions(getDb(), req.params.id));
+});
+
+router.post("/artifacts/:id/rollback", (req, res) => {
+  const { version } = req.body;
+  if (version === undefined) {
+    res.status(400).json({ error: "version is required" });
+    return;
+  }
+  const result = setCurrentArtifactVersion(getDb(), req.params.id, version);
+  if (!result) {
+    res.status(404).json({ error: "Artifact version not found" });
+    return;
+  }
+  broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+  broadcastToSurface(result.artifact.id, "surface_updated", {
+    id: result.artifact.id,
+    title: result.artifact.title,
+    metadata: result.artifact.metadata,
+    updated_at: result.artifact.updated_at,
+    version_id: result.version?.id,
+    reload: true,
+  });
+  res.json(result);
+});
+
+router.put("/artifacts/:id", (req, res) => {
+  const { title, kind, mime, renderer, source_type, metadata, files, content, path: filePath, reason } = req.body;
+  const inputFiles = Array.isArray(files)
+    ? files
+    : content !== undefined
+      ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
+      : undefined;
+  try {
+    const result = updateArtifact(getDb(), req.params.id, {
+      title,
+      kind,
+      mime,
+      renderer,
+      source_type,
+      metadata,
+      files: inputFiles,
+      reason: reason || "artifact_update",
+    });
+    if (!result) {
+      res.status(404).json({ error: "Artifact not found" });
+      return;
+    }
+    broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+    broadcastToSurface(result.artifact.id, "surface_updated", {
+      id: result.artifact.id,
+      title: result.artifact.title,
+      metadata: result.artifact.metadata,
+      updated_at: result.artifact.updated_at,
+      version_id: result.version?.id,
+      reload: true,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.delete("/artifacts/:id", (req, res) => {
+  const deleted = deleteArtifact(getDb(), req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  broadcastGlobal("surface_deleted", { id: req.params.id });
+  res.json({ deleted: true });
+});
+
+router.get("/artifacts/:id/manifest", (req, res) => {
+  const version = getCurrentArtifactVersion(getDb(), req.params.id);
+  if (!version) {
+    res.status(404).json({ error: "Artifact version not found" });
+    return;
+  }
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.send(version.manifest_json);
+});
+
+router.get("/artifacts/:id/view", (req, res) => {
+  const result = readArtifact(getDb(), req.params.id);
+  if (!result || !result.version) {
+    res.status(404).send("Artifact not found");
+    return;
+  }
+  const preferred = pickRenderableFile(result.files, result.artifact.mime);
+  if (!preferred) {
+    res.status(404).send("Artifact has no files");
+    return;
+  }
+  const isPreview = req.query.preview === "1";
+  const fileUrl = `/artifacts/${encodeURIComponent(result.artifact.id)}/files/${preferred.path.split("/").map(encodeURIComponent).join("/")}`;
+
+  if (preferred.mime === "text/html") {
+    res.redirect(fileUrl);
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(renderArtifactShell({
+    artifactId: result.artifact.id,
+    title: result.artifact.title,
+    mime: preferred.mime || result.artifact.mime || inferMime(preferred.path),
+    filePath: preferred.path,
+    fileUrl,
+    preview: isPreview,
+  }));
+});
+
+router.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
+  const artifactId = req.params[0];
+  const filePath = req.params[1].split("/").map(decodeURIComponent).join("/");
+  try {
+    const file = getArtifactFile(getDb(), artifactId, filePath);
+    if (!file) {
+      res.status(404).send("Artifact file not found");
+      return;
+    }
+    const contentType = file.mime || inferMime(file.path);
+    const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
+    res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
+    res.send(readArtifactFileContent(file));
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ── Actions (surface → agent) ──
 
 // Surface posts an action (called by iframe via parent postMessage → PWA → here)
 router.post("/surfaces/:id/actions", (req, res) => {
-  const surface = getSurface(req.params.id);
-  if (!surface) {
+  const artifactInfo = readArtifact(getDb(), req.params.id);
+  const surface = artifactInfo ? undefined : getSurface(req.params.id);
+  if (!artifactInfo && !surface) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
@@ -168,11 +435,12 @@ router.post("/surfaces/:id/actions", (req, res) => {
     return;
   }
   const act = createAction({ surface_id: req.params.id, action, data });
-  fanOutToOpenClaw(req.params.id, surface.title, action, JSON.stringify(data || {}));
+  const title = surface?.title || artifactInfo!.artifact.title;
+  fanOutToOpenClaw(req.params.id, title, action, JSON.stringify(data || {}));
   broadcastGlobal("surface_action", {
     id: act.id,
     surface_id: req.params.id,
-    surface_title: surface.title,
+    surface_title: title,
     action: act.action,
     data: act.data,
     created_at: act.created_at,
@@ -204,7 +472,8 @@ router.post("/actions/:id/ack", (req, res) => {
 // Agent replies to a surface (shown as toast in the PWA)
 router.post("/surfaces/:id/reply", (req, res) => {
   const surface = getSurface(req.params.id);
-  if (!surface) {
+  const artifact = surface ? undefined : getArtifact(getDb(), req.params.id);
+  if (!surface && !artifact) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
@@ -275,8 +544,9 @@ router.post("/display/notify", (req, res) => {
 
 // Execute JS in a surface iframe
 router.post("/surfaces/:id/exec", (req, res) => {
-  const surface = getSurface(req.params.id);
-  if (!surface) {
+  const artifact = getArtifact(getDb(), req.params.id);
+  const surface = artifact ? undefined : getSurface(req.params.id);
+  if (!artifact && !surface) {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
@@ -294,7 +564,7 @@ router.post("/surfaces/:id/exec", (req, res) => {
 router.get("/display/renderer/html", (_req, res) => {
   const config = getDisplayConfig();
   if (!config.renderer) { res.status(404).send(""); return; }
-  const surfaces = listSurfaces();
+  const surfaces = listArtifactCards(getDb());
   const inject = `<script>
 // ── Surface Renderer API ──
 // Surfaces array: [{id, title, metadata (JSON string), created_at, updated_at}, ...]
@@ -311,7 +581,10 @@ window.getSurface = (id) => fetch('/surfaces/'+id).then(r=>r.json());
 window.parseMeta = (s) => { try { return typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata||{}); } catch { return {}; } };
 
 // Live preview iframe URL — use as <iframe src="/surfaces/{id}/html"></iframe>
-window.previewUrl = (id) => '/surfaces/'+id+'/html';
+window.previewUrl = (id) => {
+  const surface = window.__surfaces.find(s => s.id === id);
+  return surface && surface.preview_url ? surface.preview_url : '/surfaces/'+id+'/html';
+};
 
 // SSE live updates — call to get notified of surface changes
 window.onSurfaceChange = (handlers) => {
@@ -392,23 +665,23 @@ router.post("/marketplace/:id/install", (req, res) => {
 
   if (item.type === "surface") {
     // Check if already installed
-    const existing = getSurface(item.id);
+    const existing = getArtifact(getDb(), item.id) || getSurface(item.id);
     if (existing) {
       res.json({ action: "exists", id: existing.id });
       return;
     }
-    const surface = createSurface({
+    const result = createArtifact(getDb(), {
       id: item.id,
       title: item.title,
-      html: item.html!,
+      kind: "html",
+      mime: "text/html",
+      source_type: "generated",
       metadata: { icon: item.icon, description: item.description },
+      files: [{ path: "index.html", content: item.html!, mime: "text/html" }],
+      reason: "marketplace_install",
     });
-    broadcastGlobal("surface_created", {
-      id: surface.id, title: surface.title,
-      metadata: surface.metadata,
-      created_at: surface.created_at, updated_at: surface.updated_at,
-    });
-    res.status(201).json({ action: "installed", id: surface.id, type: "surface" });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    res.status(201).json({ action: "installed", id: result.artifact.id, type: "surface" });
   } else if (item.type === "theme") {
     const config = setDisplayConfig(item.theme!);
     broadcastGlobal("display_theme", config);
@@ -554,3 +827,177 @@ router.get("/proxy/pdf", async (req, res) => {
     res.status(502).json({ error: err.message });
   }
 });
+
+function cardPayload(id: string) {
+  const card = listArtifactCards(getDb()).find((item) => item.id === id);
+  return card || { id };
+}
+
+function surfaceResponseFromArtifact(result: NonNullable<ReturnType<typeof readArtifact>>) {
+  const htmlFile = result.files.find((file) => file.mime === "text/html" || file.path.endsWith(".html"));
+  const html = htmlFile ? readArtifactFileContent(htmlFile).toString("utf8") : "";
+  return {
+    id: result.artifact.id,
+    title: result.artifact.title,
+    html,
+    metadata: result.artifact.metadata,
+    created_at: result.artifact.created_at,
+    updated_at: result.artifact.updated_at,
+    artifact: result.artifact,
+    version: result.version,
+    files: result.files,
+    preview_url: `/artifacts/${result.artifact.id}/view?preview=1`,
+    view_url: `/artifacts/${result.artifact.id}/view`,
+  };
+}
+
+function parseMetadataObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function defaultPathForMime(mime?: string): string {
+  if (mime === "text/markdown") return "document.md";
+  if (mime === "application/pdf") return "document.pdf";
+  if (mime === "image/svg+xml") return "image.svg";
+  if (mime?.startsWith("image/")) return "image";
+  if (mime?.startsWith("video/")) return "video";
+  if (mime?.startsWith("audio/")) return "audio";
+  if (mime === "application/vnd.mermaid") return "diagram.mmd";
+  return "index.html";
+}
+
+function pickRenderableFile(files: Array<{ path: string; mime: string | null }>, artifactMime: string | null) {
+  if (files.length === 0) return undefined;
+  const preferredMime = artifactMime || files[0].mime;
+  return (
+    files.find((file) => file.path === "index.html") ||
+    files.find((file) => file.mime === preferredMime) ||
+    files[0]
+  );
+}
+
+function renderArtifactShell(params: {
+  artifactId: string;
+  title: string;
+  mime: string;
+  filePath: string;
+  fileUrl: string;
+  preview: boolean;
+}): string {
+  const title = escapeHtml(params.title);
+  const fileUrl = escapeHtml(params.fileUrl);
+  const mime = escapeHtml(params.mime);
+  const filePath = escapeHtml(params.filePath);
+  const previewClass = params.preview ? " preview" : "";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; background: #0b0b0f; color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+    .bar { display: ${params.preview ? "none" : "flex"}; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); font-size: 12px; color: rgba(255,255,255,.62); }
+    .bar strong { color: rgba(255,255,255,.9); font-weight: 500; }
+    .viewer { flex: 1; min-height: 0; display: flex; align-items: stretch; justify-content: stretch; overflow: auto; }
+    .viewer.preview { overflow: hidden; }
+    img, video { display: block; max-width: 100%; max-height: 100%; margin: auto; }
+    audio { margin: auto; width: min(720px, 90vw); }
+    iframe { width: 100%; height: 100%; border: 0; background: white; }
+    pre { width: 100%; margin: 0; padding: 24px; white-space: pre-wrap; overflow: auto; line-height: 1.55; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .markdown { width: min(880px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; line-height: 1.65; color: #e5e7eb; }
+    .markdown h1, .markdown h2, .markdown h3 { color: white; line-height: 1.2; }
+    .markdown code { background: rgba(255,255,255,.08); padding: 2px 4px; border-radius: 4px; }
+    .markdown pre code { background: transparent; padding: 0; }
+  </style>
+</head>
+<body>
+  <div class="bar"><strong>${title}</strong><span>${mime}</span><span>${filePath}</span></div>
+  <main id="viewer" class="viewer${previewClass}"></main>
+  <script>
+    const mime = ${JSON.stringify(params.mime)};
+    const fileUrl = ${JSON.stringify(params.fileUrl)};
+    const viewer = document.getElementById("viewer");
+    window.parent && window.parent.postMessage({ surfaceProtocol: 1, artifactId: ${JSON.stringify(params.artifactId)}, type: "READY" }, "*");
+
+    const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    const markdownToHtml = (text) => {
+      let escaped = escapeHtml(text);
+      escaped = escaped.replace(/^### (.*)$/gm, "<h3>$1</h3>")
+        .replace(/^## (.*)$/gm, "<h2>$1</h2>")
+        .replace(/^# (.*)$/gm, "<h1>$1</h1>")
+        .replace(/\\*\\*(.*?)\\*\\*/g, "<strong>$1</strong>")
+        .replace(/\\\`([^\\\`]+)\\\`/g, "<code>$1</code>")
+        .replace(/\\n\\n/g, "</p><p>")
+        .replace(/\\n/g, "<br>");
+      return "<p>" + escaped + "</p>";
+    };
+
+    async function render() {
+      if (mime.startsWith("image/")) {
+        const img = document.createElement("img");
+        img.src = fileUrl;
+        viewer.appendChild(img);
+        return;
+      }
+      if (mime.startsWith("video/")) {
+        const video = document.createElement("video");
+        video.src = fileUrl;
+        video.controls = true;
+        viewer.appendChild(video);
+        return;
+      }
+      if (mime.startsWith("audio/")) {
+        const audio = document.createElement("audio");
+        audio.src = fileUrl;
+        audio.controls = true;
+        viewer.appendChild(audio);
+        return;
+      }
+      if (mime === "application/pdf") {
+        const frame = document.createElement("iframe");
+        frame.src = fileUrl;
+        viewer.appendChild(frame);
+        return;
+      }
+      const text = await fetch(fileUrl).then((r) => r.text());
+      if (mime === "text/markdown") {
+        const div = document.createElement("article");
+        div.className = "markdown";
+        div.innerHTML = markdownToHtml(text);
+        viewer.appendChild(div);
+        return;
+      }
+      const pre = document.createElement("pre");
+      pre.textContent = text;
+      viewer.appendChild(pre);
+    }
+    render().catch((err) => {
+      viewer.textContent = err.message;
+      window.parent && window.parent.postMessage({ surfaceProtocol: 1, artifactId: ${JSON.stringify(params.artifactId)}, type: "ERROR", message: err.message }, "*");
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&": return "&amp;";
+      case "<": return "&lt;";
+      case ">": return "&gt;";
+      case '"': return "&quot;";
+      case "'": return "&#39;";
+      default: return char;
+    }
+  });
+}

@@ -288,9 +288,22 @@ html, body {
 .card-title {
   font-size: 16px;
   font-weight: 500;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   color: var(--text-primary);
   letter-spacing: 0.2px;
+}
+
+.card-badge {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--accent);
+  background: rgba(99, 102, 241, 0.1);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  padding: 2px 7px;
+  border-radius: 6px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
 }
 
 .card-description {

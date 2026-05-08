@@ -349,6 +349,28 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function iconForMime(mime) {
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "text/markdown") return "MD";
+  if (mime === "text/html") return "HTML";
+  if (mime && mime.startsWith("image/")) return "IMG";
+  if (mime && mime.startsWith("video/")) return "VID";
+  if (mime && mime.startsWith("audio/")) return "AUD";
+  return "\u25C9";
+}
+
+function labelForMime(mime) {
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "text/markdown") return "Markdown";
+  if (mime === "text/html") return "HTML";
+  if (mime === "image/svg+xml") return "SVG";
+  if (mime && mime.startsWith("image/")) return "Image";
+  if (mime && mime.startsWith("video/")) return "Video";
+  if (mime && mime.startsWith("audio/")) return "Audio";
+  if (mime && mime.startsWith("text/")) return "Text";
+  return mime || "Artifact";
+}
+
 // ── Grid View ──
 
 function renderGrid() {
@@ -451,11 +473,23 @@ function createCard(s, index) {
   // Preview thumbnail
   const preview = document.createElement("div");
   preview.className = "card-preview";
+  const previewUrl = s.preview_url || (s.artifact ? `/artifacts/${s.artifact.id}/view?preview=1` : `/surfaces/${s.id}/html`);
+  const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
+  const shouldUseIframePreview =
+    previewUrl &&
+    !mime.startsWith("video/") &&
+    !mime.startsWith("audio/") &&
+    mime !== "application/pdf" &&
+    s.artifact_kind !== "project";
   const hasExternalScripts = s.html && (s.html.includes('<script src') || s.html.includes('import('));
-  if (s.html && s.html.length < 8000 && !hasExternalScripts) {
+  if (shouldUseIframePreview) {
     const iframe = document.createElement("iframe");
-    iframe.sandbox = "allow-scripts";
-    iframe.srcdoc = s.html;
+    iframe.sandbox = "allow-scripts allow-same-origin";
+    if (s.html && s.html.length < 8000 && !hasExternalScripts) {
+      iframe.srcdoc = s.html;
+    } else {
+      iframe.src = previewUrl;
+    }
     iframe.tabIndex = -1;
     iframe.loading = "lazy";
     preview.appendChild(iframe);
@@ -465,7 +499,7 @@ function createCard(s, index) {
   } else {
     const iconEl = document.createElement("div");
     iconEl.className = "card-preview-icon";
-    iconEl.textContent = meta.icon || "\u25C9";
+    iconEl.textContent = meta.icon || iconForMime(mime);
     preview.appendChild(iconEl);
   }
   card.appendChild(preview);
@@ -476,6 +510,7 @@ function createCard(s, index) {
   body.innerHTML = `
     ${meta.icon ? `<span class="card-icon">${meta.icon}</span>` : ""}
     <div class="card-title">${escapeHtml(s.title)}</div>
+    ${mime ? `<div class="card-badge">${escapeHtml(labelForMime(mime))}</div>` : ""}
     ${meta.description ? `<div class="card-description">${escapeHtml(meta.description)}</div>` : ""}
     <div class="card-time">${timeAgo(s.updated_at)}</div>
   `;
@@ -508,7 +543,7 @@ async function renderSurface(id) {
 
   const iframe = document.createElement("iframe");
   iframe.className = "surface-frame";
-  iframe.src = `/surfaces/${surface.id}/html`;
+  iframe.src = surface.view_url || (surface.artifact ? `/artifacts/${surface.artifact.id}/view` : `/surfaces/${surface.id}/html`);
   view.appendChild(iframe);
 
   app.innerHTML = "";
@@ -518,8 +553,8 @@ async function renderSurface(id) {
   surfaceSSE = new EventSource("/surfaces/" + id + "/stream");
   surfaceSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
-    if (data.html) {
-      iframe.src = iframe.src;
+    if (data.html || data.reload || data.version_id) {
+      iframe.src = iframe.src.split("?")[0] + "?v=" + Date.now();
     }
     if (data.title) {
       const titleEl = view.querySelector(".surface-nav-title");

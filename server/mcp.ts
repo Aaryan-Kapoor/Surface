@@ -33,8 +33,9 @@ const mcp = new Server(
     },
     instructions: [
       "Surface is the user's universal display — you own it end-to-end. It's not just a canvas for pushing HTML, it's YOUR display to control.",
-      "You have full control: create/update/delete surfaces, execute JS in running surfaces, navigate the display, push notifications, and customize the entire look and feel.",
-      "IMPORTANT: Before creating a surface, ALWAYS call surface_list first to check if one already exists with a matching title or purpose. If it does, use surface_update to refresh it and display_navigate to open it — never create duplicates.",
+      "You have full control: create/update/delete artifacts, execute JS in running surfaces, navigate the display, push notifications, and customize the entire look and feel.",
+      "IMPORTANT: Before creating an artifact, ALWAYS call surface_list or artifact_list first to check if one already exists with a matching title or purpose. If it does, use artifact_update to refresh it and display_navigate to open it — never create duplicates.",
+      "Artifacts are durable user-owned files or projects. Surfaces are how artifacts are presented in the display. Prefer artifact_present_file for existing local files and artifact_create/artifact_update for new standalone content. Do not wrap markdown, PDFs, images, audio, or video in HTML just to show them.",
       "",
       "== THEMING (display_set_theme) ==",
       "Use 'css' for CSS customization. Target these classes: .surface-card (outer card), .card-preview (thumbnail area), .card-preview-overlay (gradient over preview), .card-preview-icon (icon fallback), .card-body/.card-title/.card-description/.card-time (card content), .grid (card grid), .grid-view (scroll container), .grid-header/.grid-title (header), .surface-nav/.back-btn/.surface-nav-title (surface view nav), .starfield/.star/.nebula (background effects), .empty-state/.empty-prompt/.empty-sub (empty state), .toast (notifications). Use specific selectors — wildcards like [class*=\"card\"] will break previews.",
@@ -64,6 +65,7 @@ const mcp = new Server(
       "== OTHER TOOLS ==",
       "Use display_navigate to force what's on screen. Use display_status to see what the user is currently viewing.",
       "Use surface_exec to run JS in a live surface — update counters, trigger animations, read DOM state — without replacing HTML.",
+      "Use artifact_list before creating new artifacts. Update an existing artifact when the new work has the same purpose. Use stable titles and complete file contents.",
       "Use display_notify for ephemeral messages (info/success/warning/error styles).",
       "Messages arrive as <channel source=\"surface\"> tags when users interact with surfaces.",
       "To embed PDFs: <iframe src='/proxy/pdf?url=ENCODED_URL'></iframe>",
@@ -73,7 +75,134 @@ const mcp = new Server(
   }
 );
 
-const TOOLS = [
+const ALL_TOOLS = [
+  {
+    name: "artifact_list",
+    description: "List durable artifacts, including file-backed artifacts and HTML surfaces.",
+    inputSchema: { type: "object" as const, properties: {} },
+  },
+  {
+    name: "artifact_read",
+    description: "Read an artifact's metadata, current version, and file manifest.",
+    inputSchema: {
+      type: "object" as const,
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "artifact_create",
+    description: "Create a durable artifact from complete content or a list of files.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        kind: { type: "string", enum: ["file", "html", "project", "external"] },
+        mime: { type: "string" },
+        path: { type: "string" },
+        content: { type: "string" },
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+              mime: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        },
+        metadata: { type: "object" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "artifact_update",
+    description: "Create a new immutable version of an existing artifact.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        kind: { type: "string", enum: ["file", "html", "project", "external"] },
+        mime: { type: "string" },
+        path: { type: "string" },
+        content: { type: "string" },
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+              mime: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        },
+        metadata: { type: "object" },
+        reason: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "artifact_versions",
+    description: "List immutable versions for an artifact.",
+    inputSchema: {
+      type: "object" as const,
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "artifact_rollback",
+    description: "Set an artifact's current version to an earlier version number or version ID.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        version: { type: ["string", "number"] },
+      },
+      required: ["id", "version"],
+    },
+  },
+  {
+    name: "artifact_delete",
+    description: "Delete an artifact and its surface view.",
+    inputSchema: {
+      type: "object" as const,
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "artifact_present_file",
+    description: "Present an existing local file in Surface without wrapping it in HTML.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        path: { type: "string", description: "Absolute or relative local file path" },
+        title: { type: "string" },
+        metadata: { type: "object" },
+        copy: { type: "boolean" },
+        open: { type: "boolean" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "artifact_open",
+    description: "Navigate the display to an artifact or surface by ID.",
+    inputSchema: {
+      type: "object" as const,
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
   {
     name: "surface_create",
     description: "Create a new surface with HTML/CSS/JS content.",
@@ -242,12 +371,59 @@ const TOOLS = [
   },
 ];
 
+const HIDDEN_COMPAT_TOOLS = new Set([
+  "artifact_open",
+  "surface_create",
+  "surface_read",
+  "surface_update",
+  "surface_delete",
+]);
+
+const TOOLS = ALL_TOOLS.filter((tool) => !HIDDEN_COMPAT_TOOLS.has(tool.name));
+
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
   const a = args as Record<string, any>;
   switch (name) {
+    case "artifact_list": {
+      const r = await api("GET", "/artifacts");
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_read": {
+      const r = await api("GET", `/artifacts/${a.id}`);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_create": {
+      const r = await api("POST", "/artifacts", a);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_update": {
+      const { id, ...rest } = a;
+      const r = await api("PUT", `/artifacts/${id}`, rest);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_versions": {
+      const r = await api("GET", `/artifacts/${a.id}/versions`);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_rollback": {
+      const r = await api("POST", `/artifacts/${a.id}/rollback`, { version: a.version });
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_delete": {
+      await api("DELETE", `/artifacts/${a.id}`);
+      return { content: [{ type: "text", text: `Deleted artifact ${a.id}` }] };
+    }
+    case "artifact_present_file": {
+      const r = await api("POST", "/artifacts/present-file", a);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+    case "artifact_open": {
+      await api("POST", "/display/navigate", { surface_id: a.id });
+      return { content: [{ type: "text", text: `Opened artifact ${a.id}` }] };
+    }
     case "surface_create": {
       const r = await api("POST", "/surfaces", a);
       return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };

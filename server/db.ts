@@ -2,6 +2,12 @@ import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { fileURLToPath } from "url";
+import {
+  createHtmlArtifactFromSurface,
+  deleteArtifact,
+  ensureArtifactTables,
+  syncHtmlArtifactFromSurface,
+} from "./artifacts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, "..", "surfaces.db");
@@ -28,6 +34,7 @@ export interface SurfaceListItem {
 export function initDb(): void {
   db = new Database(DB_PATH);
   db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE IF NOT EXISTS surfaces (
       id TEXT PRIMARY KEY,
@@ -38,8 +45,14 @@ export function initDb(): void {
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  ensureArtifactTables(db);
   initActionsTable();
   initDisplayConfigTable();
+}
+
+export function getDb(): Database.Database {
+  if (!db) throw new Error("Database has not been initialized");
+  return db;
 }
 
 export function createSurface(params: {
@@ -53,7 +66,9 @@ export function createSurface(params: {
   db.prepare(
     `INSERT INTO surfaces (id, title, html, metadata) VALUES (?, ?, ?, ?)`
   ).run(id, params.title, params.html, metadata);
-  return getSurface(id)!;
+  const surface = getSurface(id)!;
+  createHtmlArtifactFromSurface(db, surface);
+  return surface;
 }
 
 export function getSurface(id: string): Surface | undefined {
@@ -92,11 +107,14 @@ export function updateSurface(
     `UPDATE surfaces SET title = ?, html = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
   ).run(title, html, metadata, id);
 
-  return getSurface(id)!;
+  const surface = getSurface(id)!;
+  syncHtmlArtifactFromSurface(db, surface);
+  return surface;
 }
 
 export function deleteSurface(id: string): boolean {
   const result = db.prepare(`DELETE FROM surfaces WHERE id = ?`).run(id);
+  if (result.changes > 0) deleteArtifact(db, id);
   return result.changes > 0;
 }
 
@@ -119,10 +137,26 @@ export function initActionsTable(): void {
       action TEXT NOT NULL,
       data TEXT DEFAULT '{}',
       status TEXT DEFAULT 'pending',
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (surface_id) REFERENCES surfaces(id) ON DELETE CASCADE
+      created_at TEXT DEFAULT (datetime('now'))
     )
   `);
+  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(surface_actions)`).all() as Array<{ table: string }>;
+  if (foreignKeys.some((key) => key.table === "surfaces")) {
+    db.exec(`
+      ALTER TABLE surface_actions RENAME TO surface_actions_old;
+      CREATE TABLE surface_actions (
+        id TEXT PRIMARY KEY,
+        surface_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        data TEXT DEFAULT '{}',
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO surface_actions (id, surface_id, action, data, status, created_at)
+        SELECT id, surface_id, action, data, status, created_at FROM surface_actions_old;
+      DROP TABLE surface_actions_old;
+    `);
+  }
 }
 
 export function createAction(params: {

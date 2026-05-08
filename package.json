@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx server/index.ts",
     "mcp": "tsx server/mcp.ts",
+    "test:artifacts": "tsx test/artifacts.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {
