@@ -17,6 +17,8 @@ Universal display for AI agents. Agents create durable artifacts; Surface presen
 - `npm run test:e2e` - end-to-end test via OpenRouter
 - `npx tsc --noEmit` - TypeScript check
 
+For first-time setup by an external agent, follow `INSTALL_FOR_AGENTS.md`.
+
 ## Architecture
 
 - Artifacts are the source of truth for durable content, files, metadata, and version history.

@@ -29,6 +29,8 @@ Open `localhost:3000` — it appears instantly via SSE.
 
 ## Connect an Agent
 
+For a step-by-step agent bootstrap, read [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
+
 ### Claude Code / Cursor (MCP)
 
 Add to your MCP config:
