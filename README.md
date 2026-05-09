@@ -17,6 +17,13 @@ npm install
 npm run dev        # → http://localhost:3000
 ```
 
+For a persistent Linux user service:
+
+```bash
+./scripts/install-systemd-user-service.sh
+systemctl --user status surface.service --no-pager
+```
+
 Create a displayable HTML artifact:
 
 ```bash
@@ -30,6 +37,8 @@ Open `localhost:3000` — it appears instantly via SSE.
 ## Connect an Agent
 
 For a step-by-step agent bootstrap, read [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
+
+Surface is intended to run once as a local system/user service. Agents connect to the running service through MCP; they should not each start their own Surface server.
 
 ### Claude Code / Cursor (MCP)
 
@@ -152,15 +161,16 @@ curl -X POST localhost:3000/surfaces/my-game/exec \
 AI Agent (Claude, OpenClaw, etc.)
     │ MCP tools or HTTP
     ▼
-Surface Server (Express + SQLite + SSE)
+Surface Service (Express + SQLite + SSE)
     │ SSE live updates
     ▼
 Surface PWA (vanilla JS, hash routing, sandboxed iframes)
 ```
 
 - **Server**: Express 5, SQLite via better-sqlite3, SSE for real-time updates
+- **Service**: Run once as a Linux systemd user service for stable local availability
 - **Client**: Vanilla JS PWA, installable via Add to Home Screen
-- **MCP**: stdio transport, works with Claude Code, Cursor, OpenClaw, any MCP client
+- **MCP**: stdio adapter that connects to the already-running Surface service
 - **Surfaces**: Rendered in same-origin iframes (`/surfaces/:id/html`) so scripts work
 - **Previews**: Live iframe thumbnails for simple surfaces, icon fallback for complex ones
 - **PDFs**: Server-side proxy at `/proxy/pdf?url=` bypasses X-Frame-Options
@@ -199,4 +209,4 @@ The agent receives this via the `surface_actions` tool or channel notifications,
 - SSE for live updates
 - Vanilla JS PWA
 - MCP SDK (`@modelcontextprotocol/sdk`)
-- `tsx` for dev, `bun` for MCP server
+- `tsx` for dev, service, and MCP script execution

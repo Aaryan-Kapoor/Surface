@@ -1,6 +1,8 @@
 # Surface Architecture
 
-Surface is an artifact-backed display system for AI agents. The durable thing the user owns is an artifact; the live thing the PWA shows is a surface view of that artifact.
+Surface is an artifact-backed display service for AI agents. The durable thing the user owns is an artifact; the live thing the PWA shows is a surface view of that artifact.
+
+Surface is intended to run once as local infrastructure. Agents connect to it through MCP or HTTP; they do not own the service lifecycle.
 
 ## Core Model
 
@@ -13,6 +15,25 @@ Surface now separates durable content from presentation/runtime state:
 5. **Sandbox session**: reserved schema for future project/runtime execution.
 
 The old `surfaces` table still exists for migration fallback, but new writes should not use it as the source of truth. New HTML surfaces are created as `text/html` artifacts with an `index.html` file and a `surface_views` row.
+
+## Service Model
+
+The preferred runtime shape is:
+
+```text
+Surface service
+  owns SQLite, artifact workspace, PWA routes, SSE, display state
+
+Surface MCP server
+  lightweight stdio adapter
+  connects to Surface through SURFACE_URL
+
+Agents
+  connect through MCP/HTTP
+  do not start separate Surface instances
+```
+
+On Linux, `scripts/install-systemd-user-service.sh` installs a systemd user service named `surface.service`. Agents should check whether this service or `http://localhost:3000/surfaces` already exists before proposing setup.
 
 ## Data Model
 
@@ -160,6 +181,8 @@ The target architecture is:
 
 - SQLite is the index.
 - Workspace files are the durable artifact payload.
+- Surface runs as one local service.
+- MCP is an adapter to the running service.
 - Artifacts own content and history.
 - Surface views own display/card state.
 - Runtime actions belong to surfaces.

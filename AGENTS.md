@@ -7,12 +7,14 @@ Universal display for AI agents. Agents create durable artifacts; Surface presen
 - **Server**: Express 5 + SQLite (better-sqlite3) + SSE live updates
 - **Client**: Vanilla JS PWA, hash routing, sandboxed iframes via real routes
 - **Artifacts**: Versioned files under `SURFACE_WORKSPACE_DIR` / `~/surface`
-- **MCP**: `server/mcp.ts` exposes artifact CRUD, surface runtime actions, display control, theming, and exec
-- **Runtime**: `tsx` for dev server and MCP script via npm
+- **Service**: Surface should run once as a Linux systemd user service
+- **MCP**: `server/mcp.ts` is a stdio adapter that connects to the running Surface HTTP service
+- **Runtime**: `tsx` for dev, service, and MCP script execution
 
 ## Commands
 
 - `npm run dev` - start server on 0.0.0.0:3000
+- `npm run service` - service entrypoint used by systemd
 - `npm run test:artifacts` - artifact HTTP regression test
 - `npm run test:e2e` - end-to-end test via OpenRouter
 - `npx tsc --noEmit` - TypeScript check
@@ -22,6 +24,8 @@ For first-time setup by an external agent, follow `INSTALL_FOR_AGENTS.md`.
 ## Architecture
 
 - Artifacts are the source of truth for durable content, files, metadata, and version history.
+- Surface is local infrastructure: one service owns SQLite, artifact storage, display state, and SSE.
+- Agents connect through MCP/HTTP and should not each start their own Surface server.
 - Surface views are display/card projections of artifacts.
 - Legacy `surfaces` rows are compatibility fallback only; new writes should use artifacts.
 - `/surfaces` create/update/delete routes remain for old clients, but they operate on backing artifacts where possible.
@@ -32,6 +36,8 @@ For first-time setup by an external agent, follow `INSTALL_FOR_AGENTS.md`.
 ## MCP Guidance
 
 - Prefer `artifact_create`, `artifact_update`, `artifact_present_file`, and `artifact_delete` for content lifecycle.
+- Check whether the Surface service is already running before setting it up.
+- Ask the user before creating, enabling, restarting, stopping, or replacing the service.
 - Use `surface_list` for displayable cards and `artifact_list` for durable stored artifacts.
 - Use `display_navigate` to open an artifact-backed surface.
 - Use `surface_exec` for live JavaScript changes without creating a new artifact version.
