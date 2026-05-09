@@ -13,14 +13,15 @@ const TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "surface_create",
+      name: "artifact_create",
       description:
-        "Create a new surface. Push any HTML/CSS/JS content to the user's Surface app.",
+        "Create a durable artifact. Use text/html content for an interactive Surface app.",
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Display title for the surface" },
-          html: {
+          title: { type: "string", description: "Display title for the artifact" },
+          mime: { type: "string", description: "MIME type, usually text/html for apps" },
+          content: {
             type: "string",
             description: "Complete HTML content with inline CSS/JS",
           },
@@ -32,19 +33,19 @@ const TOOLS = [
             },
           },
         },
-        required: ["title", "html"],
+        required: ["title", "mime", "content"],
       },
     },
   },
   {
     type: "function" as const,
     function: {
-      name: "surface_read",
-      description: "Read a surface's current content including HTML.",
+      name: "artifact_read",
+      description: "Read an artifact's metadata, current version, and file manifest.",
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "The surface ID" },
+          id: { type: "string", description: "The artifact ID" },
         },
         required: ["id"],
       },
@@ -53,14 +54,15 @@ const TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "surface_update",
-      description: "Update a surface's content, title, or metadata.",
+      name: "artifact_update",
+      description: "Create a new immutable version of an artifact.",
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "The surface ID" },
+          id: { type: "string", description: "The artifact ID" },
           title: { type: "string", description: "New title" },
-          html: { type: "string", description: "New HTML content" },
+          mime: { type: "string", description: "MIME type, usually text/html for apps" },
+          content: { type: "string", description: "New complete file content" },
         },
         required: ["id"],
       },
@@ -69,12 +71,12 @@ const TOOLS = [
   {
     type: "function" as const,
     function: {
-      name: "surface_delete",
-      description: "Delete a surface.",
+      name: "artifact_delete",
+      description: "Delete an artifact and its surface view.",
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "The surface ID" },
+          id: { type: "string", description: "The artifact ID" },
         },
         required: ["id"],
       },
@@ -117,29 +119,29 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
   console.log(`  Tool: ${name}(${JSON.stringify(args).slice(0, 100)}...)`);
 
   switch (name) {
-    case "surface_create": {
-      const res = await fetch(`${SURFACE_URL}/surfaces`, {
+    case "artifact_create": {
+      const res = await fetch(`${SURFACE_URL}/artifacts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(args),
       });
       return JSON.stringify(await res.json());
     }
-    case "surface_read": {
-      const res = await fetch(`${SURFACE_URL}/surfaces/${args.id}`);
+    case "artifact_read": {
+      const res = await fetch(`${SURFACE_URL}/artifacts/${args.id}`);
       return JSON.stringify(await res.json());
     }
-    case "surface_update": {
+    case "artifact_update": {
       const { id, ...rest } = args;
-      const res = await fetch(`${SURFACE_URL}/surfaces/${id}`, {
+      const res = await fetch(`${SURFACE_URL}/artifacts/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(rest),
       });
       return JSON.stringify(await res.json());
     }
-    case "surface_delete": {
-      const res = await fetch(`${SURFACE_URL}/surfaces/${args.id}`, {
+    case "artifact_delete": {
+      const res = await fetch(`${SURFACE_URL}/artifacts/${args.id}`, {
         method: "DELETE",
       });
       return JSON.stringify(await res.json());
@@ -202,10 +204,14 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 1: Create a surface
+  const beforeListRes = await fetch(`${SURFACE_URL}/surfaces`);
+  const beforeSurfaces = await beforeListRes.json() as Array<{ id: string }>;
+  const beforeIds = new Set(beforeSurfaces.map((surface) => surface.id));
+
+  // Step 1: Create an artifact-backed surface
   console.log("Step 1: Ask LLM to create a simple interactive app...");
   const { messages, finalText: t1 } = await runConversation(
-    "Create a surface with a simple click counter app. It should have a big number in the center that increments when you click a button. Make it look nice with a dark theme. Use the surface_create tool."
+    "Create a displayable HTML artifact with a simple click counter app. It should have a big number in the center that increments when you click a button. Make it look nice with a dark theme. Use the artifact_create tool with mime text/html and complete HTML content."
   );
   console.log(`  LLM response: ${t1.slice(0, 150)}...`);
 
@@ -213,27 +219,28 @@ async function main() {
   const listRes = await fetch(`${SURFACE_URL}/surfaces`);
   const surfaces = await listRes.json() as Array<{ id: string; title: string }>;
   console.log(`  Surfaces after create: ${surfaces.length}`);
-  if (surfaces.length === 0) {
+  const createdSurface = surfaces.find((surface) => !beforeIds.has(surface.id));
+  if (!createdSurface) {
     console.error("  FAIL: No surfaces created!");
     process.exit(1);
   }
-  const surfaceId = surfaces[0].id;
+  const surfaceId = createdSurface.id;
   console.log(`  Created surface ID: ${surfaceId}`);
   console.log("  PASS\n");
 
-  // Step 2: Read the surface
-  console.log("Step 2: Ask LLM to read the surface and describe it...");
+  // Step 2: Read the artifact
+  console.log("Step 2: Ask LLM to read the artifact and describe it...");
   const { messages: msgs2, finalText: t2 } = await runConversation(
-    `Read the surface with ID "${surfaceId}" and tell me what it contains.`,
+    `Read the artifact with ID "${surfaceId}" and tell me what it contains.`,
     messages
   );
   console.log(`  LLM response: ${t2.slice(0, 200)}...`);
   console.log("  PASS\n");
 
-  // Step 3: Update the surface
-  console.log("Step 3: Ask LLM to update the surface...");
+  // Step 3: Update the artifact
+  console.log("Step 3: Ask LLM to update the artifact...");
   const { messages: msgs3, finalText: t3 } = await runConversation(
-    `Update the surface "${surfaceId}" - add a reset button that sets the counter back to 0. Keep the existing functionality.`,
+    `Update the artifact "${surfaceId}" - add a reset button that sets the counter back to 0. Keep the existing functionality. Use artifact_update with mime text/html and complete updated HTML content.`,
     msgs2
   );
   console.log(`  LLM response: ${t3.slice(0, 150)}...`);
@@ -246,10 +253,10 @@ async function main() {
   console.log(`  Updated HTML contains reset: ${hasReset}`);
   console.log("  PASS\n");
 
-  // Step 4: Delete the surface
-  console.log("Step 4: Ask LLM to delete the surface...");
+  // Step 4: Delete the artifact
+  console.log("Step 4: Ask LLM to delete the artifact...");
   const { finalText: t4 } = await runConversation(
-    `Delete the surface "${surfaceId}".`,
+    `Delete the artifact "${surfaceId}".`,
     msgs3
   );
   console.log(`  LLM response: ${t4.slice(0, 150)}...`);

@@ -189,7 +189,7 @@ parent.postMessage({
 }, '*');
 ```
 
-The agent receives this via `surface_actions` tool or channel notifications, and can respond with `surface_update`, `surface_exec`, or `reply`.
+The agent receives this via the `surface_actions` tool or channel notifications, and can respond with `artifact_update`, `surface_exec`, or `reply`.
 
 ## Stack
 
