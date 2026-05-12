@@ -12,6 +12,9 @@ Branch: `feature/artifact-architecture`
 - Kept legacy `surfaces` rows as read fallback only.
 - Hid redundant MCP compatibility tools from `ListTools`; artifact tools are now the advertised create/update path.
 - Updated MCP prompts to point agents at `artifact_create`, `artifact_update`, and `artifact_present_file`.
+- Documented Surface as a long-running Linux user service with MCP as a connector.
+- Added `scripts/install-systemd-user-service.sh` and `npm run service`.
+- Added `INSTALL_FOR_AGENTS.md` with service-detection and permission-before-setup flow.
 - Updated the PWA to render artifact-backed cards and full-screen views.
 - Added MIME badges, artifact preview/view routing, and artifact live reload via SSE.
 - Added `npm run test:artifacts`.
@@ -21,6 +24,7 @@ Branch: `feature/artifact-architecture`
 
 - `npx tsc --noEmit` passes.
 - `npm run test:artifacts` passes.
+- Linux service docs and helper are committed on this branch.
 - In-process HTTP check passes for `/surfaces` creating/updating artifact versions and serving current HTML.
 - Browser DOM check confirmed the grid renders with the artifact-backed test card and no console errors.
 
@@ -28,3 +32,4 @@ Branch: `feature/artifact-architecture`
 
 - Project/container sandbox execution is schema-only for now.
 - Legacy `surfaces` table removal is future migration work.
+- `.mcp.json` remains local machine config and is not committed.
