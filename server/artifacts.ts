@@ -99,80 +99,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".mmd": "application/vnd.mermaid",
 };
 
-export function ensureArtifactTables(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      mime TEXT,
-      renderer TEXT,
-      source_type TEXT NOT NULL,
-      current_version_id TEXT,
-      workspace_path TEXT,
-      metadata TEXT DEFAULT '{}',
-      deleted_at TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS artifact_versions (
-      id TEXT PRIMARY KEY,
-      artifact_id TEXT NOT NULL,
-      parent_version_id TEXT,
-      version INTEGER NOT NULL,
-      reason TEXT,
-      created_by TEXT,
-      manifest_json TEXT NOT NULL,
-      content_hash TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(artifact_id, version),
-      FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
-      FOREIGN KEY (parent_version_id) REFERENCES artifact_versions(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS artifact_files (
-      id TEXT PRIMARY KEY,
-      artifact_version_id TEXT NOT NULL,
-      path TEXT NOT NULL,
-      mime TEXT,
-      size_bytes INTEGER NOT NULL,
-      sha256 TEXT NOT NULL,
-      storage_kind TEXT NOT NULL,
-      storage_path TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now')),
-      UNIQUE(artifact_version_id, path),
-      FOREIGN KEY (artifact_version_id) REFERENCES artifact_versions(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS surface_views (
-      id TEXT PRIMARY KEY,
-      artifact_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      thumbnail_path TEXT,
-      metadata TEXT DEFAULT '{}',
-      pinned INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS sandbox_sessions (
-      id TEXT PRIMARY KEY,
-      artifact_id TEXT NOT NULL,
-      version_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      status TEXT NOT NULL,
-      preview_url TEXT,
-      port INTEGER,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT DEFAULT (datetime('now')),
-      last_used_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
-      FOREIGN KEY (version_id) REFERENCES artifact_versions(id) ON DELETE CASCADE
-    );
-  `);
-}
+// Schema lives in server/migrations.ts (migration v1, baseline). New schema
+// changes append a v2+ migration there.
 
 export function inferMime(filePath: string, fallback = "application/octet-stream"): string {
   return MIME_BY_EXT[path.extname(filePath).toLowerCase()] || fallback;
@@ -335,11 +263,6 @@ export function createArtifact(
   if (!params.files.length) throw new Error("at least one file is required");
 
   const id = params.id || uuidv4();
-  const existingAny = db.prepare(`SELECT id, deleted_at FROM artifacts WHERE id = ?`).get(id) as { id: string; deleted_at: string | null } | undefined;
-  if (existingAny && !existingAny.deleted_at) throw new Error(`Artifact already exists: ${id}`);
-  if (existingAny?.deleted_at) {
-    db.prepare(`DELETE FROM artifacts WHERE id = ?`).run(id);
-  }
   const firstPath = normalizeArtifactPath(params.files[0].path || "index.html");
   const mime = params.mime || params.files[0].mime || inferMime(firstPath);
   const kind = params.kind || (mime === "text/html" ? "html" : "file");
@@ -347,6 +270,18 @@ export function createArtifact(
   const artifactWorkspace = path.join(getWorkspaceDir(), "artifacts", id);
 
   const tx = db.transaction(() => {
+    // Existence + soft-delete recycle must happen inside the transaction so two
+    // concurrent creates with the same id don't both pass the check and step on
+    // each other's version rows.
+    const existingAny = db
+      .prepare(`SELECT id, deleted_at FROM artifacts WHERE id = ?`)
+      .get(id) as { id: string; deleted_at: string | null } | undefined;
+    if (existingAny && !existingAny.deleted_at) {
+      throw new Error(`Artifact already exists: ${id}`);
+    }
+    if (existingAny?.deleted_at) {
+      db.prepare(`DELETE FROM artifacts WHERE id = ?`).run(id);
+    }
     db.prepare(
       `INSERT INTO artifacts (id, title, kind, mime, renderer, source_type, workspace_path, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
@@ -430,6 +365,10 @@ export function updateArtifact(
 export function deleteArtifact(db: Database.Database, id: string): boolean {
   const result = db.prepare(`UPDATE artifacts SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`).run(id);
   db.prepare(`DELETE FROM surface_views WHERE artifact_id = ?`).run(id);
+  // Clear any pending user actions queued against this surface so they don't
+  // accumulate forever or wake `surface wait` listeners after the surface
+  // is gone.
+  db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
   return result.changes > 0;
 }
 

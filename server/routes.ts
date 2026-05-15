@@ -1,5 +1,7 @@
 import { Router } from "express";
+import dns from "node:dns/promises";
 import fs from "fs";
+import net from "node:net";
 import path from "path";
 
 // Optional webhook fan-out for surface actions. Set SURFACE_WEBHOOK_URL and
@@ -9,6 +11,22 @@ import path from "path";
 const WEBHOOK_URL = process.env.SURFACE_WEBHOOK_URL || process.env.OPENCLAW_GATEWAY_URL;
 const WEBHOOK_TOKEN = process.env.SURFACE_WEBHOOK_TOKEN || process.env.OPENCLAW_HOOKS_TOKEN;
 const WEBHOOK_PATH = process.env.SURFACE_WEBHOOK_PATH || "/hooks/agent";
+
+// Suppress webhook-failure notifications to at most one per minute so a broken
+// webhook doesn't flood the display with toasts.
+let lastWebhookNotifyAt = 0;
+const WEBHOOK_NOTIFY_THROTTLE_MS = 60_000;
+
+function notifyWebhookFailure(reason: string) {
+  const now = Date.now();
+  if (now - lastWebhookNotifyAt < WEBHOOK_NOTIFY_THROTTLE_MS) return;
+  lastWebhookNotifyAt = now;
+  broadcastGlobal("display_notify", {
+    text: `Webhook fan-out failed: ${reason}`,
+    duration: 5000,
+    style: "warning",
+  });
+}
 
 async function fanOutWebhook(payload: {
   surface_id: string;
@@ -28,10 +46,13 @@ async function fanOutWebhook(payload: {
       body: JSON.stringify({ type: "surface_action", ...payload }),
     });
     if (!res.ok) {
-      console.error(`[webhook] ${WEBHOOK_URL}${WEBHOOK_PATH} returned ${res.status}: ${await res.text()}`);
+      const body = await res.text();
+      console.error(`[webhook] ${WEBHOOK_URL}${WEBHOOK_PATH} returned ${res.status}: ${body}`);
+      notifyWebhookFailure(`${res.status} ${res.statusText}`);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.error(`[webhook] dispatch failed:`, err);
+    notifyWebhookFailure(err?.message || "network error");
   }
 }
 import {
@@ -256,7 +277,7 @@ router.post("/artifacts/present-file", (req, res) => {
 });
 
 router.post("/artifacts/link", (req, res) => {
-  const { path: linkPath, entry, title, metadata } = req.body;
+  const { path: linkPath, entry, title, metadata, open } = req.body;
   if (!linkPath) {
     res.status(400).json({ error: "path is required" });
     return;
@@ -268,6 +289,7 @@ router.post("/artifacts/link", (req, res) => {
   try {
     const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     res.status(201).json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -622,8 +644,17 @@ router.post("/display/reset", (_req, res) => {
 });
 
 // Get display status (presence + connection info)
+const PRESENCE_STALE_MS = 60_000;
+
 router.get("/display/status", (_req, res) => {
-  res.json(displayPresence);
+  const lastActivity = Date.parse(displayPresence.last_activity);
+  const stale = !Number.isFinite(lastActivity) || Date.now() - lastActivity > PRESENCE_STALE_MS;
+  res.json({
+    ...displayPresence,
+    stale,
+    current_view: stale ? "unknown" : displayPresence.current_view,
+    current_surface_id: stale ? null : displayPresence.current_surface_id,
+  });
 });
 
 // PWA reports presence
@@ -878,8 +909,31 @@ router.get("/api/nexlayer/status", async (req, res) => {
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4";
+const CHAT_RATE_LIMIT = Math.max(1, Number(process.env.SURFACE_CHAT_RATE_LIMIT || 30));
+const CHAT_RATE_WINDOW_MS = 60_000;
+const chatRateState = { count: 0, windowStart: 0 };
+
+function chatRateAllow(): { ok: true } | { ok: false; retryAfter: number } {
+  const now = Date.now();
+  if (now - chatRateState.windowStart >= CHAT_RATE_WINDOW_MS) {
+    chatRateState.windowStart = now;
+    chatRateState.count = 0;
+  }
+  if (chatRateState.count >= CHAT_RATE_LIMIT) {
+    const retryAfter = Math.max(1, Math.ceil((chatRateState.windowStart + CHAT_RATE_WINDOW_MS - now) / 1000));
+    return { ok: false, retryAfter };
+  }
+  chatRateState.count++;
+  return { ok: true };
+}
 
 router.post("/api/chat", async (req, res) => {
+  const gate = chatRateAllow();
+  if (!gate.ok) {
+    res.setHeader("Retry-After", String(gate.retryAfter));
+    res.status(429).json({ error: `chat rate limit exceeded (${CHAT_RATE_LIMIT}/min)`, retry_after: gate.retryAfter });
+    return;
+  }
   if (!OPENROUTER_API_KEY) {
     res.status(500).json({ error: "OPENROUTER_API_KEY not configured" });
     return;
@@ -928,17 +982,79 @@ router.post("/api/chat", async (req, res) => {
   }
 });
 
-// PDF proxy — bypasses X-Frame-Options so surfaces can embed PDFs
+// Returns true if the IP literal is loopback, private (RFC1918), link-local,
+// IPv4-mapped IPv6, ULA, or otherwise off-limits for outbound SSRF.
+function isPrivateIp(ip: string): boolean {
+  const v = net.isIP(ip);
+  if (v === 4) {
+    const parts = ip.split(".").map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 127) return true;
+    if (a === 10) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a >= 224) return true; // multicast + reserved
+    return false;
+  }
+  if (v === 6) {
+    const lower = ip.toLowerCase();
+    if (lower === "::" || lower === "::1") return true;
+    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // fe80::/10
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7
+    if (lower.startsWith("ff")) return true; // multicast
+    if (lower.startsWith("::ffff:")) {
+      const v4 = lower.slice(7);
+      if (net.isIP(v4) === 4) return isPrivateIp(v4);
+    }
+    return false;
+  }
+  return true; // not an IP literal: caller should resolve first
+}
+
+async function resolvesPrivate(hostname: string): Promise<boolean> {
+  if (net.isIP(hostname) !== 0) return isPrivateIp(hostname);
+  try {
+    const addresses = await dns.lookup(hostname, { all: true });
+    if (addresses.length === 0) return true;
+    return addresses.some((a) => isPrivateIp(a.address));
+  } catch {
+    return true; // fail-closed
+  }
+}
+
+// PDF proxy — bypasses X-Frame-Options so surfaces can embed PDFs.
+// Refuses URLs that resolve to loopback / RFC1918 / link-local / metadata IPs
+// to defeat trivial SSRF through this endpoint.
 router.get("/proxy/pdf", async (req, res) => {
   const url = req.query.url as string;
   if (!url || !/^https?:\/\//.test(url)) {
     res.status(400).json({ error: "url query param required" });
     return;
   }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    res.status(400).json({ error: "invalid url" });
+    return;
+  }
+  if (await resolvesPrivate(parsed.hostname)) {
+    res.status(403).json({ error: "host resolves to a private or loopback address" });
+    return;
+  }
   try {
     const upstream = await fetch(url, {
       headers: { "User-Agent": "Surface/1.0" },
+      redirect: "manual",
     });
+    if (upstream.status >= 300 && upstream.status < 400) {
+      // Don't follow redirects automatically — a redirect could bounce us into
+      // a private IP. The caller can resolve the redirect target themselves.
+      res.status(502).json({ error: "upstream redirected; pass the final URL directly" });
+      return;
+    }
     if (!upstream.ok) {
       res.status(upstream.status).send(`Upstream ${upstream.status}`);
       return;

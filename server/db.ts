@@ -1,8 +1,8 @@
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
-import { deleteArtifact, ensureArtifactTables } from "./artifacts.js";
+import { deleteArtifact } from "./artifacts.js";
 import { bootstrapDataDir, getDbPath } from "./paths.js";
-import { runMigrations } from "./migrations.js";
+import { dropLegacySurfaceActionsForeignKey, runMigrations } from "./migrations.js";
 
 let db: Database.Database;
 
@@ -23,20 +23,8 @@ export function initDb(): void {
   db = new Database(getDbPath());
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS surfaces (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      html TEXT NOT NULL,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  ensureArtifactTables(db);
-  initActionsTable();
-  initDisplayConfigTable();
   runMigrations(db);
+  dropLegacySurfaceActionsForeignKey(db);
 }
 
 export function getDb(): Database.Database {
@@ -52,7 +40,12 @@ export function getSurface(id: string): Surface | undefined {
 
 export function deleteSurface(id: string): boolean {
   const result = db.prepare(`DELETE FROM surfaces WHERE id = ?`).run(id);
-  if (result.changes > 0) deleteArtifact(db, id);
+  if (result.changes > 0) {
+    deleteArtifact(db, id);
+    // Belt-and-suspenders: deleteArtifact also clears actions, but if the
+    // legacy surface never had a mirror artifact, clear actions here too.
+    db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
+  }
   return result.changes > 0;
 }
 
@@ -65,36 +58,6 @@ export interface SurfaceAction {
   data: string;
   status: string;
   created_at: string;
-}
-
-export function initActionsTable(): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS surface_actions (
-      id TEXT PRIMARY KEY,
-      surface_id TEXT NOT NULL,
-      action TEXT NOT NULL,
-      data TEXT DEFAULT '{}',
-      status TEXT DEFAULT 'pending',
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  const foreignKeys = db.prepare(`PRAGMA foreign_key_list(surface_actions)`).all() as Array<{ table: string }>;
-  if (foreignKeys.some((key) => key.table === "surfaces")) {
-    db.exec(`
-      ALTER TABLE surface_actions RENAME TO surface_actions_old;
-      CREATE TABLE surface_actions (
-        id TEXT PRIMARY KEY,
-        surface_id TEXT NOT NULL,
-        action TEXT NOT NULL,
-        data TEXT DEFAULT '{}',
-        status TEXT DEFAULT 'pending',
-        created_at TEXT DEFAULT (datetime('now'))
-      );
-      INSERT INTO surface_actions (id, surface_id, action, data, status, created_at)
-        SELECT id, surface_id, action, data, status, created_at FROM surface_actions_old;
-      DROP TABLE surface_actions_old;
-    `);
-  }
 }
 
 export function createAction(params: {
@@ -129,15 +92,6 @@ export function ackAction(id: string): boolean {
 }
 
 // ── Display Config ──
-
-export function initDisplayConfigTable(): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS display_config (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    )
-  `);
-}
 
 export function getDisplayConfig(): Record<string, any> {
   const row = db.prepare(`SELECT value FROM display_config WHERE key = 'theme'`).get() as { value: string } | undefined;

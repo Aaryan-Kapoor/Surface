@@ -119,7 +119,10 @@ Surface binds to `127.0.0.1` by default. Non-loopback binds require `SURFACE_TOK
 
 - Surface trusts the local user, every connected agent, and every installed artifact.
 - `POST /artifacts/present-file`, `POST /surfaces/:id/exec`, `GET /proxy/pdf`, and `POST /api/chat` are powerful by design; they require authenticated access for non-loopback binds.
-- Linked artifacts respect `SURFACE_LINK_ROOTS` (colon-separated allow-list) when set.
+- `/proxy/pdf` refuses URLs resolving to loopback, RFC1918, link-local, IPv6 loopback/ULA, and IPv4-mapped variants. Defeats trivial SSRF to cloud metadata and local services.
+- `/api/chat` has an in-memory rate limit (default 30 requests/minute, override with `SURFACE_CHAT_RATE_LIMIT`).
+- Linked artifacts respect `SURFACE_LINK_ROOTS` (colon-separated allow-list) when set. Symlinks are resolved with `fs.realpathSync` at both link time and read time.
+- PDFs render with the browser's native `<iframe src=...>` viewer; no JS PDF library is bundled.
 
 ## Deferred / known issues
 

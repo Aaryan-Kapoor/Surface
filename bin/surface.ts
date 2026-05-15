@@ -44,7 +44,7 @@ const CMD_HELP: Record<string, string> = {
   read: "surface read <id>",
   create: "surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--id <id>] [--metadata <json>]",
   update: "surface update <id> [--title <t>] [--mime <type>] [--file <path>|--content <s>|--content -] [--metadata <json>]",
-  link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--metadata <json>]",
+  link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--metadata <json>] [--no-open]",
   touch: "surface touch <id>",
   present: "surface present <abs-path> [--title <t>] [--metadata <json>]",
   versions: "surface versions <id>",
@@ -67,6 +67,11 @@ interface ParsedArgs {
   flags: Record<string, string | boolean>;
 }
 
+// Flags that never take a value. Anything not listed here that's followed by a
+// non-`--` token consumes that token as its value. Adding a flag here prevents
+// it from silently swallowing the next positional argument.
+const BOOLEAN_FLAGS = new Set(["help", "no-ack", "no-open"]);
+
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -77,6 +82,8 @@ function parseArgs(argv: string[]): ParsedArgs {
       const eq = name.indexOf("=");
       if (eq !== -1) {
         flags[name.slice(0, eq)] = name.slice(eq + 1);
+      } else if (BOOLEAN_FLAGS.has(name)) {
+        flags[name] = true;
       } else {
         const next = argv[i + 1];
         if (next !== undefined && !next.startsWith("--")) {
@@ -227,6 +234,7 @@ async function main() {
       if (typeof flags.entry === "string") body.entry = flags.entry;
       const metadata = parseMetadata(flags);
       if (metadata) body.metadata = metadata;
+      if (flags["no-open"] === true) body.open = false;
       out(await call("POST", "/artifacts/link", body));
       return;
     }
