@@ -164,21 +164,35 @@ function showTutorialModal() {
     copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeHtml(label)}`;
     copyBtn.classList.toggle("modal-copy-btn--done", !!done);
   };
-  copyBtn.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(TUTORIAL_PROMPT);
-      setBtnLabel("Copied", true);
-      setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
-    } catch {
-      // Fallback: select the text so the user can ⌘C themselves
-      const pre = overlay.querySelector("#tutorial-prompt-text");
-      const range = document.createRange();
-      range.selectNodeContents(pre);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-      setBtnLabel("Select & ⌘C", false);
+  // Copy via the async Clipboard API; if blocked (non-secure context,
+  // permissions, focus), silently drop to a hidden-textarea +
+  // execCommand("copy") so the user still gets a real copy without
+  // having to ⌘C themselves.
+  const copyToClipboard = async (text) => {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch {}
     }
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    ta.style.pointerEvents = "none";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch {}
+    ta.remove();
+    return ok;
+  };
+  copyBtn.addEventListener("click", async () => {
+    const ok = await copyToClipboard(TUTORIAL_PROMPT);
+    setBtnLabel(ok ? "Copied" : "Copy failed", ok);
+    setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
   });
 
   requestAnimationFrame(() => overlay.classList.add("modal-overlay--visible"));
