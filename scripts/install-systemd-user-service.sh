@@ -28,7 +28,8 @@ After=network.target
 Type=simple
 WorkingDirectory=${REPO_DIR}
 Environment=NODE_ENV=production
-Environment=SURFACE_URL=http://localhost:3000
+Environment=SURFACE_BIND=127.0.0.1
+Environment=SURFACE_URL=http://127.0.0.1:3000
 ExecStart=${NPM_BIN} run service
 Restart=on-failure
 RestartSec=3

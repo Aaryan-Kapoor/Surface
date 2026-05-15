@@ -1,12 +1,12 @@
 import type Database from "better-sqlite3";
 import crypto from "crypto";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import { getWorkspaceDir } from "./paths.js";
 
 export type ArtifactKind = "file" | "html" | "project" | "external";
-export type ArtifactSourceType = "generated" | "presented_file" | "imported_url" | "project";
+export type ArtifactSourceType = "generated" | "presented_file" | "imported_url" | "project" | "linked";
 export type ArtifactStorageKind = "workspace" | "external";
 
 export interface Artifact {
@@ -68,11 +68,6 @@ export interface ArtifactInputFile {
   content: string | Buffer;
   mime?: string;
 }
-
-const WORKSPACE_DIR = path.resolve(
-  process.env.SURFACE_WORKSPACE_DIR ||
-    path.join(os.homedir(), "surface")
-);
 
 const MIME_BY_EXT: Record<string, string> = {
   ".html": "text/html",
@@ -177,11 +172,6 @@ export function ensureArtifactTables(db: Database.Database): void {
       FOREIGN KEY (version_id) REFERENCES artifact_versions(id) ON DELETE CASCADE
     );
   `);
-}
-
-export function getWorkspaceDir(): string {
-  fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
-  return WORKSPACE_DIR;
 }
 
 export function inferMime(filePath: string, fallback = "application/octet-stream"): string {
@@ -520,6 +510,144 @@ export function readArtifactFileContent(file: ArtifactFile): Buffer {
     return fs.readFileSync(file.storage_path);
   }
   return fs.readFileSync(file.storage_path);
+}
+
+export function isLinkedArtifact(artifact: Artifact | undefined): boolean {
+  return artifact?.source_type === "linked";
+}
+
+export function linkArtifact(
+  db: Database.Database,
+  params: {
+    path: string;
+    entry?: string;
+    title: string;
+    metadata?: Record<string, unknown>;
+  }
+) {
+  if (!params.path) throw new Error("path is required");
+  if (!params.title) throw new Error("title is required");
+
+  const absPath = path.resolve(params.path);
+  if (!fs.existsSync(absPath)) throw new Error(`Path does not exist: ${absPath}`);
+
+  // Resolve symlinks before any containment check so a symlink can't smuggle the
+  // real target past SURFACE_LINK_ROOTS or out of a linked directory root.
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(absPath);
+  } catch {
+    throw new Error(`Path does not exist: ${absPath}`);
+  }
+
+  const rootsEnv = process.env.SURFACE_LINK_ROOTS;
+  if (rootsEnv) {
+    const roots = rootsEnv
+      .split(":")
+      .map((r) => r.trim())
+      .filter(Boolean)
+      .map((r) => {
+        try { return fs.realpathSync(path.resolve(r)); }
+        catch { return path.resolve(r); }
+      });
+    const allowed = roots.some((root) => {
+      const sep = root.endsWith(path.sep) ? root : root + path.sep;
+      return realPath === root || realPath.startsWith(sep);
+    });
+    if (!allowed) {
+      throw new Error(`Path ${absPath} is not under any SURFACE_LINK_ROOTS root`);
+    }
+  }
+
+  const stat = fs.statSync(realPath);
+  const isDirectory = stat.isDirectory();
+
+  let workspaceRoot: string;
+  let entryRelPath: string;
+  let entryAbsPath: string;
+
+  if (isDirectory) {
+    if (!params.entry) throw new Error("entry is required when linking a directory");
+    workspaceRoot = realPath;
+    entryRelPath = normalizeArtifactPath(params.entry);
+    const candidate = path.resolve(workspaceRoot, entryRelPath);
+    const sep = workspaceRoot.endsWith(path.sep) ? workspaceRoot : workspaceRoot + path.sep;
+    if (candidate !== workspaceRoot && !candidate.startsWith(sep)) {
+      throw new Error(`Entry escapes linked root: ${entryRelPath}`);
+    }
+    if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) {
+      throw new Error(`Entry file not found: ${candidate}`);
+    }
+    // Re-verify against symlink-resolved paths.
+    let realEntry: string;
+    try { realEntry = fs.realpathSync(candidate); }
+    catch { throw new Error(`Entry file not found: ${candidate}`); }
+    if (realEntry !== workspaceRoot && !realEntry.startsWith(sep)) {
+      throw new Error(`Entry escapes linked root via symlink: ${entryRelPath}`);
+    }
+    entryAbsPath = realEntry;
+  } else {
+    workspaceRoot = path.dirname(realPath);
+    entryRelPath = path.basename(realPath);
+    entryAbsPath = realPath;
+  }
+
+  const data = fs.readFileSync(entryAbsPath);
+  const mime = inferMime(entryAbsPath);
+  const sha256 = crypto.createHash("sha256").update(data).digest("hex");
+  const kind: ArtifactKind = mime === "text/html" ? "html" : "file";
+
+  const artifactId = uuidv4();
+  const versionId = uuidv4();
+  const fileId = uuidv4();
+  const metadataJson = JSON.stringify({
+    icon: iconForMime(mime),
+    description: `linked from ${absPath}`,
+    original_path: absPath,
+    linked: true,
+    ...(params.metadata || {}),
+  });
+
+  const manifest = {
+    artifact_id: artifactId,
+    version: 1,
+    linked: true,
+    workspace_path: workspaceRoot,
+    files: [{ path: entryRelPath, mime, size_bytes: data.length, sha256 }],
+  };
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO artifacts (id, title, kind, mime, renderer, source_type, workspace_path, metadata, current_version_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(artifactId, params.title, kind, mime, null, "linked", workspaceRoot, metadataJson, versionId);
+
+    db.prepare(
+      `INSERT INTO artifact_versions (id, artifact_id, parent_version_id, version, reason, created_by, manifest_json, content_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(versionId, artifactId, null, 1, "link", null, JSON.stringify(manifest), sha256);
+
+    db.prepare(
+      `INSERT INTO artifact_files (id, artifact_version_id, path, mime, size_bytes, sha256, storage_kind, storage_path)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(fileId, versionId, entryRelPath, mime, data.length, sha256, "external", entryAbsPath);
+
+    db.prepare(
+      `INSERT OR REPLACE INTO surface_views (id, artifact_id, title, metadata, updated_at)
+       VALUES (?, ?, ?, ?, datetime('now'))`
+    ).run(artifactId, artifactId, params.title, metadataJson);
+  });
+  tx();
+
+  return readArtifact(db, artifactId)!;
+}
+
+export function touchArtifact(db: Database.Database, id: string): boolean {
+  const artifact = getArtifact(db, id);
+  if (!artifact) return false;
+  db.prepare(`UPDATE artifacts SET updated_at = datetime('now') WHERE id = ?`).run(id);
+  db.prepare(`UPDATE surface_views SET updated_at = datetime('now') WHERE artifact_id = ?`).run(id);
+  return true;
 }
 
 function createArtifactVersion(

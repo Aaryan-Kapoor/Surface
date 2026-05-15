@@ -1,43 +1,26 @@
 # Surface Architecture
 
-Surface is an artifact-backed display service for AI agents. The durable thing the user owns is an artifact; the live thing the PWA shows is a surface view of that artifact.
+## Goal
 
-Surface is intended to run once as local infrastructure. Agents connect to it through MCP or HTTP; they do not own the service lifecycle.
+Surface is a single-user, single-deployment, self-hosted display service. One long-running process owns SQLite, an artifact workspace, the PWA, SSE, and display state. Multiple AI agents push content and react to user clicks through a single shared CLI; no per-agent protocol negotiation, no separate Surface processes.
 
-## Core Model
+## Process model
 
-Surface now separates durable content from presentation/runtime state:
-
-1. **Artifact**: durable user-owned content. It has an ID, title, kind, MIME type, metadata, source type, workspace path, and a pointer to the current version.
-2. **Artifact version**: immutable snapshot of an artifact at a point in time.
-3. **Artifact file**: one file inside a version, stored under `SURFACE_WORKSPACE_DIR`.
-4. **Surface view**: display/card projection of an artifact in the PWA grid.
-5. **Sandbox session**: reserved schema for future project/runtime execution.
-
-The old `surfaces` table still exists for migration fallback, but new writes should not use it as the source of truth. New HTML surfaces are created as `text/html` artifacts with an `index.html` file and a `surface_views` row.
-
-## Service Model
-
-The preferred runtime shape is:
-
-```text
-Surface service
-  owns SQLite, artifact workspace, PWA routes, SSE, display state
-
-Surface MCP server
-  lightweight stdio adapter
-  connects to Surface through SURFACE_URL
-
-Agents
-  connect through MCP/HTTP
-  do not start separate Surface instances
+```
+Agent A (Claude Code) ─┐
+Agent B (Cursor)       ├─► surface CLI ──► HTTP ──► Surface service ──► SQLite + ~/.surface/artifacts/
+Agent C (custom shell) ┘                            (Express + SSE)              │
+                                                            │                    └─► PWA on 127.0.0.1:3000
+                                                            └─► optional webhook ──► external agent gateway
 ```
 
-On Linux, `scripts/install-systemd-user-service.sh` installs a systemd user service named `surface.service`. Agents should check whether this service or `http://localhost:3000/surfaces` already exists before proposing setup.
+- **Surface service** (`server/`): Express 5 on `127.0.0.1:3000` by default. Owns the SQLite DB, the artifact workspace, the SSE fan-out, and the display state.
+- **CLI** (`bin/surface.ts`): canonical agent client. Mirrors the HTTP API as subcommands. Every agent uses the same binary.
+- **SKILL.md** (repo root): discovery document agents read to know when/how to use the CLI.
+- **PWA** (`client/`): vanilla JS, hash routing, sandboxed iframes loaded from `/surfaces/:id/html` (real origin so scripts work).
+- **MCP adapter** (`archived/mcp.ts`): preserved for legacy users; no longer the recommended path.
 
-## Data Model
-
-The artifact tables are created in `server/artifacts.ts`:
+## Data model
 
 ```sql
 artifacts(id, title, kind, mime, renderer, source_type, current_version_id, workspace_path, metadata, deleted_at, created_at, updated_at)
@@ -45,26 +28,27 @@ artifact_versions(id, artifact_id, parent_version_id, version, reason, created_b
 artifact_files(id, artifact_version_id, path, mime, size_bytes, sha256, storage_kind, storage_path, created_at)
 surface_views(id, artifact_id, title, thumbnail_path, metadata, pinned, created_at, updated_at)
 sandbox_sessions(id, artifact_id, version_id, provider, status, preview_url, port, metadata, created_at, last_used_at)
+surface_actions(id, surface_id, action, data, status, created_at)
+display_config(key, value)
+surfaces(id, title, html, metadata, created_at, updated_at)   -- legacy fallback, read-only
 ```
 
-The legacy table remains in `server/db.ts`:
+Schema is versioned via `PRAGMA user_version` and migrated through `server/migrations.ts`. The baseline is v1.
 
-```sql
-surfaces(id, title, html, metadata, created_at, updated_at)
+Two artifact source types matter:
+
+- **Workspace artifacts** (`source_type: "generated" | "presented_file"`, `storage_kind: "workspace"`) — Surface owns the bytes under `~/.surface/artifacts/{id}/versions/{n}/files/...`. Versioned, immutable per version, supports `update` and `rollback`.
+- **Linked artifacts** (`source_type: "linked"`, `storage_kind: "external"`) — the bytes live at an absolute path on disk owned by the agent's project. Surface re-serves them. One version row per link (no history). `update` and `rollback` return 409; the agent calls `touch` after editing.
+
+Legacy `surfaces` rows are read fallback only. New writes go through artifacts.
+
+## Filesystem layout
+
 ```
-
-That table is now compatibility data only. Routes prefer artifacts first and fall back to legacy rows only when no artifact exists.
-
-## Workspace Layout
-
-Artifacts are stored as files under:
-
-```text
-SURFACE_WORKSPACE_DIR=~/surface
-
-~/surface/
+~/.surface/
+  db.sqlite                              (+ -wal / -shm)
   artifacts/
-    {artifactId}/
+    {artifact-id}/
       versions/
         1/
           manifest.json
@@ -76,116 +60,79 @@ SURFACE_WORKSPACE_DIR=~/surface
             index.html
 ```
 
-Rules:
+Linked artifacts have `workspace_path` pointing outside `~/.surface/` (e.g. `/home/user/projectA/`). The file route resolves relative paths against that root, with `..`-rejection and an optional `SURFACE_LINK_ROOTS` allow-list.
 
-- Artifact paths are normalized relative paths.
-- Absolute paths, drive letters, empty segments, and `..` are rejected.
-- Every stored file gets a SHA-256 hash.
-- Existing local files are copied into the workspace by default for deterministic presentation.
+Override the data dir with `SURFACE_DATA_DIR`. The legacy `SURFACE_WORKSPACE_DIR` is still honored. On first boot Surface copies legacy `<repo>/surfaces.db` and `~/surface/artifacts/` into `~/.surface/` if the new dir is empty.
 
-## HTTP API Shape
+## HTTP API
 
-Artifact APIs are canonical for durable content:
+| Surface group | Routes |
+|---|---|
+| Artifacts | `POST /artifacts`, `POST /artifacts/link`, `POST /artifacts/present-file`, `GET /artifacts`, `GET /artifacts/:id`, `PUT /artifacts/:id`, `DELETE /artifacts/:id`, `POST /artifacts/:id/touch`, `POST /artifacts/:id/rollback`, `GET /artifacts/:id/versions`, `GET /artifacts/:id/view`, `GET /artifacts/:id/files/*`, `GET /artifacts/:id/manifest` |
+| Surfaces (display projection) | `GET /surfaces`, `GET /surfaces/:id`, `GET /surfaces/:id/html`, `POST /surfaces/:id/actions`, `GET /surfaces/:id/actions`, `POST /surfaces/:id/exec`, `POST /surfaces/:id/reply`, `GET /surfaces/:id/stream` |
+| Actions queue | `GET /actions`, `POST /actions/:id/ack` |
+| Display | `GET /display/config`, `PUT /display/config`, `POST /display/reset`, `GET /display/status`, `POST /display/presence`, `POST /display/navigate`, `POST /display/notify`, `GET /display/features` |
+| SSE | `GET /stream` (global) |
+| Marketplace (gated) | `/marketplace/*` returns 404 unless `SURFACE_FEATURES_MARKETPLACE=1` |
+| Proxies | `POST /api/chat` (OpenRouter), `GET /proxy/pdf`, `POST /api/nexlayer/*` |
 
-```text
-GET    /artifacts
-POST   /artifacts
-GET    /artifacts/:id
-PUT    /artifacts/:id
-DELETE /artifacts/:id
-GET    /artifacts/:id/versions
-POST   /artifacts/:id/rollback
-GET    /artifacts/:id/manifest
-GET    /artifacts/:id/view
-GET    /artifacts/:id/files/*
-POST   /artifacts/present-file
+`PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for linked artifacts.
+
+## CLI
+
+`bin/surface.ts` is the canonical agent client. It accepts subcommands that mirror the HTTP API. JSON to stdout, JSON error to stderr, exit `0` / `1` / `2` / `3` (timeout). Reads `SURFACE_URL` and `SURFACE_TOKEN`.
+
+See `SKILL.md` at the repo root for the command spec and intent mapping.
+
+### Three delivery modes for user actions
+
+Surface gives agents three ways to react to `surface_action` events:
+
+1. **Pull** (`surface actions [<id>]` + `surface ack`) — agent polls.
+2. **Block-and-exit** (`surface wait [--id] [--action] [--timeout]`) — listens on the global SSE stream, filters client-side, ACKs on match, exits 0 with the action JSON. Initial pending-actions poll on start + after reconnect gives at-least-once delivery across SSE disconnects. Intended to be invoked as a background subprocess; the agent harness wakes the agent when the process exits.
+3. **Webhook fan-out** (`SURFACE_WEBHOOK_*`) — Surface POSTs a structured envelope to an external gateway. Only useful when a long-running gateway wants the push.
+
+Modes 1 and 2 require no extra infrastructure; mode 3 requires the gateway to be set up.
+
+## Agent contract
+
+Two documents, both at repo root:
+
+- **`SKILL.md`** — what `surface` does, when to use each command, conventions.
+- **`INSTALL_FOR_AGENTS.md`** — first-time bootstrap: verify/install the service, copy `SKILL.md` into the agent's skill directory, optionally walk the user through `docs/TUTORIAL.md`. Tracks state in a YAML frontmatter block agents update locally.
+
+## Webhook fan-out (optional)
+
+The webhook is one of three delivery modes for `surface_action` events (see "Three delivery modes" above). When users interact with a surface, Surface POSTs a structured envelope to `<SURFACE_WEBHOOK_URL><SURFACE_WEBHOOK_PATH>` (default path `/hooks/agent`) if `SURFACE_WEBHOOK_TOKEN` is set:
+
+```json
+{ "type": "surface_action", "surface_id": "...", "surface_title": "...", "action": "...", "data": {...}, "created_at": "..." }
 ```
 
-Surface APIs are display/runtime APIs:
+`OPENCLAW_GATEWAY_URL` / `OPENCLAW_HOOKS_TOKEN` are accepted as legacy aliases.
 
-```text
-GET    /surfaces
-GET    /surfaces/:id
-GET    /surfaces/:id/html
-POST   /surfaces/:id/actions
-GET    /surfaces/:id/actions
-POST   /surfaces/:id/exec
-POST   /surfaces/:id/reply
-GET    /surfaces/:id/stream
-```
+## Security boundary
 
-Compatibility routes still exist:
+Surface binds to `127.0.0.1` by default. Non-loopback binds require `SURFACE_TOKEN`; Surface refuses to boot otherwise. Loopback requests skip auth; non-loopback requests must present the token via `Authorization: Bearer` or `?token=`.
 
-```text
-POST   /surfaces
-PUT    /surfaces/:id
-DELETE /surfaces/:id
-```
+`SECURITY.md` documents the full threat model. Notable points:
 
-These routes now create, update, or delete backing artifacts when possible. They are kept for old clients and tests, not as the preferred API.
+- Surface trusts the local user, every connected agent, and every installed artifact.
+- `POST /artifacts/present-file`, `POST /surfaces/:id/exec`, `GET /proxy/pdf`, and `POST /api/chat` are powerful by design; they require authenticated access for non-loopback binds.
+- Linked artifacts respect `SURFACE_LINK_ROOTS` (colon-separated allow-list) when set.
 
-## Rendering
+## Deferred / known issues
 
-The PWA grid reads `GET /surfaces`, which returns displayable cards from `surface_views` plus any legacy fallback rows.
+The original review surfaced more changes than this branch ships. The items below are intentionally not done here:
 
-Full-screen artifact rendering uses:
+- **Iframe sandboxing** — surface iframes still load same-origin and can `fetch('/artifacts')` for every other artifact. Per-surface origin or strict `sandbox` attribute is a separate refactor.
+- **XSS in `renderArtifactShell`** — title/path values injected through `JSON.stringify` inside `<script>` blocks need a safer template (e.g., `<script type="application/json">` plus DOM lookup).
+- **Legacy `surfaces` table removal** — fallback reads still happen; eager migrate and drop in a follow-up.
+- **Renderer/overlay/home → artifacts** — these slots store raw HTML in `display_config` rather than as first-class artifacts. With the marketplace gated, urgency is lower.
+- **N+1 grid fetches** — the PWA fetches each surface individually after the listing; the listing already has enough for the cards.
+- **Concurrency on workspace `update`** — multiple agents racing `artifact_update` on the same workspace artifact can silently overwrite. `If-Match` version preconditions remain a follow-up. Linked artifacts dodge this entirely since the filesystem mediates.
+- **SSE keepalive** — long-idle connections die at NAT timeouts; add a 15-30s heartbeat.
 
-- `/artifacts/:id/view` for artifact-aware rendering.
-- `/artifacts/:id/files/*` for current-version file serving.
-- `/surfaces/:id/html` for iframe-compatible HTML loading.
+## Stack
 
-HTML artifacts redirect to their stored HTML file for a real origin. Non-HTML artifacts use a viewer shell for markdown, PDF, images, video/audio, SVG, text/code, and related MIME types.
-
-## MCP Contract
-
-The MCP prompt now treats artifacts as the source of truth:
-
-- Use `artifact_list` / `surface_list` before creating replacements.
-- Use `artifact_create` for new standalone content.
-- Use `artifact_update` for the same artifact purpose.
-- Use `artifact_present_file` for existing local files.
-- Use `display_navigate` to open an artifact-backed surface.
-- Use `surface_exec`, `surface_actions`, `surface_ack`, and `reply` for live runtime interaction.
-
-The MCP server keeps compatibility handlers for old clients, but it no longer advertises these redundant tools:
-
-- `artifact_open`
-- `surface_create`
-- `surface_read`
-- `surface_update`
-- `surface_delete`
-
-## Current Boundaries
-
-Implemented:
-
-- Artifact tables and workspace storage.
-- Immutable artifact versions.
-- File-backed render routes.
-- Artifact-backed surface cards.
-- Surface action, reply, exec, SSE, display navigation, notifications, and theming.
-- Compatibility `/surfaces` routes backed by artifacts.
-- Marketplace surface installs backed by artifacts.
-
-Still future work:
-
-- Eager migration or removal of old `surfaces` rows.
-- Thumbnail capture/cache by artifact version.
-- Project artifact manifests beyond the schema.
-- Local or remote sandbox providers.
-- Git backup of `SURFACE_WORKSPACE_DIR`.
-
-## Design Direction
-
-The target architecture is:
-
-- SQLite is the index.
-- Workspace files are the durable artifact payload.
-- Surface runs as one local service.
-- MCP is an adapter to the running service.
-- Artifacts own content and history.
-- Surface views own display/card state.
-- Runtime actions belong to surfaces.
-- Sandboxes are provider-backed sessions for project artifacts, not the foundation for simple files.
-
-This keeps simple artifacts deterministic while leaving room for richer app/project execution later.
+Express 5, better-sqlite3, native Node `fetch`, vanilla-JS PWA. Runtime: `tsx`. No bundler. No new client dependencies.

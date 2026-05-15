@@ -1,30 +1,37 @@
 import { Router } from "express";
+import fs from "fs";
+import path from "path";
 
-// OpenClaw fan-out (optional — set OPENCLAW_GATEWAY_URL and OPENCLAW_HOOKS_TOKEN in .env)
-const OPENCLAW_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL;
-const OPENCLAW_HOOKS_TOKEN = process.env.OPENCLAW_HOOKS_TOKEN;
+// Optional webhook fan-out for surface actions. Set SURFACE_WEBHOOK_URL and
+// SURFACE_WEBHOOK_TOKEN to wake an external agent gateway when users interact
+// with surfaces. OPENCLAW_GATEWAY_URL / OPENCLAW_HOOKS_TOKEN are kept as
+// legacy aliases for older configs.
+const WEBHOOK_URL = process.env.SURFACE_WEBHOOK_URL || process.env.OPENCLAW_GATEWAY_URL;
+const WEBHOOK_TOKEN = process.env.SURFACE_WEBHOOK_TOKEN || process.env.OPENCLAW_HOOKS_TOKEN;
+const WEBHOOK_PATH = process.env.SURFACE_WEBHOOK_PATH || "/hooks/agent";
 
-async function fanOutToOpenClaw(surfaceId: string, surfaceTitle: string, actionName: string, data: string) {
-  if (!OPENCLAW_GATEWAY_URL || !OPENCLAW_HOOKS_TOKEN) return;
+async function fanOutWebhook(payload: {
+  surface_id: string;
+  surface_title: string;
+  action: string;
+  data: unknown;
+  created_at: string;
+}) {
+  if (!WEBHOOK_URL || !WEBHOOK_TOKEN) return;
   try {
-    const res = await fetch(`${OPENCLAW_GATEWAY_URL}/hooks/agent`, {
+    const res = await fetch(`${WEBHOOK_URL}${WEBHOOK_PATH}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${OPENCLAW_HOOKS_TOKEN}`,
+        Authorization: `Bearer ${WEBHOOK_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        message: `[Surface Action] User triggered "${actionName}" on surface "${surfaceTitle}" (id: ${surfaceId}). Data: ${data}. Use the Surface MCP tools (artifact_read, artifact_update, surface_exec, reply) to respond.`,
-        name: "SurfaceAction",
-      }),
+      body: JSON.stringify({ type: "surface_action", ...payload }),
     });
     if (!res.ok) {
-      console.error(`[OpenClaw] hook returned ${res.status}: ${await res.text()}`);
-    } else {
-      console.log(`[OpenClaw] hook dispatched: ${actionName} on ${surfaceTitle}`);
+      console.error(`[webhook] ${WEBHOOK_URL}${WEBHOOK_PATH} returned ${res.status}: ${await res.text()}`);
     }
   } catch (err) {
-    console.error(`[OpenClaw] hook failed:`, err);
+    console.error(`[webhook] dispatch failed:`, err);
   }
 }
 import {
@@ -46,13 +53,17 @@ import {
   getArtifactFiles,
   getCurrentArtifactVersion,
   inferMime,
+  isLinkedArtifact,
+  linkArtifact,
   listArtifactCards,
   listArtifacts,
   listArtifactVersions,
+  normalizeArtifactPath,
   presentFile,
   readArtifact,
   readArtifactFileContent,
   setCurrentArtifactVersion,
+  touchArtifact,
   updateArtifact,
 } from "./artifacts.js";
 import {
@@ -244,10 +255,51 @@ router.post("/artifacts/present-file", (req, res) => {
   }
 });
 
+router.post("/artifacts/link", (req, res) => {
+  const { path: linkPath, entry, title, metadata } = req.body;
+  if (!linkPath) {
+    res.status(400).json({ error: "path is required" });
+    return;
+  }
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+  try {
+    const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post("/artifacts/:id/touch", (req, res) => {
+  const ok = touchArtifact(getDb(), req.params.id);
+  if (!ok) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  const artifact = getArtifact(getDb(), req.params.id);
+  broadcastGlobal("surface_updated", cardPayload(req.params.id));
+  broadcastToSurface(req.params.id, "surface_updated", {
+    id: req.params.id,
+    title: artifact?.title,
+    metadata: artifact?.metadata,
+    updated_at: artifact?.updated_at,
+    reload: true,
+  });
+  res.json({ touched: true });
+});
+
 router.post("/artifacts", (req, res) => {
   const { id, title, kind, mime, renderer, source_type, metadata, files, content, path: filePath } = req.body;
   if (!title) {
     res.status(400).json({ error: "title is required" });
+    return;
+  }
+  if (source_type === "linked") {
+    res.status(400).json({ error: "Use POST /artifacts/link to create linked artifacts" });
     return;
   }
   const inputFiles = Array.isArray(files)
@@ -297,6 +349,11 @@ router.post("/artifacts/:id/rollback", (req, res) => {
     res.status(400).json({ error: "version is required" });
     return;
   }
+  const existing = getArtifact(getDb(), req.params.id);
+  if (isLinkedArtifact(existing)) {
+    res.status(409).json({ error: "Linked artifacts have no version history; git is the source of truth." });
+    return;
+  }
   const result = setCurrentArtifactVersion(getDb(), req.params.id, version);
   if (!result) {
     res.status(404).json({ error: "Artifact version not found" });
@@ -321,6 +378,13 @@ router.put("/artifacts/:id", (req, res) => {
     : content !== undefined
       ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
       : undefined;
+  const existing = getArtifact(getDb(), req.params.id);
+  if (isLinkedArtifact(existing) && inputFiles) {
+    res.status(409).json({
+      error: "Linked artifacts are edited on disk. Use POST /artifacts/:id/touch after editing.",
+    });
+    return;
+  }
   try {
     const result = updateArtifact(getDb(), req.params.id, {
       title,
@@ -406,14 +470,57 @@ router.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
   const filePath = req.params[1].split("/").map(decodeURIComponent).join("/");
   try {
     const file = getArtifactFile(getDb(), artifactId, filePath);
-    if (!file) {
-      res.status(404).send("Artifact file not found");
+    if (file) {
+      const contentType = file.mime || inferMime(file.path);
+      const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
+      res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
+      res.send(readArtifactFileContent(file));
       return;
     }
-    const contentType = file.mime || inferMime(file.path);
-    const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
-    res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
-    res.send(readArtifactFileContent(file));
+    // Linked-artifact fallback: serve any file under workspace_path that wasn't pre-registered.
+    const artifact = getArtifact(getDb(), artifactId);
+    if (isLinkedArtifact(artifact) && artifact!.workspace_path) {
+      let normalized: string;
+      try {
+        normalized = normalizeArtifactPath(filePath);
+      } catch {
+        res.status(400).send("Invalid path");
+        return;
+      }
+      const root = path.resolve(artifact!.workspace_path);
+      const abs = path.resolve(root, normalized);
+      const sep = root.endsWith(path.sep) ? root : root + path.sep;
+      if (abs !== root && !abs.startsWith(sep)) {
+        res.status(403).send("Path escapes linked root");
+        return;
+      }
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        res.status(404).send("File not found");
+        return;
+      }
+      // Resolve symlinks and re-verify containment — a symlink inside the linked
+      // dir that points outside it must not leak host files.
+      let realAbs: string;
+      let realRoot: string;
+      try {
+        realAbs = fs.realpathSync(abs);
+        realRoot = fs.realpathSync(root);
+      } catch {
+        res.status(404).send("File not found");
+        return;
+      }
+      const realSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+      if (realAbs !== realRoot && !realAbs.startsWith(realSep)) {
+        res.status(403).send("Path escapes linked root");
+        return;
+      }
+      const mime = inferMime(realAbs);
+      const charset = mime.startsWith("text/") || mime === "application/json" || mime === "image/svg+xml";
+      res.setHeader("Content-Type", charset ? `${mime}; charset=utf-8` : mime);
+      res.send(fs.readFileSync(realAbs));
+      return;
+    }
+    res.status(404).send("Artifact file not found");
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -436,7 +543,13 @@ router.post("/surfaces/:id/actions", (req, res) => {
   }
   const act = createAction({ surface_id: req.params.id, action, data });
   const title = surface?.title || artifactInfo!.artifact.title;
-  fanOutToOpenClaw(req.params.id, title, action, JSON.stringify(data || {}));
+  fanOutWebhook({
+    surface_id: req.params.id,
+    surface_title: title,
+    action: act.action,
+    data: data ?? {},
+    created_at: act.created_at,
+  });
   broadcastGlobal("surface_action", {
     id: act.id,
     surface_id: req.params.id,
@@ -625,9 +738,21 @@ router.get("/display/overlay/html", (_req, res) => {
   res.send(config.overlay);
 });
 
-// ── Marketplace (The Grid) ──
+// ── Marketplace (disabled by default; gated by SURFACE_FEATURES_MARKETPLACE=1) ──
 
 import { catalog } from "../registry/catalog.js";
+
+const MARKETPLACE_ENABLED = process.env.SURFACE_FEATURES_MARKETPLACE === "1";
+
+router.use("/marketplace", (req, res, next) => {
+  if (MARKETPLACE_ENABLED) return next();
+  res.status(404).json({ error: "Marketplace is disabled. Set SURFACE_FEATURES_MARKETPLACE=1 to enable." });
+});
+
+// Feature flags surfaced to the PWA so it can hide UI for disabled features.
+router.get("/display/features", (_req, res) => {
+  res.json({ marketplace: MARKETPLACE_ENABLED });
+});
 
 // List marketplace items (optional category filter)
 router.get("/marketplace", (req, res) => {

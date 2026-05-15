@@ -1,17 +1,17 @@
 {
   "name": "surface",
   "version": "0.1.0",
-  "description": "The last app. A universal canvas for AI agents.",
+  "description": "The last app. A universal display for AI agents.",
   "type": "module",
   "scripts": {
     "dev": "tsx server/index.ts",
     "service": "tsx server/index.ts",
-    "mcp": "tsx server/mcp.ts",
+    "cli": "tsx bin/surface.ts",
     "test:artifacts": "tsx test/artifacts.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {
-    "surface-mcp": "./server/mcp.ts"
+    "surface": "./bin/surface.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",

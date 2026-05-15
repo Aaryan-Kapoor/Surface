@@ -4,6 +4,7 @@ let globalSSE = null;
 let surfaceSSE = null;
 let currentSurfaceId = null;
 let displayConfig = {};
+let features = { marketplace: false };
 
 // ── postMessage bridge (iframe → server) ──
 
@@ -400,7 +401,10 @@ function renderGrid() {
   const title = displayConfig.title || "Surface";
   const header = document.createElement("div");
   header.className = "grid-header";
-  header.innerHTML = `<div class="grid-title">${escapeHtml(title)}</div><button class="explore-btn" onclick="navigate('/explore')">Explore</button>`;
+  const exploreBtn = features.marketplace
+    ? `<button class="explore-btn" onclick="navigate('/explore')">Explore</button>`
+    : "";
+  header.innerHTML = `<div class="grid-title">${escapeHtml(title)}</div>${exploreBtn}`;
   gridView.appendChild(header);
 
   // Home widget (full HTML/JS iframe on the homescreen)
@@ -800,8 +804,11 @@ async function render() {
   const route = getRoute();
   if (route.view === "surface") {
     await renderSurface(route.id);
-  } else if (route.view === "explore") {
+  } else if (route.view === "explore" && features.marketplace) {
     await renderExplore();
+  } else if (route.view === "explore") {
+    navigate("/");
+    return;
   } else {
     const res = await fetch("/surfaces");
     surfaces = await res.json();
@@ -816,9 +823,12 @@ async function render() {
 
 // ── Init ──
 
-fetch("/display/config")
-  .then((r) => r.json())
-  .then((config) => {
+Promise.all([
+  fetch("/display/config").then((r) => r.json()).catch(() => ({})),
+  fetch("/display/features").then((r) => r.json()).catch(() => ({ marketplace: false })),
+])
+  .then(([config, feats]) => {
+    features = { marketplace: false, ...feats };
     applyTheme(config);
     return render();
   })

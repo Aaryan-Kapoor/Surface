@@ -1,16 +1,13 @@
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
-import path from "path";
-import { fileURLToPath } from "url";
 import {
   createHtmlArtifactFromSurface,
   deleteArtifact,
   ensureArtifactTables,
   syncHtmlArtifactFromSurface,
 } from "./artifacts.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, "..", "surfaces.db");
+import { bootstrapDataDir, getDbPath } from "./paths.js";
+import { runMigrations } from "./migrations.js";
 
 let db: Database.Database;
 
@@ -32,7 +29,8 @@ export interface SurfaceListItem {
 }
 
 export function initDb(): void {
-  db = new Database(DB_PATH);
+  bootstrapDataDir();
+  db = new Database(getDbPath());
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(`
@@ -48,6 +46,7 @@ export function initDb(): void {
   ensureArtifactTables(db);
   initActionsTable();
   initDisplayConfigTable();
+  runMigrations(db);
 }
 
 export function getDb(): Database.Database {

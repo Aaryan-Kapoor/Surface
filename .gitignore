@@ -3,6 +3,7 @@ dist/
 surfaces.db
 surfaces.db-shm
 surfaces.db-wal
+.mcp.json
 .env
 .env.*
 .env*

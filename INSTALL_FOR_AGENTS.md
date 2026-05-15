@@ -1,245 +1,137 @@
-# Surface Installation Guide for AI Agents
+---
+install_state:
+  service: pending          # pending | running | not_installed | failed
+  skill_saved_to: null      # absolute path where SKILL.md was copied, or null
+  tutorial: pending         # pending | in_progress | complete | skipped
+  surface_version: null     # set from package.json on successful install
+  installed_at: null        # ISO timestamp
+  notes: null               # free-form, for the next agent run
+---
 
-Read this entire file, then follow the steps. Target: connect agents to a single long-running local Surface service through MCP.
+# Surface — Install For Agents
 
-Surface should run like local infrastructure. Agents should not start their own private Surface instance unless the user explicitly asks for a temporary development run.
+This file is the canonical bootstrap routine. Read it top to bottom on every install attempt; you may exit early if the state block above says you're done.
 
-## Step 0: Read The Repo Protocol
+Surface is a single-user, single-deployment local service. The agent contract is two files: `SKILL.md` (when/how to use the CLI) and `docs/TUTORIAL.md` (first-run user onboarding). There is no per-agent protocol — every agent shells out to `surface`.
 
-Read `AGENTS.md` at the repo root first. It describes the artifact-first architecture, MCP tool contract, and local conventions.
+## State
 
-Companion files:
+The YAML frontmatter at the top of this file is your install state. Update it as you progress. Convention: agents edit this file locally; `git status` showing it as modified is expected. Don't commit your local changes back upstream.
 
-- `README.md` - user-facing setup and API overview
-- `docs/architecture.md` - current architecture details
-- `STATUS.md` - compact implementation status
+States:
 
-## Step 1: Check For An Existing Surface Service
+- `service`: is the Surface system service reachable on `127.0.0.1:3000`?
+- `skill_saved_to`: where you copied `SKILL.md` into the agent's own skills directory.
+- `tutorial`: have you walked the user through `docs/TUTORIAL.md`?
+- `surface_version`, `installed_at`: stamped on first complete install.
+- `notes`: anything the next agent should know.
 
-Before installing anything, check whether Surface is already running.
+## Early exit
+
+If `service: running` and `skill_saved_to` points at a file that still exists and `tutorial` is `complete` or `skipped`, you are done. Skip to "Sanity check" at the bottom.
+
+## Step 1 — Check the service
 
 ```bash
-curl -fsS http://localhost:3000/surfaces >/dev/null && echo "Surface HTTP service is running"
+curl -fsS http://127.0.0.1:3000/surfaces >/dev/null && echo "Surface is running"
+systemctl --user status surface.service --no-pager 2>/dev/null
 ```
 
-Then check for a systemd user service:
+If the HTTP check passes: set `service: running` and continue to Step 2.
+
+If not, ask the user before installing:
+
+> I don't see a running Surface service. Want me to install and start the systemd user service for this clone?
+
+If yes: `./scripts/install-systemd-user-service.sh`, then re-run the HTTP check. If still failing, set `service: failed` and `notes: <reason>` and stop — surface the failure to the user.
+
+If the user declines: set `service: not_installed` and stop. Don't proceed without a running service.
+
+## Step 2 — Save SKILL.md to your skills directory
+
+`SKILL.md` is at the repo root. Copy it into your own agent's skill directory so you can read it on future sessions without re-cloning.
+
+Known agent skill directories:
+
+- **Claude Code**: `~/.claude/skills/surface/SKILL.md`
+- **Cursor**: `~/.cursor/skills/surface/SKILL.md` (or workspace `.cursor/skills/`)
+- **Generic**: whatever path your agent uses for ambient skills
 
 ```bash
-systemctl --user status surface.service --no-pager
+mkdir -p ~/.claude/skills/surface
+cp SKILL.md ~/.claude/skills/surface/SKILL.md
 ```
 
-If Surface is already running and points to the expected repo/version, do not create another service. Continue to MCP registration.
+Set `skill_saved_to: <absolute path>`.
 
-If Surface is not running, ask the user before installing a service:
+If the agent has no skills directory convention, document the path in `notes` and read `SKILL.md` from the repo on every session.
 
-> I do not see a running Surface service. Do you want me to install and start a systemd user service for this repo?
+## Step 3 — Tutorial
 
-Only continue with service setup after the user approves.
+Ask the user:
 
-## Step 2: Clone And Install
+> Want me to walk you through Surface in five minutes? It covers creating content, hot reload from your project, and reacting to clicks.
+
+- If yes: set `tutorial: in_progress`, run through `docs/TUTORIAL.md` step by step, set `tutorial: complete` at the end.
+- If no: set `tutorial: skipped`.
+
+The tutorial is the single best onboarding mechanism. Skipping is fine, but don't silently bypass it — confirm with the user.
+
+## Step 4 — Stamp the install
+
+When everything above is green:
+
+```yaml
+service: running
+skill_saved_to: /abs/path/to/SKILL.md
+tutorial: complete         # or skipped
+surface_version: 0.1.0     # read from package.json
+installed_at: 2026-05-14T...Z
+```
+
+## Sanity check (always run)
 
 ```bash
-git clone https://github.com/Aaryan-Kapoor/Surface.git
-cd Surface
+surface --help          # CLI is on PATH (run npm link from the clone if not)
+surface list            # service reachable
+surface status          # display state
+```
+
+If `surface` is not on PATH:
+
+```bash
+cd /path/to/Surface
 npm install
+npm link                # creates a global symlink to ./bin/surface.ts
 ```
 
-If the user wants a specific branch:
+Alternative without `npm link`: invoke directly via `node_modules/.bin/surface` or `npx tsx /path/to/Surface/bin/surface.ts`.
 
-```bash
-git checkout feature/artifact-architecture
-npm install
-```
+## What to use the CLI for
 
-## Step 3: Configure Environment
+See `SKILL.md`. Quick reference:
 
-Create `.env` only if the user wants OpenRouter chat proxying or OpenClaw fan-out. Never commit `.env`.
+- `surface link <abs-path>` — preferred for files in the user's project (`surface touch <id>` after editing).
+- `surface create <title> --content -` — ad-hoc HTML pushed from stdin.
+- `surface present <abs-path>` — one-shot snapshot of a PDF/image/markdown.
+- `surface list`, `surface read`, `surface delete`, `surface open`, `surface exec`, `surface actions`, `surface reply`, `surface notify`, `surface theme`, `surface stream`.
 
-```text
-OPENROUTER_API_KEY=...
-OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
-OPENCLAW_HOOKS_TOKEN=...
-SURFACE_WORKSPACE_DIR=/home/<user>/surface
-PORT=3000
-```
+## Operating rules
 
-Notes:
+- Treat Surface as a system service. Don't start a second one; reuse the running instance.
+- Ask the user before installing, enabling, restarting, or stopping the service.
+- Before creating content, run `surface list` and reuse an existing artifact if one fits.
+- For files in the agent's working directory, prefer `surface link` over `surface create`.
+- Don't commit `.env`, `~/.surface/` contents, or any modifications to this file's state block.
 
-- `OPENROUTER_API_KEY` is only needed for `/api/chat`.
-- `OPENCLAW_GATEWAY_URL` and `OPENCLAW_HOOKS_TOKEN` are only needed if surface actions should wake an OpenClaw agent.
-- `SURFACE_WORKSPACE_DIR` is optional; default is `~/surface`.
-- `PORT` is optional; default is `3000`.
+## External agent gateway (optional)
 
-## Step 4: Install The Linux User Service
+Surface can fan out user actions to an external HTTP gateway. Two pieces:
 
-After user approval, install the systemd user service:
+1. **The gateway uses Surface** — point its tools at the `surface` CLI.
+2. **Surface notifies the gateway** — set `SURFACE_WEBHOOK_URL`, `SURFACE_WEBHOOK_TOKEN`, optionally `SURFACE_WEBHOOK_PATH` in the service `.env`. Default path: `/hooks/agent`. Payload is structured JSON: `{ type: "surface_action", surface_id, surface_title, action, data, created_at }`. `OPENCLAW_GATEWAY_URL` / `OPENCLAW_HOOKS_TOKEN` are accepted as legacy aliases.
 
-```bash
-./scripts/install-systemd-user-service.sh
-```
-
-Verify:
-
-```bash
-systemctl --user status surface.service --no-pager
-curl -fsS http://localhost:3000/surfaces
-```
-
-Useful commands:
-
-```bash
-systemctl --user restart surface.service
-systemctl --user stop surface.service
-journalctl --user -u surface.service -f
-```
-
-If the service should start after login without an active terminal session, the user may need lingering enabled:
-
-```bash
-loginctl enable-linger "$USER"
-```
-
-Do not run `loginctl enable-linger` without user approval.
-
-## Step 5: Register The MCP Server
-
-The MCP server is a lightweight stdio adapter. It connects to the already-running Surface HTTP service through `SURFACE_URL`; it does not own the Surface service lifecycle.
-
-Add Surface to the agent or OpenClaw MCP config:
-
-```json
-{
-  "mcpServers": {
-    "surface": {
-      "command": "npx",
-      "args": ["tsx", "/path/to/Surface/server/mcp.ts"],
-      "env": {
-        "SURFACE_URL": "http://localhost:3000"
-      }
-    }
-  }
-}
-```
-
-For a fully explicit local command:
-
-```json
-{
-  "mcpServers": {
-    "surface": {
-      "command": "node",
-      "args": [
-        "/path/to/Surface/node_modules/tsx/dist/cli.mjs",
-        "/path/to/Surface/server/mcp.ts"
-      ],
-      "env": {
-        "SURFACE_URL": "http://localhost:3000"
-      }
-    }
-  }
-}
-```
-
-Adjust paths to the actual clone location. Restart the MCP client after editing the config.
-
-## Step 6: Verify MCP Tools
-
-The MCP client should advertise artifact-first tools:
-
-- `artifact_list`
-- `artifact_read`
-- `artifact_create`
-- `artifact_update`
-- `artifact_versions`
-- `artifact_rollback`
-- `artifact_delete`
-- `artifact_present_file`
-- `surface_list`
-- `surface_actions`
-- `surface_ack`
-- `reply`
-- `display_set_theme`
-- `display_reset_theme`
-- `display_navigate`
-- `display_status`
-- `display_notify`
-- `surface_exec`
-
-It should not advertise legacy creation tools in new flows:
-
-- `surface_create`
-- `surface_read`
-- `surface_update`
-- `surface_delete`
-- `artifact_open`
-
-Compatibility handlers may still exist for old clients, but agents should use artifact tools.
-
-## Step 7: Create A Test Artifact
-
-Use MCP `artifact_create` with `mime: "text/html"` and complete HTML content:
-
-```json
-{
-  "title": "Agent Test Counter",
-  "mime": "text/html",
-  "content": "<!doctype html><html><body><button id='b'>0</button><script>b.onclick=()=>b.textContent=Number(b.textContent)+1</script></body></html>",
-  "metadata": {
-    "icon": "HTML",
-    "description": "MCP smoke test"
-  }
-}
-```
-
-Then:
-
-1. Call `surface_list` and confirm the new card exists.
-2. Call `display_navigate` with the artifact ID.
-3. Confirm the browser shows the artifact-backed surface.
-4. Use `artifact_update` for durable content changes.
-5. Use `surface_exec` only for transient live changes that should not create a new version.
-
-## Step 8: Verify Locally
-
-Run:
-
-```bash
-npx tsc --noEmit
-npm run test:artifacts
-```
-
-Optional OpenRouter E2E:
-
-```bash
-npm run test:e2e
-```
-
-`test:e2e` requires `OPENROUTER_API_KEY`.
-
-## Operating Rules For Agents
-
-- Treat Surface as a system/user service.
-- Check for an existing service before installing.
-- Ask the user before creating, enabling, restarting, stopping, or replacing a service.
-- Use `artifact_create` for new durable content.
-- Use `artifact_update` when modifying the same artifact purpose.
-- Use `artifact_present_file` when the user wants to display an existing local file.
-- Use `surface_list` before creating replacements.
-- Use `display_navigate` to control what the user sees.
-- Use `surface_actions`, `surface_ack`, and `reply` for two-way interaction.
-- Do not wrap markdown, PDFs, images, video, or audio in HTML unless the user asked for a custom viewer.
-- Do not commit `.env`, `surfaces.db*`, local MCP config paths, or workspace artifacts from `~/surface`.
-
-## OpenClaw Notes
-
-There are two separate integrations:
-
-1. **OpenClaw uses Surface MCP tools**: register `server/mcp.ts` in OpenClaw's MCP config.
-2. **Surface wakes OpenClaw on user actions**: set `OPENCLAW_GATEWAY_URL` and `OPENCLAW_HOOKS_TOKEN` in Surface's `.env`.
-
-Surface itself should be the long-running service. OpenClaw and other agents connect to it.
-
-## Upgrade
+## Upgrading
 
 ```bash
 cd /path/to/Surface
@@ -250,6 +142,8 @@ npm run test:artifacts
 systemctl --user restart surface.service
 ```
 
-Ask before restarting the service if the user has active work on the display.
+Ask before restarting if the user has active work on the display.
 
-After upgrading, re-check the MCP tool list. If new artifact tools appear, prefer them over older compatibility tools.
+## MCP (archived)
+
+Surface previously shipped an MCP stdio adapter. It now lives in `archived/mcp.ts` for users with existing MCP-based agent configs. New installs should use the CLI + `SKILL.md` path described here. See `archived/README.md` for details.

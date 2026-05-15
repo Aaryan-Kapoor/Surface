@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "surface": {
+      "command": "npx",
+      "args": ["tsx", "/absolute/path/to/Surface/server/mcp.ts"],
+      "env": {
+        "SURFACE_URL": "http://127.0.0.1:3000",
+        "SURFACE_TOKEN": ""
+      }
+    }
+  }
+}
