@@ -1,8 +1,10 @@
 /* ──────────────────────────────────────────────
-   Surface · the workshop bench
-   The default chrome. Themes override the
-   custom properties below; agents target the
-   class names below.
+   Surface · cosmic chrome
+   The default identity is a deep, slow, layered
+   sky: void → nebulae → 3-band parallax stars →
+   aurora ribbon → grain. Every surface in the
+   grid is a station floating in that sky.
+   Themes override the custom properties below.
    ────────────────────────────────────────────── */
 
 * {
@@ -12,26 +14,37 @@
 }
 
 :root {
-  /* Theme hooks (agents override these) */
-  --void: #07070a;
-  --glass: rgba(255, 255, 255, 0.025);
-  --glass-border: rgba(255, 255, 255, 0.07);
-  --glass-glow: rgba(255, 255, 255, 0.04);
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.42);
-  --text-ghost: rgba(255, 255, 255, 0.14);
-  --accent: #ff6b35;
-  --card-radius: 14px;
+  /* ── Theme hooks (agents override these) ── */
+  --void: #06070d;
+  --glass: rgba(255, 255, 255, 0.028);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-glow: rgba(255, 255, 255, 0.05);
+  --text-primary: rgba(255, 255, 255, 0.94);
+  --text-secondary: rgba(255, 255, 255, 0.50);
+  --text-ghost: rgba(255, 255, 255, 0.22);
+  --accent: #7dd3fc;
+  --card-radius: 16px;
 
-  /* Internal tokens (not theme-overridable; for shell-only use) */
-  --bench-line: rgba(255, 255, 255, 0.06);
-  --bench-grid: rgba(255, 255, 255, 0.012);
-  --hairline: rgba(255, 255, 255, 0.08);
-  --rail: rgba(255, 255, 255, 0.18);
-  --rail-glow: rgba(255, 107, 53, 0.55);
+  /* ── Internal cosmic tokens (not theme-overridable) ── */
+  --void-deep: #03040a;
+  --void-rim: #02030880;
+  --aurora-cyan: rgba(125, 211, 252, 0.16);
+  --aurora-violet: rgba(167, 139, 250, 0.14);
+  --aurora-magenta: rgba(232, 121, 249, 0.10);
+  --accent-violet: #a78bfa;
+  --accent-magenta: #e879f9;
+  --hairline: rgba(255, 255, 255, 0.07);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+
+  /* ── Type stack ── */
   --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --serif: "New York", Charter, "Iowan Old Style", "Hoefler Text", Cambria, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+
+  /* ── Easing ── */
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-quint: cubic-bezier(0.83, 0, 0.17, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 html, body {
@@ -43,8 +56,8 @@ html, body {
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  transition: background-color .6s cubic-bezier(.4, 0, .2, 1),
-              color .6s cubic-bezier(.4, 0, .2, 1);
+  transition: background-color .8s var(--ease-out-quart),
+              color .8s var(--ease-out-quart);
 }
 
 #app {
@@ -60,65 +73,14 @@ html, body {
 }
 
 /* ──────────────────────────────────────────────
-   Bench — graph-paper substrate + sweep
-   ────────────────────────────────────────────── */
-
-.bench {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden;
-  /* Graph paper at ~32px, almost invisible. Plus a soft top-vignette so
-     the rail reads cleanly against the canvas. */
-  background-image:
-    linear-gradient(to bottom, rgba(255, 107, 53, 0.025), transparent 220px),
-    linear-gradient(var(--bench-grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--bench-grid) 1px, transparent 1px);
-  background-size: 100% 100%, 32px 32px, 32px 32px;
-  background-position: 0 0, 0 0, 0 0;
-}
-
-.bench-sweep {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 280px;
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.012) 40%,
-    rgba(255, 107, 53, 0.045) 50%,
-    rgba(255, 255, 255, 0.012) 60%,
-    transparent 100%
-  );
-  filter: blur(2px);
-  animation: bench-sweep 14s linear infinite;
-  will-change: transform, opacity;
-}
-
-@keyframes bench-sweep {
-  0%   { transform: translateY(-30vh); opacity: 0; }
-  15%  { opacity: 1; }
-  85%  { opacity: 1; }
-  100% { transform: translateY(110vh); opacity: 0; }
-}
-
-/* SSE event → brief sweep stutter/flash. Set on .bench. */
-.bench.bench--pulse .bench-sweep {
-  animation: bench-sweep-pulse 1.4s cubic-bezier(.2, 0, .2, 1);
-}
-
-@keyframes bench-sweep-pulse {
-  0%   { opacity: 1; filter: blur(2px); transform: translateY(var(--pulse-y, 30vh)); }
-  20%  { opacity: 1; filter: blur(0px); background-image: linear-gradient(180deg, transparent 0%, rgba(255,107,53,0.18) 50%, transparent 100%); }
-  60%  { opacity: .9; filter: blur(2px); }
-  100% { opacity: 1; filter: blur(2px); transform: translateY(var(--pulse-end, 60vh)); }
-}
-
-/* ──────────────────────────────────────────────
-   Legacy starfield + nebula — kept for theming.
-   Off by default (agents can re-enable).
+   Space substrate
+   Layer order (z=0, all behind content):
+     1. Deep void gradient + radial vignette (body)
+     2. Two nebula blurs, opposite corners (.nebula)
+     3. Aurora ribbon — thin horizontal band, top
+     4. Three star layers, parallax
+     5. Comet — fires periodically from JS
+     6. Grain — subtle film noise overlay
    ────────────────────────────────────────────── */
 
 .starfield {
@@ -127,12 +89,55 @@ html, body {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
+  /* Deep radial vignette pulling focus toward center */
+  background:
+    radial-gradient(ellipse at 50% 45%, transparent 0%, var(--void-rim) 95%),
+    radial-gradient(ellipse at 50% 50%, #0a0c18 0%, var(--void) 60%, var(--void-deep) 100%);
 }
 
+/* Aurora ribbon — top of frame, slow L→R drift.
+   Coupled with a parent class .aurora-burst that brightens it on SSE. */
+.aurora {
+  position: fixed;
+  top: -60px;
+  left: -10%;
+  right: -10%;
+  height: 460px;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 65% 100% at 18% 0%, rgba(125, 211, 252, 0.32), transparent 65%),
+    radial-gradient(ellipse 55% 110% at 50% 5%, rgba(167, 139, 250, 0.26), transparent 60%),
+    radial-gradient(ellipse 60% 100% at 86% 0%, rgba(232, 121, 249, 0.20), transparent 65%);
+  filter: blur(50px);
+  opacity: 1;
+  mix-blend-mode: screen;
+  animation: aurora-drift 48s ease-in-out infinite alternate;
+  will-change: transform, filter;
+}
+
+@keyframes aurora-drift {
+  0%   { transform: translate3d(-30px, -10px, 0) scaleX(1); filter: blur(40px) hue-rotate(0deg); }
+  50%  { transform: translate3d(20px,   5px, 0) scaleX(1.08); filter: blur(46px) hue-rotate(-12deg); }
+  100% { transform: translate3d(40px, -20px, 0) scaleX(1.02); filter: blur(38px) hue-rotate(8deg); }
+}
+
+.starfield.aurora-burst .aurora {
+  animation: aurora-pulse 1.4s var(--ease-out-quart);
+}
+
+@keyframes aurora-pulse {
+  0%   { opacity: 0.85; filter: blur(40px) brightness(1); }
+  35%  { opacity: 1;    filter: blur(28px) brightness(1.45); }
+  100% { opacity: 0.85; filter: blur(40px) brightness(1); }
+}
+
+/* Star layers — three parallax bands */
 .star-layer {
   position: absolute;
   inset: -20px;
-  transition: transform 0.8s cubic-bezier(0.2, 0, 0.2, 1);
+  transition: transform 1.4s var(--ease-out-quart);
+  will-change: transform;
 }
 
 .star {
@@ -141,41 +146,101 @@ html, body {
   background: white;
 }
 
-.star--near { width: 2px; height: 2px; animation: twinkle-near 4s ease-in-out infinite; }
-.star--mid  { width: 1.5px; height: 1.5px; animation: twinkle-mid 6s ease-in-out infinite; }
-.star--far  { width: 1px; height: 1px; animation: twinkle-far 8s ease-in-out infinite; }
+.star--far  { width: 1px;   height: 1px;   animation: tw-far  9s ease-in-out infinite; }
+.star--mid  { width: 1.4px; height: 1.4px; animation: tw-mid  6.5s ease-in-out infinite; }
+.star--near {
+  width: 2px; height: 2px;
+  animation: tw-near 4.2s ease-in-out infinite;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
 
-@keyframes twinkle-near { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
-@keyframes twinkle-mid  { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
-@keyframes twinkle-far  { 0%, 100% { opacity: 0.1; } 50% { opacity: 0.35; } }
+@keyframes tw-far  { 0%, 100% { opacity: 0.15; } 50% { opacity: 0.40; } }
+@keyframes tw-mid  { 0%, 100% { opacity: 0.30; } 50% { opacity: 0.72; } }
+@keyframes tw-near { 0%, 100% { opacity: 0.55; transform: scale(1); }
+                     50%      { opacity: 1.00; transform: scale(1.18); } }
 
-@keyframes pulse-glow { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+/* Comet — fired from JS by appending an element with a random angle.
+   The element carries inline style `--cx / --cy / --angle`. */
+.comet {
+  position: absolute;
+  top: var(--cy, 20%);
+  left: var(--cx, -10%);
+  width: 240px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.95) 65%, rgba(125, 211, 252, 1) 100%);
+  transform-origin: 100% 50%;
+  transform: rotate(var(--angle, 18deg)) translateX(-100%);
+  opacity: 0;
+  filter: blur(0.5px) drop-shadow(0 0 4px rgba(125, 211, 252, 0.9));
+  animation: comet-streak 1.5s var(--ease-out-quart) forwards;
+  pointer-events: none;
+}
 
+@keyframes comet-streak {
+  0%   { opacity: 0;   transform: rotate(var(--angle, 18deg)) translateX(-100%) scaleX(0.4); }
+  18%  { opacity: 1; }
+  100% { opacity: 0;   transform: rotate(var(--angle, 18deg)) translateX(620px)  scaleX(1.4); }
+}
+
+/* Nebulae — broad colored blurs, very slow drift */
 .nebula {
   position: fixed;
   border-radius: 50%;
-  filter: blur(120px);
+  filter: blur(140px);
   pointer-events: none;
   z-index: 0;
-  animation: nebula-drift 30s ease-in-out infinite alternate;
+  mix-blend-mode: screen;
+  animation: nebula-drift 60s ease-in-out infinite alternate;
 }
 
 .nebula--1 {
-  width: 500px; height: 500px;
-  background: radial-gradient(circle, rgba(60, 20, 120, 0.15), transparent 70%);
-  top: -10%; right: -5%;
+  width: 620px; height: 620px;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.16), transparent 70%);
+  top: -14%; right: -8%;
 }
 
 .nebula--2 {
-  width: 400px; height: 400px;
-  background: radial-gradient(circle, rgba(20, 60, 120, 0.10), transparent 70%);
-  bottom: -10%; left: -5%;
-  animation-delay: -15s;
+  width: 520px; height: 520px;
+  background: radial-gradient(circle, rgba(232, 121, 249, 0.10), transparent 70%);
+  bottom: -16%; left: -6%;
+  animation-delay: -28s;
+  animation-duration: 78s;
+}
+
+.nebula--3 {
+  width: 380px; height: 380px;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.08), transparent 70%);
+  top: 55%; left: 40%;
+  animation-delay: -42s;
+  animation-duration: 95s;
 }
 
 @keyframes nebula-drift {
-  from { transform: translate(0, 0) scale(1); }
-  to   { transform: translate(30px, -20px) scale(1.1); }
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(36px, -28px, 0) scale(1.12); }
+}
+
+/* Grain — subtle film noise overlay, scaled SVG */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.7'/></svg>");
+  background-size: 180px 180px;
+  animation: grain-shift 1.6s steps(6) infinite;
+}
+
+@keyframes grain-shift {
+  0%   { background-position: 0 0; }
+  16%  { background-position: -20px 10px; }
+  33%  { background-position: 30px -15px; }
+  50%  { background-position: -5px 25px; }
+  66%  { background-position: 15px 5px; }
+  83%  { background-position: -25px -8px; }
+  100% { background-position: 0 0; }
 }
 
 /* ──────────────────────────────────────────────
@@ -188,62 +253,33 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 56px 32px 56px;
+  padding: 60px 36px 80px;
   scrollbar-width: none;
 }
 
 .grid-view::-webkit-scrollbar { display: none; }
 
-/* Top "rail" — only renders when there are cards. JS toggles
-   .grid-view.has-cards. The rail is a hairline plus an inset
-   register mark on the left side, like a workshop pegboard. */
-.grid-view.has-cards::before {
-  content: "";
-  position: absolute;
-  top: 96px;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--rail) 12%,
-    var(--rail) 88%,
-    transparent
-  );
-  z-index: 0;
-}
-
-.grid-view.has-cards::after {
-  content: "";
-  position: absolute;
-  top: 92px;
-  left: 50%;
-  width: 9px;
-  height: 9px;
-  margin-left: -4.5px;
-  border-radius: 50%;
-  background: var(--void);
-  border: 1px solid var(--rail);
-  box-shadow: 0 0 12px var(--rail-glow);
-  z-index: 1;
-}
-
 .grid-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 0 auto 64px;
-  max-width: 1200px;
+  margin: 0 auto 56px;
+  max-width: 1240px;
   padding: 0 4px;
   position: relative;
   z-index: 2;
+  animation: header-fade-in 1100ms var(--ease-out-quint) both;
+}
+
+@keyframes header-fade-in {
+  0%   { opacity: 0; transform: translateY(-8px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
 
 .grid-title-block {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .grid-title {
@@ -255,23 +291,31 @@ html, body {
   color: var(--text-secondary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
+/* Breathing accent square — cyan-violet gradient, slow pulse */
 .grid-title::before {
   content: "";
   display: inline-block;
-  width: 7px;
-  height: 7px;
-  background: var(--accent);
-  border-radius: 1px;
-  box-shadow: 0 0 8px var(--accent);
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-violet) 100%);
+  box-shadow: 0 0 12px rgba(125, 211, 252, 0.65),
+              0 0 24px rgba(167, 139, 250, 0.35);
+  animation: marker-breathe 4.2s ease-in-out infinite;
+}
+
+@keyframes marker-breathe {
+  0%, 100% { opacity: 0.7; transform: scale(1);    box-shadow: 0 0 10px rgba(125, 211, 252, 0.5),  0 0 20px rgba(167, 139, 250, 0.25); }
+  50%      { opacity: 1;   transform: scale(1.15); box-shadow: 0 0 16px rgba(125, 211, 252, 0.85), 0 0 32px rgba(167, 139, 250, 0.45); }
 }
 
 .grid-subtitle {
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   color: var(--text-ghost);
 }
@@ -279,102 +323,211 @@ html, body {
 .grid-meta {
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* "STATION LIVE" indicator — small pulsing dot + label, rightmost.
+   JS sets .grid-meta.online when SSE is healthy. */
+.grid-meta-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-ghost);
+  transition: color .4s ease;
+}
+
+.grid-meta.online .grid-meta-live { color: var(--accent); }
+
+.grid-meta-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-ghost);
+  box-shadow: none;
+  transition: background .4s ease, box-shadow .4s ease;
+  animation: live-pulse 2.4s ease-in-out infinite;
+}
+
+.grid-meta.online .grid-meta-live::before {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent), 0 0 16px rgba(125, 211, 252, 0.4);
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 28px 24px;
-  max-width: 1200px;
+  grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+  gap: 32px 28px;
+  max-width: 1240px;
   margin: 0 auto;
   position: relative;
   z-index: 2;
 }
 
 /* ──────────────────────────────────────────────
-   Surface card — pinned to the rail
+   Surface card — a station floating in space
    ────────────────────────────────────────────── */
 
 .surface-card {
   position: relative;
-  background: var(--glass);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 60%, rgba(0, 0, 0, 0.20) 100%),
+    var(--glass);
   border: 1px solid var(--glass-border);
   border-radius: var(--card-radius);
   cursor: pointer;
   overflow: hidden;
   transition:
-    border-color .3s ease,
-    background .3s ease,
-    transform .25s cubic-bezier(.4, 0, .2, 1),
-    box-shadow .3s ease;
+    border-color .35s var(--ease-out-quart),
+    background .35s var(--ease-out-quart),
+    transform .45s var(--ease-out-quint),
+    box-shadow .45s var(--ease-out-quint);
   -webkit-tap-highlight-color: transparent;
-  animation: card-print 700ms cubic-bezier(.2, 0, .2, 1) both;
+  animation: card-materialize 900ms var(--ease-out-quint) both;
+  transform-style: preserve-3d;
+  will-change: transform;
 }
 
-/* Connector line from rail down to card (drawn outside the card
-   via negative top, clipped by .grid-view overflow). Decorative;
-   pointer-events none. */
+/* Top-edge highlight catches "aurora light" — pseudo-elements draw a
+   1px gradient just inside the border at the top, plus a soft outer
+   glow on hover. */
 .surface-card::before {
   content: "";
   position: absolute;
-  top: -28px;
-  left: 32px;
-  width: 1px;
-  height: 28px;
-  background: linear-gradient(180deg, var(--rail) 0%, transparent 100%);
-  opacity: .5;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.55), rgba(167, 139, 250, 0.35), transparent);
+  opacity: 0.6;
   pointer-events: none;
-  transition: opacity .3s ease, background .3s ease;
+  transition: opacity .35s ease;
 }
 
-.surface-card:hover::before {
-  opacity: 1;
-  background: linear-gradient(180deg, var(--accent) 0%, transparent 100%);
+.surface-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--card-radius);
+  pointer-events: none;
+  box-shadow: 0 0 0 0 rgba(125, 211, 252, 0);
+  transition: box-shadow .5s var(--ease-out-quart);
+}
+
+/* Ambient scan-gleam — a faint highlight runs L→R every 7s. Each card
+   sets its own --gleam-delay so they don't all fire in unison. */
+.card-gleam {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.card-gleam::before {
+  content: "";
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  width: 40%;
+  left: -50%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(125, 211, 252, 0.06) 35%,
+    rgba(255, 255, 255, 0.10) 50%,
+    rgba(167, 139, 250, 0.04) 65%,
+    transparent 100%
+  );
+  transform: skewX(-20deg);
+  animation: gleam-sweep 7.2s linear infinite;
+  animation-delay: var(--gleam-delay, 0s);
+  filter: blur(8px);
+  mix-blend-mode: screen;
+}
+
+@keyframes gleam-sweep {
+  0%        { left: -50%;  opacity: 0; }
+  10%       { opacity: 1; }
+  60%       { opacity: 1; }
+  70%, 100% { left: 130%;  opacity: 0; }
+}
+
+/* Pause the gleam on hover so it doesn't clash with the tilt parallax */
+.surface-card:hover .card-gleam::before {
+  animation-play-state: paused;
+  opacity: 0;
+  transition: opacity .3s ease;
 }
 
 .surface-card:hover {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.04);
-  transform: translateY(-2px);
+  border-color: var(--hairline-strong);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.065) 0%, rgba(255, 255, 255, 0.018) 60%, rgba(0, 0, 0, 0.12) 100%),
+    rgba(255, 255, 255, 0.045);
+  transform: translateY(-3px);
+}
+
+.surface-card:hover::before { opacity: 1; }
+
+.surface-card:hover::after {
   box-shadow:
-    0 18px 40px -20px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(255, 107, 53, 0.08);
+    0 22px 50px -22px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(125, 211, 252, 0.18),
+    0 0 32px -8px rgba(125, 211, 252, 0.30);
 }
 
 .surface-card:active {
-  transform: translateY(-1px) scale(0.995);
-  transition-duration: 80ms;
+  transform: translateY(-1px) scale(0.992);
+  transition-duration: 90ms;
 }
 
-/* ── Print-in: horizontal scan wipe ── */
+/* Tilt parallax — toggled by JS adding inline --rx / --ry custom props
+   on mousemove inside the card. Reset on mouseleave. */
+.surface-card.tilt {
+  transform:
+    translateY(-3px)
+    perspective(900px)
+    rotateX(var(--ry, 0deg))
+    rotateY(var(--rx, 0deg));
+}
 
-@keyframes card-print {
+/* ── Materialize: scanline + fade + scale ── */
+
+@keyframes card-materialize {
   0% {
     opacity: 0;
-    clip-path: inset(0 100% 0 0);
-    transform: translateY(6px);
+    transform: translateY(10px) scale(0.965);
+    clip-path: inset(0 0 100% 0);
+    filter: blur(2px);
   }
-  60% {
+  35% {
     opacity: 1;
     clip-path: inset(0 0 0 0);
+    filter: blur(0);
   }
   100% {
     opacity: 1;
+    transform: translateY(0) scale(1);
     clip-path: inset(0 0 0 0);
-    transform: translateY(0);
+    filter: blur(0);
   }
 }
 
 @keyframes card-out {
-  0%   { opacity: 1; clip-path: inset(0 0 0 0); }
-  100% { opacity: 0; clip-path: inset(0 0 0 100%); transform: translateY(4px); }
+  0%   { opacity: 1; clip-path: inset(0 0 0 0); transform: translateY(0) scale(1); }
+  100% { opacity: 0; clip-path: inset(0 0 100% 0); transform: translateY(4px) scale(0.98); }
 }
 
 .surface-card.removing {
-  animation: card-out 380ms cubic-bezier(.4, 0, .2, 1) both;
+  animation: card-out 480ms var(--ease-in-out-quint) both;
+  pointer-events: none;
 }
 
 /* ── Card preview (live iframe thumbnail) ── */
@@ -382,19 +535,32 @@ html, body {
 .card-preview {
   position: relative;
   width: 100%;
-  height: 156px;
+  height: 184px;
   background: var(--void);
   border-bottom: 1px solid var(--hairline);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  filter: saturate(0.6) brightness(0.78);
-  transition: filter .4s ease;
+  filter: saturate(0.72) brightness(0.84) contrast(1.04);
+  transition: filter .55s var(--ease-out-quart);
+}
+
+/* Hair-thin cyan emission at the bottom of the preview — reads as a
+   monitor's bottom bezel light. */
+.card-preview::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.32), rgba(167, 139, 250, 0.20), transparent);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 2;
 }
 
 .surface-card:hover .card-preview {
-  filter: saturate(1) brightness(1);
+  filter: saturate(1) brightness(1) contrast(1);
 }
 
 .card-preview iframe {
@@ -410,14 +576,21 @@ html, body {
   background: white;
 }
 
+/* Soft color-grade over preview pulls it into the cosmic palette */
 .card-preview-overlay {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, transparent 60%, rgba(0, 0, 0, 0.55) 100%),
-    linear-gradient(180deg, rgba(7, 7, 10, 0.15) 0%, transparent 25%);
+    linear-gradient(180deg, rgba(125, 211, 252, 0.05) 0%, transparent 30%, rgba(0, 0, 0, 0.10) 70%, rgba(0, 0, 0, 0.50) 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(167, 139, 250, 0.06), transparent 70%);
   z-index: 1;
   pointer-events: none;
+  mix-blend-mode: normal;
+  transition: opacity .55s var(--ease-out-quart);
+}
+
+.surface-card:hover .card-preview-overlay {
+  opacity: 0.5;
 }
 
 .card-preview-icon {
@@ -429,21 +602,27 @@ html, body {
   text-transform: uppercase;
 }
 
-/* Live pip — set by JS for recently-touched cards (<60s). */
+/* Live pip — pulsing satellite light, cyan. */
 .card-live {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 12px;
+  right: 12px;
   z-index: 3;
   font-family: var(--mono);
   font-size: 9px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   color: var(--accent);
   display: flex;
   align-items: center;
-  gap: 5px;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+  gap: 6px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.85);
+  animation: live-fade-in 600ms var(--ease-out-quint) both;
+}
+
+@keyframes live-fade-in {
+  0%   { opacity: 0; transform: translateX(8px); }
+  100% { opacity: 1; transform: translateX(0); }
 }
 
 .card-live::before {
@@ -452,19 +631,19 @@ html, body {
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-  animation: live-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 8px var(--accent), 0 0 16px rgba(125, 211, 252, 0.55);
+  animation: live-pulse 2s ease-in-out infinite;
 }
 
 @keyframes live-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: 0.45; transform: scale(0.7); }
+  0%, 100% { opacity: 1;    transform: scale(1);   }
+  50%      { opacity: 0.45; transform: scale(0.65); }
 }
 
 /* ── Card body ── */
 
 .card-body {
-  padding: 14px 18px 16px;
+  padding: 16px 20px 18px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -483,7 +662,7 @@ html, body {
 }
 
 .card-title {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 500;
   color: var(--text-primary);
   letter-spacing: 0.1px;
@@ -500,16 +679,17 @@ html, body {
   font-family: var(--mono);
   font-size: 9px;
   color: var(--accent);
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   padding: 0;
   flex-shrink: 0;
+  text-shadow: 0 0 8px rgba(125, 211, 252, 0.5);
 }
 
 .card-description {
   font-size: 12px;
   color: var(--text-secondary);
-  line-height: 1.5;
+  line-height: 1.55;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -520,9 +700,9 @@ html, body {
   font-family: var(--mono);
   font-size: 9px;
   color: var(--text-ghost);
-  letter-spacing: 2px;
+  letter-spacing: 2.2px;
   text-transform: uppercase;
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
 /* ──────────────────────────────────────────────
@@ -538,101 +718,125 @@ html, body {
   justify-content: center;
   z-index: 1;
   padding: 32px;
-  gap: 28px;
+  gap: 36px;
   text-align: center;
+  animation: empty-rise 1300ms var(--ease-out-quint) both;
 }
 
+@keyframes empty-rise {
+  0%   { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Astrolabe glyph — three concentric rings rotating at different
+   rates, with a small star at center. All pure SVG so it scales. */
 .empty-glyph {
-  width: 56px;
-  height: 56px;
+  width: 112px;
+  height: 112px;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.5;
+  opacity: 0.85;
 }
 
-.empty-glyph::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--text-ghost);
-  border-radius: 6px;
-}
+.empty-glyph svg { width: 100%; height: 100%; overflow: visible; }
+.empty-glyph .ring-1 { transform-origin: 50% 50%; animation: ring-spin 60s linear infinite; }
+.empty-glyph .ring-2 { transform-origin: 50% 50%; animation: ring-spin 90s linear infinite reverse; }
+.empty-glyph .ring-3 { transform-origin: 50% 50%; animation: ring-spin 130s linear infinite; }
+.empty-glyph .core   { transform-origin: 50% 50%; animation: core-breathe 3.6s ease-in-out infinite; }
 
-.empty-glyph::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 8px;
-  right: 8px;
-  height: 1px;
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent);
-  animation: glyph-bar 4s ease-in-out infinite;
-  transform-origin: center;
-}
+@keyframes ring-spin    { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes core-breathe { 0%, 100% { opacity: 0.6; transform: scale(1); }
+                          50%      { opacity: 1;   transform: scale(1.18); } }
 
-@keyframes glyph-bar {
-  0%, 100% { opacity: 0.4; transform: scaleX(0.8); }
-  50%      { opacity: 1; transform: scaleX(1); }
-}
-
+/* Hero line — serif italic, with a slow shimmering gradient. */
 .empty-prompt {
   font-family: var(--serif);
-  font-size: 44px;
-  font-weight: 300;
+  font-size: 54px;
+  font-weight: 380;
   font-style: italic;
-  color: var(--text-primary);
-  letter-spacing: -0.5px;
+  letter-spacing: -0.7px;
   line-height: 1.1;
   max-width: 22ch;
+  background: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(255, 255, 255, 0.95) 35%,
+    rgba(125, 211, 252, 0.95) 50%,
+    rgba(255, 255, 255, 0.95) 65%,
+    rgba(255, 255, 255, 0.95) 100%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: prompt-shimmer 8s linear infinite;
 }
 
+@keyframes prompt-shimmer {
+  0%   { background-position: 100% 50%; }
+  100% { background-position: -100% 50%; }
+}
+
+/* Typewriter suggestion line. JS rewrites the text every cycle.
+   The blinking cursor is a pseudo-element. */
 .empty-suggestions {
-  height: 22px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--text-secondary);
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   position: relative;
-  min-width: 280px;
-}
-
-.empty-suggestion {
-  display: inline-flex;
-  align-items: center;
+  min-width: 320px;
   gap: 10px;
-  animation: suggest-in 700ms cubic-bezier(.2, 0, .2, 1) both;
 }
 
-.empty-suggestion::before {
-  content: "›";
+.empty-suggestion-arrow {
   color: var(--accent);
-  font-weight: 600;
-  font-size: 16px;
+  font-weight: 700;
+  font-size: 15px;
   line-height: 1;
+  text-shadow: 0 0 8px rgba(125, 211, 252, 0.55);
 }
 
-@keyframes suggest-in {
-  0%   { opacity: 0; clip-path: inset(0 100% 0 0); }
-  100% { opacity: 1; clip-path: inset(0 0 0 0); }
+.empty-suggestion-text {
+  position: relative;
+  white-space: pre;
+}
+
+.empty-suggestion-text::after {
+  content: "";
+  display: inline-block;
+  vertical-align: text-bottom;
+  width: 7px;
+  height: 14px;
+  background: var(--accent);
+  margin-left: 4px;
+  box-shadow: 0 0 6px rgba(125, 211, 252, 0.6);
+  animation: caret-blink 1s steps(2, end) infinite;
+}
+
+@keyframes caret-blink {
+  0%, 50%  { opacity: 1; }
+  51%, 100% { opacity: 0; }
 }
 
 .empty-sub {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--text-ghost);
-  letter-spacing: 3px;
+  letter-spacing: 3.5px;
   text-transform: uppercase;
-  margin-top: 4px;
+  margin-top: 8px;
 }
 
 /* ──────────────────────────────────────────────
-   Surface view — viewing a single surface
+   Surface view (one open surface)
    ────────────────────────────────────────────── */
 
 .surface-view {
@@ -643,31 +847,52 @@ html, body {
   flex-direction: column;
   overflow: hidden;
   background: var(--void);
+  animation: view-fade-in 450ms var(--ease-out-quint) both;
+}
+
+@keyframes view-fade-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 .surface-nav {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 18px;
-  background: transparent;
+  padding: 13px 20px;
+  background: rgba(6, 7, 13, 0.72);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
   border-bottom: 1px solid var(--hairline);
   z-index: 10;
   flex-shrink: 0;
+  position: relative;
+}
+
+/* Subtle aurora line at the bottom edge of the nav */
+.surface-nav::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.5), rgba(167, 139, 250, 0.3), transparent);
+  opacity: 0.55;
 }
 
 .back-btn {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--hairline);
   color: var(--text-secondary);
-  width: 30px;
-  height: 30px;
-  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s ease;
+  transition: all .22s var(--ease-out-quart);
   font-size: 14px;
   -webkit-tap-highlight-color: transparent;
   flex-shrink: 0;
@@ -675,9 +900,10 @@ html, body {
 }
 
 .back-btn:hover {
-  border-color: rgba(255, 255, 255, 0.22);
+  border-color: var(--hairline-strong);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(125, 211, 252, 0.08);
+  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.15), 0 0 16px -4px rgba(125, 211, 252, 0.4);
 }
 
 .back-btn:active { transform: scale(0.95); }
@@ -685,7 +911,7 @@ html, body {
 .surface-nav-titlewrap {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   flex: 1;
   min-width: 0;
 }
@@ -694,7 +920,7 @@ html, body {
   font-family: var(--serif);
   font-style: italic;
   font-weight: 400;
-  font-size: 15px;
+  font-size: 16px;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -704,7 +930,7 @@ html, body {
 .surface-nav-meta {
   font-family: var(--mono);
   font-size: 9px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   color: var(--text-ghost);
   display: flex;
@@ -715,14 +941,14 @@ html, body {
 .surface-nav-meta-dot {
   display: inline-block;
   width: 1px;
-  height: 8px;
+  height: 9px;
   background: var(--text-ghost);
 }
 
 .surface-nav-live {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   color: var(--accent);
 }
 
@@ -732,8 +958,8 @@ html, body {
   height: 5px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-  animation: live-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 6px var(--accent), 0 0 12px rgba(125, 211, 252, 0.55);
+  animation: live-pulse 2s ease-in-out infinite;
 }
 
 .surface-frame {
@@ -745,44 +971,59 @@ html, body {
   background: #000;
 }
 
+/* Scanline refresh — sweeps from top to bottom on iframe reload */
 .surface-frame.refreshing {
-  animation: frame-refresh 600ms cubic-bezier(.2, 0, .2, 1);
+  animation: frame-scanline 720ms var(--ease-out-quart);
 }
 
-@keyframes frame-refresh {
-  0%   { opacity: 0.4; filter: blur(1px); }
-  100% { opacity: 1;   filter: blur(0);   }
+@keyframes frame-scanline {
+  0%   { opacity: 0.55; filter: blur(1.2px) brightness(1.05); clip-path: inset(0 0 100% 0); }
+  20%  { clip-path: inset(0 0 0 0); }
+  60%  { opacity: 0.9; filter: blur(0.4px) brightness(1.02); }
+  100% { opacity: 1;   filter: blur(0)    brightness(1);     clip-path: inset(0 0 0 0); }
 }
 
 /* ──────────────────────────────────────────────
-   Toasts — top-right console alerts
+   Toasts — top-right cinematic alert
    ────────────────────────────────────────────── */
 
 .toast {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  top: 22px;
+  right: 22px;
   left: auto;
   bottom: auto;
-  transform: translateX(20px);
-  background: rgba(7, 7, 10, 0.92);
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  transform: translateX(28px);
+  background: rgba(6, 7, 13, 0.86);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
   border: 1px solid var(--hairline);
   border-left: 2px solid var(--accent);
   color: var(--text-primary);
-  padding: 10px 16px 10px 14px;
-  border-radius: 4px;
+  padding: 11px 18px 11px 15px;
+  border-radius: 6px;
   font-family: var(--mono);
   font-size: 12px;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   z-index: 1000;
   opacity: 0;
-  transition: opacity .25s cubic-bezier(.4, 0, .2, 1),
-              transform .25s cubic-bezier(.4, 0, .2, 1);
+  transition: opacity .35s var(--ease-out-quint),
+              transform .45s var(--ease-out-quint);
   pointer-events: none;
   max-width: min(360px, 80vw);
-  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
+  box-shadow:
+    0 12px 36px -12px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(125, 211, 252, 0.06),
+    0 0 24px -6px rgba(125, 211, 252, 0.25);
+}
+
+.toast::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(125, 211, 252, 0.10) 0%, transparent 30%);
+  pointer-events: none;
 }
 
 .toast--visible {
@@ -790,9 +1031,9 @@ html, body {
   transform: translateX(0);
 }
 
-.toast--success { border-left-color: #51cf66; }
-.toast--warning { border-left-color: #ffd43b; }
-.toast--error   { border-left-color: #ff6b6b; }
+.toast--success { border-left-color: #5eead4; }
+.toast--warning { border-left-color: #fbbf24; }
+.toast--error   { border-left-color: #f87171; }
 
 /* ──────────────────────────────────────────────
    Explore / marketplace
@@ -804,7 +1045,7 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 56px 32px 56px;
+  padding: 60px 36px 80px;
   scrollbar-width: none;
 }
 
@@ -814,17 +1055,17 @@ html, body {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 28px;
-  max-width: 1200px;
+  margin-bottom: 32px;
+  max-width: 1240px;
   margin-left: auto;
   margin-right: auto;
 }
 
 .explore-cats {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   justify-content: center;
-  margin-bottom: 36px;
+  margin-bottom: 40px;
   flex-wrap: wrap;
 }
 
@@ -832,72 +1073,90 @@ html, body {
   background: transparent;
   border: 1px solid var(--hairline);
   color: var(--text-secondary);
-  padding: 5px 14px;
-  border-radius: 4px;
+  padding: 6px 16px;
+  border-radius: 6px;
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all .22s var(--ease-out-quart);
 }
 
 .explore-pill:hover {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: var(--hairline-strong);
   color: var(--text-primary);
+  background: rgba(125, 211, 252, 0.04);
 }
 
 .explore-pill.active {
   border-color: var(--accent);
   color: var(--accent);
-  background: rgba(255, 107, 53, 0.06);
+  background: rgba(125, 211, 252, 0.08);
+  box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.12), 0 0 18px -6px rgba(125, 211, 252, 0.5);
 }
 
 .explore-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 24px;
-  max-width: 1200px;
+  grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+  gap: 28px;
+  max-width: 1240px;
   margin: 0 auto;
 }
 
 .explore-card {
-  background: var(--glass);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0.012) 60%, rgba(0, 0, 0, 0.20) 100%),
+    var(--glass);
   border: 1px solid var(--glass-border);
   border-radius: var(--card-radius);
-  transition: all 0.25s cubic-bezier(.4, 0, .2, 1);
-  animation: card-print 700ms cubic-bezier(.2, 0, .2, 1) both;
+  transition: all .35s var(--ease-out-quart);
+  animation: card-materialize 900ms var(--ease-out-quint) both;
   position: relative;
   overflow: hidden;
 }
 
-.explore-card:hover {
-  border-color: rgba(255, 255, 255, 0.18);
-  transform: translateY(-2px);
-  box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.6),
-              0 0 0 1px rgba(255, 107, 53, 0.08);
+.explore-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 12%; right: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.55), rgba(167, 139, 250, 0.35), transparent);
+  opacity: 0.6;
+  pointer-events: none;
+  transition: opacity .35s ease;
 }
 
+.explore-card:hover {
+  border-color: var(--hairline-strong);
+  transform: translateY(-3px);
+  box-shadow:
+    0 22px 50px -22px rgba(0, 0, 0, 0.75),
+    0 0 0 1px rgba(125, 211, 252, 0.18),
+    0 0 32px -8px rgba(125, 211, 252, 0.30);
+}
+
+.explore-card:hover::before { opacity: 1; }
 .explore-card .card-preview { border-radius: 0; }
 
 .explore-btn {
   background: transparent;
   border: 1px solid var(--hairline);
   color: var(--text-secondary);
-  padding: 5px 14px;
-  border-radius: 4px;
+  padding: 6px 16px;
+  border-radius: 6px;
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all .22s var(--ease-out-quart);
 }
 
 .explore-btn:hover {
-  border-color: rgba(255, 255, 255, 0.18);
+  border-color: var(--hairline-strong);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(125, 211, 252, 0.04);
 }
 
 .explore-badge {
@@ -905,39 +1164,41 @@ html, body {
   font-family: var(--mono);
   font-size: 9px;
   color: var(--accent);
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
-  margin-top: 4px;
+  margin-top: 6px;
+  text-shadow: 0 0 8px rgba(125, 211, 252, 0.4);
 }
 
 .install-btn {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 14px;
   background: transparent;
   border: 1px solid var(--hairline);
   color: var(--text-primary);
-  padding: 8px;
-  border-radius: 4px;
+  padding: 10px;
+  border-radius: 6px;
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.8px;
   text-transform: uppercase;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all .22s var(--ease-out-quart);
 }
 
 .install-btn:hover {
-  background: rgba(255, 107, 53, 0.06);
+  background: rgba(125, 211, 252, 0.06);
   border-color: var(--accent);
   color: var(--accent);
+  box-shadow: 0 0 18px -6px rgba(125, 211, 252, 0.45);
 }
 
 .install-btn:disabled { cursor: default; opacity: 0.6; }
 
 .install-btn.installed {
-  background: rgba(81, 207, 102, 0.06);
-  border-color: rgba(81, 207, 102, 0.32);
-  color: rgba(81, 207, 102, 0.85);
+  background: rgba(94, 234, 212, 0.06);
+  border-color: rgba(94, 234, 212, 0.32);
+  color: rgba(94, 234, 212, 0.92);
   opacity: 1;
 }
 
@@ -947,8 +1208,8 @@ html, body {
   width: 100%;
   border: none;
   border-radius: var(--card-radius);
-  margin: 0 auto 32px;
-  max-width: 1200px;
+  margin: 0 auto 36px;
+  max-width: 1240px;
   display: block;
   background: transparent;
   min-height: 0;
@@ -968,16 +1229,18 @@ html, body {
 }
 
 /* ──────────────────────────────────────────────
-   Reduced motion
+   Reduced motion — kill the heavy stuff but
+   keep brief transitions for clarity.
    ────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.05ms !important;
+    transition-duration: 0.08ms !important;
   }
-  .bench-sweep { display: none; }
+  .aurora, .nebula, .star, .grain, .comet { display: none; }
+  .empty-prompt { color: var(--text-primary); -webkit-text-fill-color: var(--text-primary); }
 }
 
 /* ──────────────────────────────────────────────
@@ -985,12 +1248,12 @@ html, body {
    ────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  .grid-view, .explore-view { padding: 32px 18px 40px; }
-  .grid { grid-template-columns: 1fr; gap: 22px; }
-  .grid-view.has-cards::before { top: 78px; }
-  .grid-view.has-cards::after  { top: 74px; }
-  .card-preview { height: 160px; }
-  .empty-prompt { font-size: 32px; }
-  .empty-suggestions { font-size: 12px; min-width: 240px; }
-  .toast { left: 12px; right: 12px; max-width: none; }
+  .grid-view, .explore-view { padding: 36px 18px 48px; }
+  .grid { grid-template-columns: 1fr; gap: 24px; }
+  .card-preview { height: 168px; }
+  .empty-prompt { font-size: 36px; }
+  .empty-glyph  { width: 76px; height: 76px; }
+  .empty-suggestions { font-size: 12.5px; min-width: 260px; }
+  .toast { left: 14px; right: 14px; max-width: none; }
+  .grid-header { margin-bottom: 32px; }
 }

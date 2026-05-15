@@ -55,23 +55,45 @@ const EMPTY_SUGGESTIONS = [
   "a flashcard deck for biology",
 ];
 
+// Typewriter cycle: type-in → hold → type-out → next. Letters print at
+// 38ms each, hold 2400ms, delete at 24ms each, 250ms pause between.
 let emptySuggestionT = null;
 function cycleEmptySuggestions(root) {
-  if (emptySuggestionT) { clearInterval(emptySuggestionT); emptySuggestionT = null; }
-  const slot = root.querySelector(".empty-suggestions");
+  if (emptySuggestionT) { clearTimeout(emptySuggestionT); emptySuggestionT = null; }
+  const slot = root.querySelector(".empty-suggestion-text");
   if (!slot) return;
   let i = Math.floor(Math.random() * EMPTY_SUGGESTIONS.length);
-  // Seed first value
-  slot.innerHTML = `<span class="empty-suggestion">${EMPTY_SUGGESTIONS[i]}</span>`;
-  emptySuggestionT = setInterval(() => {
-    if (!document.body.contains(slot)) {
-      clearInterval(emptySuggestionT);
-      emptySuggestionT = null;
-      return;
+
+  const step = (phase, text, charPos) => {
+    // Stop when the slot has been removed from the document. We can't
+    // use `body.contains(slot)` here because the very first call runs
+    // while the container is still detached (renderGrid attaches it
+    // a few lines later); `isConnected` would short-circuit then.
+    if (!slot.parentNode) return;
+    if (phase === "type-in") {
+      slot.textContent = text.slice(0, charPos);
+      if (charPos < text.length) {
+        emptySuggestionT = setTimeout(() => step("type-in", text, charPos + 1), 38 + Math.random() * 24);
+      } else {
+        emptySuggestionT = setTimeout(() => step("hold", text, charPos), 2400);
+      }
+    } else if (phase === "hold") {
+      emptySuggestionT = setTimeout(() => step("type-out", text, text.length), 0);
+    } else if (phase === "type-out") {
+      slot.textContent = text.slice(0, charPos);
+      if (charPos > 0) {
+        emptySuggestionT = setTimeout(() => step("type-out", text, charPos - 1), 24);
+      } else {
+        i = (i + 1) % EMPTY_SUGGESTIONS.length;
+        // Seed the first character of the next suggestion immediately so
+        // the line never sits empty between cycles.
+        slot.textContent = EMPTY_SUGGESTIONS[i].slice(0, 1);
+        emptySuggestionT = setTimeout(() => step("type-in", EMPTY_SUGGESTIONS[i], 2), 120);
+      }
     }
-    i = (i + 1) % EMPTY_SUGGESTIONS.length;
-    slot.innerHTML = `<span class="empty-suggestion">${EMPTY_SUGGESTIONS[i]}</span>`;
-  }, 3600);
+  };
+  // Seed the first character of the first suggestion immediately too.
+  step("type-in", EMPTY_SUGGESTIONS[i], 1);
 }
 
 // ── Toast notifications ──
@@ -153,29 +175,24 @@ function applyTheme(config) {
     root.style.setProperty("--card-radius", config.cardRadius);
   }
 
-  // Starfield — opt-in (default chrome uses .bench instead). Agents
-  // turn it on with `starfield: true`. Either explicit `false` or
-  // omission keeps it hidden.
-  const starfieldOn = config.starfield === true;
+  // Cosmic substrate — on by default. An explicit `starfield: false`
+  // from a theme hides every cosmic layer (starfield, nebulae, aurora,
+  // grain, comets). Themes that want their own background opt out
+  // wholesale by passing `starfield: false`.
+  const substrateOn = config.starfield !== false;
   const starfield = document.getElementById("starfield");
-  if (starfield) starfield.style.display = starfieldOn ? "" : "none";
-
-  // Nebulae — opt-in.
-  const nebulaOn = config.nebula === true;
-  document.querySelectorAll(".nebula").forEach((el) => {
-    el.style.display = nebulaOn ? "" : "none";
+  if (starfield) starfield.style.display = substrateOn ? "" : "none";
+  document.querySelectorAll(".nebula, .aurora, .grain").forEach((el) => {
+    el.style.display = substrateOn ? "" : "none";
   });
+
+  // Optional nebula color overrides (back-compat).
   if (config.nebulaColors && config.nebulaColors.length >= 2) {
     const n1 = document.querySelector(".nebula--1");
     const n2 = document.querySelector(".nebula--2");
     if (n1) n1.style.background = `radial-gradient(circle, ${config.nebulaColors[0]}, transparent 70%)`;
     if (n2) n2.style.background = `radial-gradient(circle, ${config.nebulaColors[1]}, transparent 70%)`;
   }
-
-  // Bench — the default substrate. Hide if the agent opted into the
-  // space metaphor instead, so we don't overlay two backgrounds.
-  const bench = document.getElementById("bench");
-  if (bench) bench.style.display = (starfieldOn || nebulaOn) ? "none" : "";
 
   // Custom CSS injection — wrapped in @layer theme so shell styles always win
   let customStyle = document.getElementById("theme-css");
@@ -280,44 +297,84 @@ function getRoute() {
 
 window.addEventListener("hashchange", render);
 
-// ── Bench (default substrate: graph paper + drifting sweep) ──
-// Themes can opt back into the starfield/nebula via config.starfield/nebula.
+// ── Cosmic substrate ──
+// One container holds: aurora ribbon, two/three nebulae, three star
+// layers (parallax via initParallax), and a positioning surface for
+// comets. The container is always inserted; an explicit theme
+// `starfield: false` hides everything cosmic via display:none.
 
-function createBench() {
+function createAurora() {
   const el = document.createElement("div");
-  el.className = "bench";
-  el.id = "bench";
-  const sweep = document.createElement("div");
-  sweep.className = "bench-sweep";
-  el.appendChild(sweep);
+  el.className = "aurora";
+  el.id = "aurora";
   return el;
 }
 
-// Briefly perturb the sweep — called whenever the agent pushes
-// something via SSE (create/update/delete/theme/notify).
-let benchPulseT = 0;
-function pulseBench() {
-  const bench = document.getElementById("bench");
-  if (!bench) return;
-  if (Date.now() - benchPulseT < 500) return; // throttle
-  benchPulseT = Date.now();
-  bench.classList.remove("bench--pulse");
-  void bench.offsetWidth; // reflow to restart anim
-  bench.classList.add("bench--pulse");
-  setTimeout(() => bench.classList.remove("bench--pulse"), 1500);
+function createGrain() {
+  const el = document.createElement("div");
+  el.className = "grain";
+  el.id = "grain";
+  return el;
 }
 
-// ── Starfield (3 parallax layers) — opt-in via theme ──
+// Fire one comet at a random angle from offscreen-left across the
+// upper third of the canvas. Throttled by `pulseSpace`.
+function fireComet() {
+  const starfield = document.getElementById("starfield");
+  if (!starfield || starfield.style.display === "none") return;
+  const c = document.createElement("div");
+  c.className = "comet";
+  const y = 8 + Math.random() * 38;
+  const angle = 12 + Math.random() * 14;
+  c.style.setProperty("--cy", y + "%");
+  c.style.setProperty("--cx", (-5 - Math.random() * 8) + "%");
+  c.style.setProperty("--angle", angle + "deg");
+  starfield.appendChild(c);
+  setTimeout(() => c.remove(), 1700);
+}
+
+// SSE event coupling: aurora pulses, occasionally a comet streaks.
+let spacePulseT = 0;
+function pulseSpace(opts) {
+  const starfield = document.getElementById("starfield");
+  if (!starfield) return;
+  if (Date.now() - spacePulseT < 450) return; // throttle
+  spacePulseT = Date.now();
+  starfield.classList.remove("aurora-burst");
+  void starfield.offsetWidth; // reflow to restart aurora animation
+  starfield.classList.add("aurora-burst");
+  setTimeout(() => starfield.classList.remove("aurora-burst"), 1500);
+  // Comet on bigger events (creates, theme changes) — not on every tick.
+  if (opts && opts.comet) fireComet();
+}
+
+// Background comet shower — one streak every 22-52s when the tab is
+// visible. The cosmos isn't static, just patient.
+let cometShowerT = null;
+function startCometShower() {
+  if (cometShowerT) clearTimeout(cometShowerT);
+  const tick = () => {
+    if (document.visibilityState === "visible") fireComet();
+    cometShowerT = setTimeout(tick, 22000 + Math.random() * 30000);
+  };
+  cometShowerT = setTimeout(tick, 6000 + Math.random() * 8000);
+}
+
+// ── Starfield (3 parallax layers) — always on, themes opt out ──
 
 function createStarfield() {
   const el = document.createElement("div");
   el.className = "starfield";
   el.id = "starfield";
 
+  // Aurora goes inside so it benefits from the same z=0 stacking +
+  // can be color-pulsed by toggling .aurora-burst on the parent.
+  el.appendChild(createAurora());
+
   const layers = [
-    { class: "star--far", count: 80, parallax: 0.01 },
-    { class: "star--mid", count: 40, parallax: 0.025 },
-    { class: "star--near", count: 15, parallax: 0.05 },
+    { class: "star--far",  count: 110, parallax: 0.008 },
+    { class: "star--mid",  count: 55,  parallax: 0.022 },
+    { class: "star--near", count: 18,  parallax: 0.048 },
   ];
 
   layers.forEach((layer) => {
@@ -335,8 +392,9 @@ function createStarfield() {
     el.appendChild(layerEl);
   });
 
-  // Starfield is opt-in. Default chrome uses .bench instead.
-  if (displayConfig.starfield !== true) el.style.display = "none";
+  // Cosmic substrate is on by default. Themes that set
+  // `starfield: false` hide the whole stack (applyTheme handles it).
+  if (displayConfig.starfield === false) el.style.display = "none";
 
   return el;
 }
@@ -347,20 +405,23 @@ function createNebulae() {
   n1.className = "nebula nebula--1";
   const n2 = document.createElement("div");
   n2.className = "nebula nebula--2";
+  const n3 = document.createElement("div");
+  n3.className = "nebula nebula--3";
 
   if (displayConfig.nebulaColors && displayConfig.nebulaColors.length >= 2) {
     n1.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[0]}, transparent 70%)`;
     n2.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[1]}, transparent 70%)`;
   }
 
-  // Nebulae are opt-in. Default chrome uses .bench instead.
-  if (displayConfig.nebula !== true) {
+  if (displayConfig.starfield === false) {
     n1.style.display = "none";
     n2.style.display = "none";
+    n3.style.display = "none";
   }
 
   frag.appendChild(n1);
   frag.appendChild(n2);
+  frag.appendChild(n3);
   return frag;
 }
 
@@ -394,6 +455,26 @@ function applyParallax(cx, cy) {
 }
 
 initParallax();
+
+// Card tilt-to-pointer — 3D rotateX/Y based on pointer position within
+// the card bounds. Clamped to ±3.2deg. Resets on mouseleave.
+function bindCardTilt(card) {
+  card.addEventListener("mousemove", (e) => {
+    const r = card.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - 0.5;   // -0.5..0.5
+    const py = (e.clientY - r.top)  / r.height - 0.5;
+    const rx = +(px * 6.4).toFixed(2);  // rotateY
+    const ry = +(-py * 4.2).toFixed(2); // rotateX (inverted)
+    card.style.setProperty("--rx", rx + "deg");
+    card.style.setProperty("--ry", ry + "deg");
+    card.classList.add("tilt");
+  });
+  card.addEventListener("mouseleave", () => {
+    card.classList.remove("tilt");
+    card.style.setProperty("--rx", "0deg");
+    card.style.setProperty("--ry", "0deg");
+  });
+}
 
 // ── Helpers ──
 
@@ -463,9 +544,10 @@ function renderGrid() {
   }
 
   const container = document.createElement("div");
-  container.appendChild(createBench());
   container.appendChild(createStarfield());
   container.appendChild(createNebulae());
+  container.appendChild(createGrain());
+  startCometShower();
 
   const gridView = document.createElement("div");
   gridView.className = "grid-view";
@@ -482,9 +564,12 @@ function renderGrid() {
   header.innerHTML = `
     <div class="grid-title-block">
       <div class="grid-title">${escapeHtml(title)}</div>
-      <div class="grid-subtitle">your agents' workbench</div>
+      <div class="grid-subtitle">a universal display for your agents</div>
     </div>
-    ${count > 0 ? `<div class="grid-meta">${escapeHtml(countLabel)}</div>` : ""}
+    <div class="grid-meta" id="grid-meta">
+      ${count > 0 ? `<span class="grid-meta-count">${escapeHtml(countLabel)}</span>` : ""}
+      <span class="grid-meta-live">station</span>
+    </div>
     ${exploreBtn}
   `;
   gridView.appendChild(header);
@@ -521,9 +606,22 @@ function renderGrid() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-glyph" aria-hidden="true"></div>
+      <div class="empty-glyph" aria-hidden="true">
+        <svg viewBox="0 0 100 100">
+          <circle class="ring-1" cx="50" cy="50" r="42" fill="none" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7" stroke-dasharray="2.4 4.6"/>
+          <circle class="ring-2" cx="50" cy="50" r="31" fill="none" stroke="rgba(167, 139, 250, 0.45)" stroke-width="0.7"/>
+          <circle class="ring-3" cx="50" cy="50" r="21" fill="none" stroke="rgba(232, 121, 249, 0.42)" stroke-width="0.7" stroke-dasharray="1 2.6"/>
+          <circle class="core" cx="50" cy="50" r="2.6" fill="rgba(255, 255, 255, 0.95)"/>
+          <line x1="50" y1="5" x2="50" y2="11" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
+          <line x1="50" y1="89" x2="50" y2="95" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
+          <line x1="5" y1="50" x2="11" y2="50" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
+          <line x1="89" y1="50" x2="95" y2="50" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
+        </svg>
+      </div>
       <div class="empty-prompt">What should I make?</div>
-      <div class="empty-suggestions"><span class="empty-suggestion" id="empty-suggestion">a pomodoro</span></div>
+      <div class="empty-suggestions">
+        <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
+      </div>
       <div class="empty-sub">tell your agent</div>
     `;
     container.appendChild(empty);
@@ -557,7 +655,13 @@ function createCard(s, index) {
   card.className = "surface-card";
   card.dataset.id = s.id;
   card.style.animationDelay = ((index || 0) * 0.08) + "s";
+  // Stagger the ambient gleam so cards don't sweep in unison.
+  card.style.setProperty("--gleam-delay", (-(Math.random() * 7.2)).toFixed(2) + "s");
   card.onclick = () => navigate("/surface/" + s.id);
+  bindCardTilt(card);
+  const gleam = document.createElement("div");
+  gleam.className = "card-gleam";
+  card.appendChild(gleam);
 
   // Preview thumbnail
   const preview = document.createElement("div");
@@ -710,9 +814,23 @@ function connectGlobalSSE() {
   if (globalSSE) globalSSE.close();
   globalSSE = new EventSource("/stream");
 
+  // Connection state → "STATION" indicator in the grid header.
+  const setOnline = (on) => {
+    const meta = document.getElementById("grid-meta");
+    if (meta) meta.classList.toggle("online", on);
+  };
+  globalSSE.addEventListener("open", () => setOnline(true));
+  globalSSE.onopen = () => setOnline(true);
+  globalSSE.onerror = () => setOnline(false);
+  // EventSource is open as soon as it's instantiated and the
+  // browser has the connection — set online optimistically.
+  setTimeout(() => {
+    if (globalSSE && globalSSE.readyState === 1) setOnline(true);
+  }, 200);
+
   globalSSE.addEventListener("surface_created", (e) => {
     const data = JSON.parse(e.data);
-    pulseBench();
+    pulseSpace({ comet: true });
     fetch("/surfaces/" + data.id).then(r => r.json()).then(full => {
       surfaces.unshift(full);
       const grid = document.getElementById("surface-grid");
@@ -737,7 +855,7 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
-    pulseBench();
+    pulseSpace();
     const idx = surfaces.findIndex((s) => s.id === data.id);
     if (idx !== -1) {
       surfaces[idx] = { ...surfaces[idx], ...data };
@@ -767,7 +885,7 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("surface_deleted", (e) => {
     const data = JSON.parse(e.data);
-    pulseBench();
+    pulseSpace();
     surfaces = surfaces.filter((s) => s.id !== data.id);
     const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
     if (card) {
@@ -797,14 +915,14 @@ function connectGlobalSSE() {
   globalSSE.addEventListener("display_notify", (e) => {
     const data = JSON.parse(e.data);
     showToast(data.text, data.duration || 5000, data.style || "info");
-    pulseBench();
+    pulseSpace();
   });
 
   globalSSE.addEventListener("display_theme", (e) => {
     const prev = displayConfig.renderer;
     const data = JSON.parse(e.data);
     applyTheme(data);
-    pulseBench();
+    pulseSpace();
     // Re-render if renderer was added/removed/changed
     if ((prev || "") !== (data.renderer || "")) render();
   });
@@ -841,9 +959,9 @@ async function renderExplore() {
   suspendTheme();
 
   const container = document.createElement("div");
-  container.appendChild(createBench());
   container.appendChild(createStarfield());
   container.appendChild(createNebulae());
+  container.appendChild(createGrain());
 
   const view = document.createElement("div");
   view.className = "explore-view";
@@ -911,6 +1029,7 @@ async function loadMarketplace(filter, grid) {
     const card = document.createElement("div");
     card.className = "explore-card";
     card.style.animationDelay = (i * 0.06) + "s";
+    bindCardTilt(card);
 
     // Preview
     const preview = document.createElement("div");

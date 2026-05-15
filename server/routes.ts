@@ -1145,12 +1145,13 @@ function renderArtifactShell(params: {
   <style>
     * { box-sizing: border-box; }
     :root {
-      --void: #07070a;
+      --void: #06070d;
       --hairline: rgba(255, 255, 255, 0.08);
-      --text-primary: rgba(255, 255, 255, 0.92);
-      --text-secondary: rgba(255, 255, 255, 0.42);
-      --text-ghost: rgba(255, 255, 255, 0.20);
-      --accent: #ff6b35;
+      --text-primary: rgba(255, 255, 255, 0.94);
+      --text-secondary: rgba(255, 255, 255, 0.50);
+      --text-ghost: rgba(255, 255, 255, 0.22);
+      --accent: #7dd3fc;
+      --accent-violet: #a78bfa;
       --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
       --serif: "New York", Charter, "Iowan Old Style", "Hoefler Text", Cambria, Georgia, serif;
       --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
@@ -1161,18 +1162,31 @@ function renderArtifactShell(params: {
       display: ${params.preview ? "none" : "flex"};
       align-items: center;
       gap: 14px;
-      padding: 11px 18px;
+      padding: 12px 20px;
       border-bottom: 1px solid var(--hairline);
-      background: transparent;
+      background: rgba(6, 7, 13, 0.72);
+      backdrop-filter: blur(20px) saturate(140%);
+      -webkit-backdrop-filter: blur(20px) saturate(140%);
       flex-shrink: 0;
+      position: relative;
+    }
+    .bar::after {
+      content: ""; position: absolute; left: 8%; right: 8%; bottom: -1px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.5), rgba(167, 139, 250, 0.3), transparent);
+      opacity: 0.55;
     }
     .bar-marker {
-      width: 6px;
-      height: 6px;
-      background: var(--accent);
-      border-radius: 1px;
-      box-shadow: 0 0 8px var(--accent);
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-violet));
+      box-shadow: 0 0 10px rgba(125, 211, 252, 0.55), 0 0 20px rgba(167, 139, 250, 0.30);
       flex-shrink: 0;
+      animation: bar-breathe 4.2s ease-in-out infinite;
+    }
+    @keyframes bar-breathe {
+      0%, 100% { opacity: 0.7; transform: scale(1);   }
+      50%      { opacity: 1;   transform: scale(1.15); }
     }
     .bar-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
     .bar-title {
