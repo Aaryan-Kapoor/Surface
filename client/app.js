@@ -36,6 +36,44 @@ window.addEventListener("message", (e) => {
   }).catch(() => {});
 });
 
+// ── Empty-state cycling suggestions ──
+// Shows a rotating list of things the user could ask their agent for.
+// Each suggestion "prints in" with the same scan-wipe used elsewhere.
+
+const EMPTY_SUGGESTIONS = [
+  "a pomodoro",
+  "today's weather",
+  "a snake game",
+  "a meditation guide",
+  "a 7-minute workout",
+  "a bill-split calculator",
+  "the chord progression to wonderwall",
+  "a habit tracker",
+  "an ascii art cat",
+  "today's headlines",
+  "a breathing circle",
+  "a flashcard deck for biology",
+];
+
+let emptySuggestionT = null;
+function cycleEmptySuggestions(root) {
+  if (emptySuggestionT) { clearInterval(emptySuggestionT); emptySuggestionT = null; }
+  const slot = root.querySelector(".empty-suggestions");
+  if (!slot) return;
+  let i = Math.floor(Math.random() * EMPTY_SUGGESTIONS.length);
+  // Seed first value
+  slot.innerHTML = `<span class="empty-suggestion">${EMPTY_SUGGESTIONS[i]}</span>`;
+  emptySuggestionT = setInterval(() => {
+    if (!document.body.contains(slot)) {
+      clearInterval(emptySuggestionT);
+      emptySuggestionT = null;
+      return;
+    }
+    i = (i + 1) % EMPTY_SUGGESTIONS.length;
+    slot.innerHTML = `<span class="empty-suggestion">${EMPTY_SUGGESTIONS[i]}</span>`;
+  }, 3600);
+}
+
 // ── Toast notifications ──
 
 function showToast(text, duration = 4000, style = "info") {
@@ -115,15 +153,17 @@ function applyTheme(config) {
     root.style.setProperty("--card-radius", config.cardRadius);
   }
 
-  // Starfield
+  // Starfield — opt-in (default chrome uses .bench instead). Agents
+  // turn it on with `starfield: true`. Either explicit `false` or
+  // omission keeps it hidden.
+  const starfieldOn = config.starfield === true;
   const starfield = document.getElementById("starfield");
-  if (starfield) {
-    starfield.style.display = config.starfield === false ? "none" : "";
-  }
+  if (starfield) starfield.style.display = starfieldOn ? "" : "none";
 
-  // Nebulae
+  // Nebulae — opt-in.
+  const nebulaOn = config.nebula === true;
   document.querySelectorAll(".nebula").forEach((el) => {
-    el.style.display = config.nebula === false ? "none" : "";
+    el.style.display = nebulaOn ? "" : "none";
   });
   if (config.nebulaColors && config.nebulaColors.length >= 2) {
     const n1 = document.querySelector(".nebula--1");
@@ -131,6 +171,11 @@ function applyTheme(config) {
     if (n1) n1.style.background = `radial-gradient(circle, ${config.nebulaColors[0]}, transparent 70%)`;
     if (n2) n2.style.background = `radial-gradient(circle, ${config.nebulaColors[1]}, transparent 70%)`;
   }
+
+  // Bench — the default substrate. Hide if the agent opted into the
+  // space metaphor instead, so we don't overlay two backgrounds.
+  const bench = document.getElementById("bench");
+  if (bench) bench.style.display = (starfieldOn || nebulaOn) ? "none" : "";
 
   // Custom CSS injection — wrapped in @layer theme so shell styles always win
   let customStyle = document.getElementById("theme-css");
@@ -235,7 +280,34 @@ function getRoute() {
 
 window.addEventListener("hashchange", render);
 
-// ── Starfield (3 parallax layers) ──
+// ── Bench (default substrate: graph paper + drifting sweep) ──
+// Themes can opt back into the starfield/nebula via config.starfield/nebula.
+
+function createBench() {
+  const el = document.createElement("div");
+  el.className = "bench";
+  el.id = "bench";
+  const sweep = document.createElement("div");
+  sweep.className = "bench-sweep";
+  el.appendChild(sweep);
+  return el;
+}
+
+// Briefly perturb the sweep — called whenever the agent pushes
+// something via SSE (create/update/delete/theme/notify).
+let benchPulseT = 0;
+function pulseBench() {
+  const bench = document.getElementById("bench");
+  if (!bench) return;
+  if (Date.now() - benchPulseT < 500) return; // throttle
+  benchPulseT = Date.now();
+  bench.classList.remove("bench--pulse");
+  void bench.offsetWidth; // reflow to restart anim
+  bench.classList.add("bench--pulse");
+  setTimeout(() => bench.classList.remove("bench--pulse"), 1500);
+}
+
+// ── Starfield (3 parallax layers) — opt-in via theme ──
 
 function createStarfield() {
   const el = document.createElement("div");
@@ -263,8 +335,8 @@ function createStarfield() {
     el.appendChild(layerEl);
   });
 
-  // Hide if theme says no starfield
-  if (displayConfig.starfield === false) el.style.display = "none";
+  // Starfield is opt-in. Default chrome uses .bench instead.
+  if (displayConfig.starfield !== true) el.style.display = "none";
 
   return el;
 }
@@ -276,14 +348,13 @@ function createNebulae() {
   const n2 = document.createElement("div");
   n2.className = "nebula nebula--2";
 
-  // Apply theme nebula colors
   if (displayConfig.nebulaColors && displayConfig.nebulaColors.length >= 2) {
     n1.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[0]}, transparent 70%)`;
     n2.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[1]}, transparent 70%)`;
   }
 
-  // Hide if theme says no nebula
-  if (displayConfig.nebula === false) {
+  // Nebulae are opt-in. Default chrome uses .bench instead.
+  if (displayConfig.nebula !== true) {
     n1.style.display = "none";
     n2.style.display = "none";
   }
@@ -392,11 +463,13 @@ function renderGrid() {
   }
 
   const container = document.createElement("div");
+  container.appendChild(createBench());
   container.appendChild(createStarfield());
   container.appendChild(createNebulae());
 
   const gridView = document.createElement("div");
   gridView.className = "grid-view";
+  if (surfaces.length > 0) gridView.classList.add("has-cards");
 
   const title = displayConfig.title || "Surface";
   const header = document.createElement("div");
@@ -404,7 +477,16 @@ function renderGrid() {
   const exploreBtn = features.marketplace
     ? `<button class="explore-btn" onclick="navigate('/explore')">Explore</button>`
     : "";
-  header.innerHTML = `<div class="grid-title">${escapeHtml(title)}</div>${exploreBtn}`;
+  const count = surfaces.length;
+  const countLabel = count === 0 ? "" : `${String(count).padStart(2, "0")} ${count === 1 ? "surface" : "surfaces"}`;
+  header.innerHTML = `
+    <div class="grid-title-block">
+      <div class="grid-title">${escapeHtml(title)}</div>
+      <div class="grid-subtitle">your agents' workbench</div>
+    </div>
+    ${count > 0 ? `<div class="grid-meta">${escapeHtml(countLabel)}</div>` : ""}
+    ${exploreBtn}
+  `;
   gridView.appendChild(header);
 
   // Home widget (full HTML/JS iframe on the homescreen)
@@ -439,10 +521,13 @@ function renderGrid() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-prompt">Surface something.</div>
-      <div class="empty-sub">Your agents are waiting.</div>
+      <div class="empty-glyph" aria-hidden="true"></div>
+      <div class="empty-prompt">What should I make?</div>
+      <div class="empty-suggestions"><span class="empty-suggestion" id="empty-suggestion">a pomodoro</span></div>
+      <div class="empty-sub">tell your agent</div>
     `;
     container.appendChild(empty);
+    cycleEmptySuggestions(empty);
   } else {
     const grid = document.createElement("div");
     grid.className = "grid";
@@ -506,15 +591,29 @@ function createCard(s, index) {
     iconEl.textContent = meta.icon || iconForMime(mime);
     preview.appendChild(iconEl);
   }
+
+  // Live pip — surfaces touched in the last 60s wear an orange dot
+  if (s.updated_at) {
+    const ageMs = Date.now() - new Date(s.updated_at + "Z").getTime();
+    if (ageMs < 60000) {
+      const live = document.createElement("div");
+      live.className = "card-live";
+      live.textContent = "live";
+      preview.appendChild(live);
+    }
+  }
+
   card.appendChild(preview);
 
   // Card body
   const body = document.createElement("div");
   body.className = "card-body";
   body.innerHTML = `
-    ${meta.icon ? `<span class="card-icon">${meta.icon}</span>` : ""}
-    <div class="card-title">${escapeHtml(s.title)}</div>
-    ${mime ? `<div class="card-badge">${escapeHtml(labelForMime(mime))}</div>` : ""}
+    <div class="card-body-top">
+      ${meta.icon ? `<span class="card-icon">${meta.icon}</span>` : ""}
+      <div class="card-title">${escapeHtml(s.title)}</div>
+      ${mime ? `<div class="card-badge">${escapeHtml(labelForMime(mime))}</div>` : ""}
+    </div>
     ${meta.description ? `<div class="card-description">${escapeHtml(meta.description)}</div>` : ""}
     <div class="card-time">${timeAgo(s.updated_at)}</div>
   `;
@@ -537,11 +636,23 @@ async function renderSurface(id) {
   const view = document.createElement("div");
   view.className = "surface-view";
 
+  const mime = surface.artifact_mime || (surface.artifact && surface.artifact.mime) || "";
+  const mimeLabel = mime ? labelForMime(mime) : "";
+
   const nav = document.createElement("div");
   nav.className = "surface-nav";
   nav.innerHTML = `
-    <button class="back-btn" onclick="location.hash='/'">←</button>
-    <div class="surface-nav-title">${escapeHtml(surface.title)}</div>
+    <button class="back-btn" onclick="location.hash='/'" aria-label="Back">←</button>
+    <div class="surface-nav-titlewrap">
+      <div class="surface-nav-title">${escapeHtml(surface.title)}</div>
+      <div class="surface-nav-meta">
+        ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span>` : ""}
+        ${mimeLabel ? `<span class="surface-nav-meta-dot"></span>` : ""}
+        <span>${escapeHtml(timeAgo(surface.updated_at))}</span>
+        <span class="surface-nav-meta-dot"></span>
+        <span class="surface-nav-live">live</span>
+      </div>
+    </div>
   `;
   view.appendChild(nav);
 
@@ -559,10 +670,22 @@ async function renderSurface(id) {
     const data = JSON.parse(e.data);
     if (data.html || data.reload || data.version_id) {
       iframe.src = iframe.src.split("?")[0] + "?v=" + Date.now();
+      // Visual cue: brief blur-fade on the iframe when the agent
+      // re-renders. Couples SSE to motion.
+      iframe.classList.remove("refreshing");
+      void iframe.offsetWidth;
+      iframe.classList.add("refreshing");
     }
     if (data.title) {
       const titleEl = view.querySelector(".surface-nav-title");
       if (titleEl) titleEl.textContent = data.title;
+    }
+    if (data.updated_at) {
+      const metaEl = view.querySelector(".surface-nav-meta");
+      if (metaEl) {
+        const tsSpan = metaEl.querySelectorAll("span")[mimeLabel ? 2 : 0];
+        if (tsSpan) tsSpan.textContent = timeAgo(data.updated_at);
+      }
     }
   });
   surfaceSSE.addEventListener("agent_reply", (e) => {
@@ -589,6 +712,7 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("surface_created", (e) => {
     const data = JSON.parse(e.data);
+    pulseBench();
     fetch("/surfaces/" + data.id).then(r => r.json()).then(full => {
       surfaces.unshift(full);
       const grid = document.getElementById("surface-grid");
@@ -596,7 +720,15 @@ function connectGlobalSSE() {
         const card = createCard(full, 0);
         grid.prepend(card);
         const empty = document.querySelector(".empty-state");
-        if (empty) empty.remove();
+        if (empty) {
+          if (emptySuggestionT) { clearInterval(emptySuggestionT); emptySuggestionT = null; }
+          empty.remove();
+        }
+        // First card → enable the rail.
+        const gv = document.querySelector(".grid-view");
+        if (gv) gv.classList.add("has-cards");
+        // Update the count meta in the header.
+        updateGridMeta();
       } else {
         render();
       }
@@ -605,6 +737,7 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
+    pulseBench();
     const idx = surfaces.findIndex((s) => s.id === data.id);
     if (idx !== -1) {
       surfaces[idx] = { ...surfaces[idx], ...data };
@@ -614,19 +747,38 @@ function connectGlobalSSE() {
         if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
         const timeEl = card.querySelector(".card-time");
         if (timeEl) timeEl.textContent = timeAgo(data.updated_at);
+        // Add (or refresh) the live pip
+        let live = card.querySelector(".card-live");
+        if (!live) {
+          live = document.createElement("div");
+          live.className = "card-live";
+          live.textContent = "live";
+          const preview = card.querySelector(".card-preview");
+          if (preview) preview.appendChild(live);
+        }
+        // Remove the pip after 60s so it stays meaningful.
+        setTimeout(() => {
+          const stillThere = card.querySelector(".card-live");
+          if (stillThere) stillThere.remove();
+        }, 60000);
       }
     }
   });
 
   globalSSE.addEventListener("surface_deleted", (e) => {
     const data = JSON.parse(e.data);
+    pulseBench();
     surfaces = surfaces.filter((s) => s.id !== data.id);
     const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
     if (card) {
       card.classList.add("removing");
       card.addEventListener("animationend", () => {
         card.remove();
-        if (surfaces.length === 0) render();
+        if (surfaces.length === 0) {
+          render();
+        } else {
+          updateGridMeta();
+        }
       });
     }
   });
@@ -645,15 +797,39 @@ function connectGlobalSSE() {
   globalSSE.addEventListener("display_notify", (e) => {
     const data = JSON.parse(e.data);
     showToast(data.text, data.duration || 5000, data.style || "info");
+    pulseBench();
   });
 
   globalSSE.addEventListener("display_theme", (e) => {
     const prev = displayConfig.renderer;
     const data = JSON.parse(e.data);
     applyTheme(data);
+    pulseBench();
     // Re-render if renderer was added/removed/changed
     if ((prev || "") !== (data.renderer || "")) render();
   });
+}
+
+// Update the surface-count badge in the grid header without
+// re-rendering the whole grid (used after SSE create/delete).
+function updateGridMeta() {
+  const header = document.querySelector(".grid-header");
+  if (!header) return;
+  let metaEl = header.querySelector(".grid-meta");
+  const n = surfaces.length;
+  const label = n === 0 ? "" : `${String(n).padStart(2, "0")} ${n === 1 ? "surface" : "surfaces"}`;
+  if (n === 0) {
+    if (metaEl) metaEl.remove();
+    return;
+  }
+  if (!metaEl) {
+    metaEl = document.createElement("div");
+    metaEl.className = "grid-meta";
+    const exploreBtn = header.querySelector(".explore-btn");
+    if (exploreBtn) header.insertBefore(metaEl, exploreBtn);
+    else header.appendChild(metaEl);
+  }
+  metaEl.textContent = label;
 }
 
 // ── Explore View (Marketplace) ──
@@ -665,6 +841,7 @@ async function renderExplore() {
   suspendTheme();
 
   const container = document.createElement("div");
+  container.appendChild(createBench());
   container.appendChild(createStarfield());
   container.appendChild(createNebulae());
 
@@ -675,8 +852,11 @@ async function renderExplore() {
   const header = document.createElement("div");
   header.className = "explore-header";
   header.innerHTML = `
-    <button class="back-btn" onclick="navigate('/')">←</button>
-    <div class="grid-title" style="flex:1;text-align:center">Explore</div>
+    <button class="back-btn" onclick="navigate('/')" aria-label="Back">←</button>
+    <div class="grid-title-block" style="flex:1">
+      <div class="grid-title">Explore</div>
+      <div class="grid-subtitle">themes, renderers, surfaces</div>
+    </div>
   `;
   view.appendChild(header);
 

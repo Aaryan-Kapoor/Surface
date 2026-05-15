@@ -30,6 +30,10 @@ initDb();
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
+// Auth: loopback is trusted; non-loopback requires SURFACE_TOKEN via Bearer
+// header, ?token=, or surface_token cookie. A valid query-param auth sets the
+// cookie so a browser opening `http://host:port/?token=...` once can then load
+// `/style.css`, `/app.js`, and every API endpoint without the token in the URL.
 app.use((req, res, next) => {
   const remote = req.socket.remoteAddress || "";
   if (LOOPBACK_ADDRS.has(remote)) return next();
@@ -40,8 +44,21 @@ app.use((req, res, next) => {
   const header = req.header("Authorization") || "";
   const bearer = header.replace(/^Bearer\s+/i, "");
   const query = typeof req.query.token === "string" ? req.query.token : "";
-  if (bearer === TOKEN || query === TOKEN) return next();
-  res.status(401).json({ error: "Invalid or missing token" });
+  const cookieHeader = req.header("Cookie") || "";
+  const cookieMatch = cookieHeader.match(/(?:^|;\s*)surface_token=([^;]+)/);
+  const cookie = cookieMatch ? decodeURIComponent(cookieMatch[1]) : "";
+
+  if (bearer !== TOKEN && query !== TOKEN && cookie !== TOKEN) {
+    res.status(401).json({ error: "Invalid or missing token" });
+    return;
+  }
+  if (query === TOKEN && cookie !== TOKEN) {
+    res.setHeader(
+      "Set-Cookie",
+      `surface_token=${encodeURIComponent(TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+    );
+  }
+  next();
 });
 
 app.use(router);

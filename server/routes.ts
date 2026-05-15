@@ -1144,24 +1144,119 @@ function renderArtifactShell(params: {
   <title>${title}</title>
   <style>
     * { box-sizing: border-box; }
-    html, body { margin: 0; width: 100%; height: 100%; background: #0b0b0f; color: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+    :root {
+      --void: #07070a;
+      --hairline: rgba(255, 255, 255, 0.08);
+      --text-primary: rgba(255, 255, 255, 0.92);
+      --text-secondary: rgba(255, 255, 255, 0.42);
+      --text-ghost: rgba(255, 255, 255, 0.20);
+      --accent: #ff6b35;
+      --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+      --serif: "New York", Charter, "Iowan Old Style", "Hoefler Text", Cambria, Georgia, serif;
+      --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    }
+    html, body { margin: 0; width: 100%; height: 100%; background: var(--void); color: var(--text-primary); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
     body { display: flex; flex-direction: column; overflow: hidden; }
-    .bar { display: ${params.preview ? "none" : "flex"}; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.04); font-size: 12px; color: rgba(255,255,255,.62); }
-    .bar strong { color: rgba(255,255,255,.9); font-weight: 500; }
+    .bar {
+      display: ${params.preview ? "none" : "flex"};
+      align-items: center;
+      gap: 14px;
+      padding: 11px 18px;
+      border-bottom: 1px solid var(--hairline);
+      background: transparent;
+      flex-shrink: 0;
+    }
+    .bar-marker {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 1px;
+      box-shadow: 0 0 8px var(--accent);
+      flex-shrink: 0;
+    }
+    .bar-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .bar-title {
+      font-family: var(--serif);
+      font-style: italic;
+      font-size: 14px;
+      color: var(--text-primary);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .bar-meta {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-ghost);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      overflow: hidden;
+    }
+    .bar-meta-dot {
+      display: inline-block;
+      width: 1px;
+      height: 8px;
+      background: var(--text-ghost);
+      flex-shrink: 0;
+    }
+    .bar-path {
+      font-family: var(--mono);
+      font-size: 9px;
+      letter-spacing: 1px;
+      color: var(--text-ghost);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 50%;
+      direction: rtl;
+      text-align: right;
+    }
     .viewer { flex: 1; min-height: 0; display: flex; align-items: stretch; justify-content: stretch; overflow: auto; }
     .viewer.preview { overflow: hidden; }
     img, video { display: block; max-width: 100%; max-height: 100%; margin: auto; }
     audio { margin: auto; width: min(720px, 90vw); }
     iframe { width: 100%; height: 100%; border: 0; background: white; }
-    pre { width: 100%; margin: 0; padding: 24px; white-space: pre-wrap; overflow: auto; line-height: 1.55; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .markdown { width: min(880px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 48px; line-height: 1.65; color: #e5e7eb; }
-    .markdown h1, .markdown h2, .markdown h3 { color: white; line-height: 1.2; }
-    .markdown code { background: rgba(255,255,255,.08); padding: 2px 4px; border-radius: 4px; }
+    pre {
+      width: 100%;
+      margin: 0;
+      padding: 28px 32px;
+      white-space: pre-wrap;
+      overflow: auto;
+      line-height: 1.65;
+      font: 13px/1.65 var(--mono);
+      color: rgba(255, 255, 255, 0.82);
+    }
+    .markdown {
+      width: min(720px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 48px 0 64px;
+      line-height: 1.72;
+      color: rgba(255, 255, 255, 0.86);
+      font-size: 15px;
+    }
+    .markdown h1 { font-family: var(--serif); font-style: italic; font-weight: 400; color: white; font-size: 32px; line-height: 1.15; margin: 0 0 24px; letter-spacing: -0.5px; }
+    .markdown h2 { font-family: var(--serif); font-weight: 400; color: white; font-size: 22px; line-height: 1.2; margin: 36px 0 16px; letter-spacing: -0.2px; }
+    .markdown h3 { font-family: var(--sans); font-weight: 600; color: white; font-size: 16px; line-height: 1.3; margin: 28px 0 12px; letter-spacing: 0; }
+    .markdown p { margin: 0 0 16px; }
+    .markdown code { background: rgba(255, 255, 255, 0.06); padding: 1px 6px; border-radius: 3px; font-family: var(--mono); font-size: 0.88em; color: rgba(255, 200, 160, 0.92); }
     .markdown pre code { background: transparent; padding: 0; }
+    .markdown strong { color: white; font-weight: 600; }
+    .markdown a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(255, 107, 53, 0.4); }
+    .markdown a:hover { border-bottom-color: var(--accent); }
   </style>
 </head>
 <body>
-  <div class="bar"><strong>${title}</strong><span>${mime}</span><span>${filePath}</span></div>
+  <div class="bar">
+    <span class="bar-marker" aria-hidden="true"></span>
+    <div class="bar-titlewrap">
+      <div class="bar-title">${title}</div>
+      <div class="bar-meta"><span>${mime}</span></div>
+    </div>
+    <div class="bar-path" title="${filePath}">${filePath}</div>
+  </div>
   <main id="viewer" class="viewer${previewClass}"></main>
   <script>
     const mime = ${JSON.stringify(params.mime)};
