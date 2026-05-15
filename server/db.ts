@@ -1,28 +1,18 @@
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
-import {
-  createHtmlArtifactFromSurface,
-  deleteArtifact,
-  ensureArtifactTables,
-  syncHtmlArtifactFromSurface,
-} from "./artifacts.js";
+import { deleteArtifact, ensureArtifactTables } from "./artifacts.js";
 import { bootstrapDataDir, getDbPath } from "./paths.js";
 import { runMigrations } from "./migrations.js";
 
 let db: Database.Database;
 
+// The legacy `surfaces` table is now read-only fallback. `getSurface` and
+// `deleteSurface` below are still used to migrate / clean up rows created
+// before the artifact model existed.
 export interface Surface {
   id: string;
   title: string;
   html: string;
-  metadata: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SurfaceListItem {
-  id: string;
-  title: string;
   metadata: string;
   created_at: string;
   updated_at: string;
@@ -54,61 +44,10 @@ export function getDb(): Database.Database {
   return db;
 }
 
-export function createSurface(params: {
-  id?: string;
-  title: string;
-  html: string;
-  metadata?: Record<string, unknown>;
-}): Surface {
-  const id = params.id || uuidv4();
-  const metadata = JSON.stringify(params.metadata || {});
-  db.prepare(
-    `INSERT INTO surfaces (id, title, html, metadata) VALUES (?, ?, ?, ?)`
-  ).run(id, params.title, params.html, metadata);
-  const surface = getSurface(id)!;
-  createHtmlArtifactFromSurface(db, surface);
-  return surface;
-}
-
 export function getSurface(id: string): Surface | undefined {
   return db.prepare(`SELECT * FROM surfaces WHERE id = ?`).get(id) as
     | Surface
     | undefined;
-}
-
-export function listSurfaces(): SurfaceListItem[] {
-  return db
-    .prepare(
-      `SELECT id, title, metadata, created_at, updated_at FROM surfaces ORDER BY updated_at DESC`
-    )
-    .all() as SurfaceListItem[];
-}
-
-export function updateSurface(
-  id: string,
-  params: {
-    title?: string;
-    html?: string;
-    metadata?: Record<string, unknown>;
-  }
-): Surface | undefined {
-  const existing = getSurface(id);
-  if (!existing) return undefined;
-
-  const title = params.title ?? existing.title;
-  const html = params.html ?? existing.html;
-  const metadata =
-    params.metadata !== undefined
-      ? JSON.stringify(params.metadata)
-      : existing.metadata;
-
-  db.prepare(
-    `UPDATE surfaces SET title = ?, html = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(title, html, metadata, id);
-
-  const surface = getSurface(id)!;
-  syncHtmlArtifactFromSurface(db, surface);
-  return surface;
 }
 
 export function deleteSurface(id: string): boolean {

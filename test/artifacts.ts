@@ -1,4 +1,8 @@
-const SURFACE_URL = process.env.SURFACE_URL || "http://localhost:3000";
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+const SURFACE_URL = process.env.SURFACE_URL || "http://127.0.0.1:3000";
 
 async function api(method: string, path: string, body?: unknown): Promise<any> {
   const res = await fetch(`${SURFACE_URL}${path}`, {
@@ -12,6 +16,15 @@ async function api(method: string, path: string, body?: unknown): Promise<any> {
   const contentType = res.headers.get("content-type") || "";
   if (contentType.includes("application/json")) return res.json();
   return res.text();
+}
+
+async function raw(method: string, path: string, body?: unknown): Promise<{ status: number; body: string }> {
+  const res = await fetch(`${SURFACE_URL}${path}`, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return { status: res.status, body: await res.text() };
 }
 
 async function optionalDelete(path: string): Promise<void> {
@@ -36,6 +49,8 @@ async function main() {
   const htmlId = `artifact-test-html-${suffix}`;
   const mdId = `artifact-test-md-${suffix}`;
   const surfaceId = `artifact-test-surface-${suffix}`;
+
+  // ── Workspace artifacts ──
 
   const html = await api("POST", "/artifacts", {
     id: htmlId,
@@ -97,6 +112,83 @@ async function main() {
     data: { ok: true },
   });
   assert(action.action === "artifact_test_action", "Artifact action failed");
+
+  // ── Linked artifacts ──
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "surface-link-test-"));
+  const linkedFileIds: string[] = [];
+  try {
+    // Single-file link
+    const singlePath = path.join(tmpRoot, "single.html");
+    fs.writeFileSync(singlePath, "<h1 id='single'>linked-single</h1>");
+    const single = await api("POST", "/artifacts/link", { path: singlePath, title: "Linked Single" });
+    linkedFileIds.push(single.artifact.id);
+    assert(single.artifact.source_type === "linked", "Single-file link did not set source_type=linked");
+    assert(single.files[0].storage_kind === "external", "Single-file link did not set storage_kind=external");
+    assert(single.files[0].storage_path === fs.realpathSync(singlePath), "storage_path should be the realpath");
+
+    const singleBytes = await api("GET", `/artifacts/${single.artifact.id}/files/single.html`);
+    assert(singleBytes.includes("linked-single"), "Single-file link did not serve bytes");
+
+    // Directory link with entry + sibling
+    const dirPath = path.join(tmpRoot, "projdir");
+    fs.mkdirSync(dirPath);
+    fs.writeFileSync(path.join(dirPath, "index.html"), "<h1>linked-index</h1>");
+    fs.writeFileSync(path.join(dirPath, "sibling.txt"), "sibling-bytes");
+    const dir = await api("POST", "/artifacts/link", {
+      path: dirPath,
+      entry: "index.html",
+      title: "Linked Dir",
+    });
+    linkedFileIds.push(dir.artifact.id);
+    const indexBytes = await api("GET", `/artifacts/${dir.artifact.id}/files/index.html`);
+    assert(indexBytes.includes("linked-index"), "Linked dir entry not served");
+    const siblingBytes = await api("GET", `/artifacts/${dir.artifact.id}/files/sibling.txt`);
+    assert(siblingBytes.includes("sibling-bytes"), "Linked dir sibling not served via fallback");
+
+    // Link nonexistent path → 400
+    const missing = await raw("POST", "/artifacts/link", {
+      path: path.join(tmpRoot, "does-not-exist.html"),
+      title: "Missing",
+    });
+    assert(missing.status === 400, `Linking missing path should 400 (got ${missing.status})`);
+
+    // Update content on linked → 409
+    const updateOnLinked = await raw("PUT", `/artifacts/${single.artifact.id}`, {
+      mime: "text/html",
+      content: "<h1>nope</h1>",
+    });
+    assert(updateOnLinked.status === 409, `Update on linked should 409 (got ${updateOnLinked.status})`);
+
+    // Rollback on linked → 409
+    const rollbackOnLinked = await raw("POST", `/artifacts/${single.artifact.id}/rollback`, { version: 1 });
+    assert(rollbackOnLinked.status === 409, `Rollback on linked should 409 (got ${rollbackOnLinked.status})`);
+
+    // Touch on linked → 200
+    const touched = await api("POST", `/artifacts/${single.artifact.id}/touch`);
+    assert(touched.touched === true, "Touch should return { touched: true }");
+
+    // Path traversal via URL-encoded segment → 400
+    const traversal = await raw(
+      "GET",
+      `/artifacts/${dir.artifact.id}/files/..%2F..%2Fetc%2Fpasswd`,
+    );
+    assert(traversal.status === 400, `Path traversal should 400 (got ${traversal.status})`);
+
+    // Symlink escape — symlink inside the linked dir pointing outside it
+    const secretPath = path.join(tmpRoot, "secret.txt");
+    fs.writeFileSync(secretPath, "SHOULD-NOT-LEAK");
+    fs.symlinkSync(secretPath, path.join(dirPath, "leak"));
+    const leak = await raw("GET", `/artifacts/${dir.artifact.id}/files/leak`);
+    assert(
+      leak.status === 403 || leak.status === 404,
+      `Symlink escape must be blocked (got ${leak.status}, body: ${leak.body.slice(0, 120)})`,
+    );
+    assert(!leak.body.includes("SHOULD-NOT-LEAK"), "Symlink escape leaked the target's bytes");
+  } finally {
+    for (const id of linkedFileIds) await optionalDelete(`/artifacts/${id}`);
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
 
   await optionalDelete(`/artifacts/${htmlId}`);
   await optionalDelete(`/artifacts/${mdId}`);

@@ -2,6 +2,8 @@
 
 > **Surface** — The last app. A universal display that AI agents own end-to-end.
 
+> **Note:** tool names below (`artifact_create`, `surface_exec`, `display_navigate`, etc.) describe *capabilities*, not the current API. The canonical agent contract today is the `surface` CLI plus [`SKILL.md`](SKILL.md). Mapping: `artifact_create` → `surface create`, `artifact_update` → `surface update`, `surface_exec` → `surface exec`, `display_navigate` → `surface open`, `display_notify` → `surface notify`, `display_set_theme` → `surface theme`, `reply` → `surface reply`, surface actions → `surface wait` / `surface actions`. `renderer` / `home` / `overlay` are theme keys passed to `surface theme`. Run `surface <cmd> --help` for the authoritative spec.
+
 ---
 
 ## The Pitch

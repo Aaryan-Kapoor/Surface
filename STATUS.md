@@ -26,10 +26,21 @@ Branch: `feature/artifact-architecture`
 ## Verified
 
 - `npx tsc --noEmit` passes.
-- `npm run test:artifacts` passes.
+- `npm run test:artifacts` passes — now covers linked artifacts (link / touch / 409 on update+rollback / path-traversal blocked / symlink-escape blocked).
 - CLI smoke (isolated server on port 3099, `SURFACE_DATA_DIR=/tmp/...`) covers create / read / link / touch / update-rejection / delete.
+- `surface wait` covers live action delivery, action-name filter, pending-on-startup, timeout exit 3, `--no-ack`, reconnect across server bounce, concurrent waiters.
 - Auto-migration from legacy paths runs on first boot of fresh data dir.
 - Marketplace flag gates routes and Explore button correctly.
+- Bind hardening: `SURFACE_BIND=0.0.0.0` without `SURFACE_TOKEN` refuses to boot; with token, loopback bypasses auth, non-loopback requires `Authorization: Bearer` or `?token=`.
+
+## QA pass
+
+An Opus subagent ran the full matrix in a forked tree. Two findings:
+
+- **CRITICAL — symlink escape on linked artifacts** (now fixed): a symlink inside a linked directory pointing outside it leaked the target's bytes through the file route. Added `fs.realpathSync` resolution at both link time (`server/artifacts.ts`) and read time (`server/routes.ts`). `SURFACE_LINK_ROOTS` also realpaths candidate and roots so a symlinked path can't bypass the allow-list.
+- **MINOR — CLI usage errors exited 1 instead of 2** (now fixed): added `usage()` helper in `bin/surface.ts` that exits 2 directly. Runtime errors still exit 1; timeout still exits 3.
+
+Regression test for the symlink case is in `test/artifacts.ts`.
 
 ## Notes
 

@@ -54,7 +54,15 @@ By default, `POST /artifacts/link` accepts any path the Surface process can read
 SURFACE_LINK_ROOTS=/home/user/projects:/srv/work
 ```
 
-Colon-separated absolute paths. `link` will refuse any path not under one of these roots (resolved with `path.resolve`, with separator-aware prefix matching to prevent `~/projects-evil` from matching `~/projects`). Independent of `artifact_present_file`, which still copies bytes on read.
+Colon-separated absolute paths. `link` refuses any path not under one of these roots. Both the candidate path and the configured roots are resolved with `fs.realpathSync` before the containment check, so a symlink pointing outside a root (or a symlinked root pointing into the configured path) cannot smuggle the real target past the gate. Prefix matching is separator-aware to prevent `~/projects-evil` from satisfying `~/projects`.
+
+Independent of `artifact_present_file`, which still copies bytes on read.
+
+## Symlinks Inside Linked Directories
+
+The file route `GET /artifacts/<id>/files/<relpath>` resolves the requested path through `fs.realpathSync` before reading. If the realpath escapes the registered linked root, the request returns `403 Path escapes linked root`. This protects against a symlink being added to the linked directory after registration whose target is outside that directory. The realpath check runs even when the lexical containment check passes.
+
+The exception is a **single-file link of a symlink**: `POST /artifacts/link` with a path that is itself a symlink follows the symlink at link time. The artifact's `storage_path` becomes the realpath of the target, the workspace root becomes the realpath's parent, and `SURFACE_LINK_ROOTS` is enforced against the realpath. This is consistent with the trust model — agents choose the paths they pass to `link`, and `SURFACE_LINK_ROOTS` is the mechanism for narrowing that trust.
 
 ## Reporting Vulnerabilities
 

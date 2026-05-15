@@ -433,42 +433,6 @@ export function deleteArtifact(db: Database.Database, id: string): boolean {
   return result.changes > 0;
 }
 
-export function createHtmlArtifactFromSurface(
-  db: Database.Database,
-  surface: { id: string; title: string; html: string; metadata: string }
-): void {
-  if (getArtifact(db, surface.id)) return;
-  createArtifact(db, {
-    id: surface.id,
-    title: surface.title,
-    kind: "html",
-    mime: "text/html",
-    source_type: "generated",
-    metadata: parseJsonObject(surface.metadata),
-    files: [{ path: "index.html", content: surface.html, mime: "text/html" }],
-    create_surface_view: true,
-  });
-}
-
-export function syncHtmlArtifactFromSurface(
-  db: Database.Database,
-  surface: { id: string; title: string; html: string; metadata: string }
-): void {
-  if (!getArtifact(db, surface.id)) {
-    createHtmlArtifactFromSurface(db, surface);
-    return;
-  }
-  updateArtifact(db, surface.id, {
-    title: surface.title,
-    kind: "html",
-    mime: "text/html",
-    source_type: "generated",
-    metadata: parseJsonObject(surface.metadata),
-    files: [{ path: "index.html", content: surface.html, mime: "text/html" }],
-    reason: "surface_update",
-  });
-}
-
 export function presentFile(
   db: Database.Database,
   params: {
@@ -735,13 +699,4 @@ function iconForMime(mime: string): string {
   if (mime === "text/markdown") return "MD";
   if (mime === "text/html") return "HTML";
   return "FILE";
-}
-
-function parseJsonObject(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
