@@ -41,18 +41,20 @@ window.addEventListener("message", (e) => {
 // Each suggestion "prints in" with the same scan-wipe used elsewhere.
 
 const EMPTY_SUGGESTIONS = [
-  "a pomodoro",
-  "today's weather",
-  "a snake game",
+  "Surface me a pomodoro",
+  "Put today's weather on my surface",
+  "Surface me a snake game",
   "a meditation guide",
-  "a 7-minute workout",
+  "Surface me a 7-minute workout",
   "a bill-split calculator",
+  "Put today's headlines on my surface",
   "the chord progression to wonderwall",
-  "a habit tracker",
+  "Surface me a habit tracker",
   "an ascii art cat",
-  "today's headlines",
-  "a breathing circle",
-  "a flashcard deck for biology",
+  "Surface a breathing circle",
+  "Put a flashcard deck for biology on my surface",
+  "Surface me a kanban board",
+  "a recipe for tonight's dinner",
 ];
 
 // Typewriter cycle: type-in → hold → type-out → next. Letters print at
@@ -110,6 +112,80 @@ function showToast(text, duration = 4000, style = "info") {
     toast.addEventListener("transitionend", () => toast.remove());
   }, duration);
 }
+
+// ── Tutorial modal ──
+// The "Take the tour" button on the empty state opens this. It hands
+// the user a copy-pasteable prompt that activates their agent's
+// tutorial-walkthrough flow (defined in docs/TUTORIAL.md and gated by
+// INSTALL_FOR_AGENTS.md). Surface itself does not run the tutorial —
+// the agent does — so the modal is intentionally just a prompt + copy.
+
+const TUTORIAL_PROMPT =
+  "Walk me through the Surface tutorial in docs/TUTORIAL.md. Update the tutorial state in INSTALL_FOR_AGENTS.md as you progress.";
+
+function showTutorialModal() {
+  // Don't double-open
+  if (document.getElementById("tutorial-modal")) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "tutorial-modal";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+      <button type="button" class="modal-close" aria-label="Close">×</button>
+      <div class="modal-eyebrow">Tutorial</div>
+      <h2 id="tutorial-title" class="modal-title">Hand this to your agent</h2>
+      <p class="modal-lede">Surface doesn't run the tour itself — your agent does. Paste the prompt below into your agent's chat and it will walk you through the five-minute tour.</p>
+      <pre class="modal-prompt" id="tutorial-prompt-text">${escapeHtml(TUTORIAL_PROMPT)}</pre>
+      <div class="modal-actions">
+        <button type="button" class="modal-copy-btn" id="tutorial-copy-btn">
+          <span class="modal-copy-glyph" aria-hidden="true"></span>
+          Copy prompt
+        </button>
+      </div>
+      <div class="modal-sub">After running, your agent updates <span class="modal-mono">INSTALL_FOR_AGENTS.md</span> so re-runs skip the tour.</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    overlay.classList.remove("modal-overlay--visible");
+    overlay.addEventListener("transitionend", () => overlay.remove(), { once: true });
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+
+  overlay.querySelector(".modal-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", onKey);
+
+  const copyBtn = overlay.querySelector("#tutorial-copy-btn");
+  const setBtnLabel = (label, done) => {
+    copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeHtml(label)}`;
+    copyBtn.classList.toggle("modal-copy-btn--done", !!done);
+  };
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(TUTORIAL_PROMPT);
+      setBtnLabel("Copied", true);
+      setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
+    } catch {
+      // Fallback: select the text so the user can ⌘C themselves
+      const pre = overlay.querySelector("#tutorial-prompt-text");
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      setBtnLabel("Select & ⌘C", false);
+    }
+  });
+
+  requestAnimationFrame(() => overlay.classList.add("modal-overlay--visible"));
+}
+
+// Make available to inline onclick attributes
+window.showTutorialModal = showTutorialModal;
 
 // ── Theme system ──
 
@@ -623,6 +699,10 @@ function renderGrid() {
         <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
       </div>
       <div class="empty-sub">tell your agent</div>
+      <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">
+        <span class="empty-tour-glyph" aria-hidden="true"></span>
+        Start Tutorial
+      </button>
     `;
     container.appendChild(empty);
     cycleEmptySuggestions(empty);
