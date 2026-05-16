@@ -698,14 +698,14 @@ function renderGrid() {
     empty.innerHTML = `
       <div class="empty-glyph" aria-hidden="true">
         <svg viewBox="0 0 100 100">
-          <circle class="ring-1" cx="50" cy="50" r="42" fill="none" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7" stroke-dasharray="2.4 4.6"/>
-          <circle class="ring-2" cx="50" cy="50" r="31" fill="none" stroke="rgba(167, 139, 250, 0.45)" stroke-width="0.7"/>
-          <circle class="ring-3" cx="50" cy="50" r="21" fill="none" stroke="rgba(232, 121, 249, 0.42)" stroke-width="0.7" stroke-dasharray="1 2.6"/>
-          <circle class="core" cx="50" cy="50" r="2.6" fill="rgba(255, 255, 255, 0.95)"/>
-          <line x1="50" y1="5" x2="50" y2="11" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
-          <line x1="50" y1="89" x2="50" y2="95" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
-          <line x1="5" y1="50" x2="11" y2="50" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
-          <line x1="89" y1="50" x2="95" y2="50" stroke="rgba(125, 211, 252, 0.55)" stroke-width="0.7"/>
+          <circle class="ring-1" cx="50" cy="50" r="42" fill="none" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5" stroke-dasharray="2.4 4.6"/>
+          <circle class="ring-2" cx="50" cy="50" r="31" fill="none" stroke="rgba(255, 255, 255, 0.28)" stroke-width="0.5"/>
+          <circle class="ring-3" cx="50" cy="50" r="21" fill="none" stroke="rgba(255, 255, 255, 0.34)" stroke-width="0.5" stroke-dasharray="1 2.6"/>
+          <circle class="core" cx="50" cy="50" r="2.4" fill="rgba(255, 255, 255, 0.96)"/>
+          <line x1="50" y1="5"  x2="50" y2="11" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
+          <line x1="50" y1="89" x2="50" y2="95" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
+          <line x1="5"  y1="50" x2="11" y2="50" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
+          <line x1="89" y1="50" x2="95" y2="50" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
         </svg>
       </div>
       <div class="empty-prompt">What should I make?</div>

@@ -1145,26 +1145,24 @@ function renderArtifactShell(params: {
   <style>
     * { box-sizing: border-box; }
     :root {
-      --void: #06070d;
+      --void: #0a0a0a;
       --hairline: rgba(255, 255, 255, 0.08);
-      --text-primary: rgba(255, 255, 255, 0.94);
-      --text-secondary: rgba(255, 255, 255, 0.50);
-      --text-ghost: rgba(255, 255, 255, 0.22);
-      --accent: #7dd3fc;
-      --accent-violet: #a78bfa;
-      --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-      --serif: "New York", Charter, "Iowan Old Style", "Hoefler Text", Cambria, Georgia, serif;
-      --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+      --text-primary: #ededec;
+      --text-secondary: rgba(237, 237, 236, 0.52);
+      --text-ghost: rgba(237, 237, 236, 0.22);
+      --accent: #ffffff;
+      --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     }
-    html, body { margin: 0; width: 100%; height: 100%; background: var(--void); color: var(--text-primary); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&display=swap");
+    html, body { margin: 0; width: 100%; height: 100%; background: var(--void); color: var(--text-primary); font-family: var(--font); -webkit-font-smoothing: antialiased; }
     body { display: flex; flex-direction: column; overflow: hidden; }
     .bar {
       display: ${params.preview ? "none" : "flex"};
       align-items: center;
       gap: 14px;
-      padding: 12px 20px;
+      padding: 14px 22px;
       border-bottom: 1px solid var(--hairline);
-      background: rgba(6, 7, 13, 0.72);
+      background: rgba(10, 10, 10, 0.78);
       backdrop-filter: blur(20px) saturate(140%);
       -webkit-backdrop-filter: blur(20px) saturate(140%);
       flex-shrink: 0;
@@ -1172,15 +1170,18 @@ function renderArtifactShell(params: {
     }
     .bar::after {
       content: ""; position: absolute; left: 8%; right: 8%; bottom: -1px; height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.5), rgba(167, 139, 250, 0.3), transparent);
+      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.18), transparent);
       opacity: 0.55;
     }
     .bar-marker {
       width: 8px;
       height: 8px;
       border-radius: 2px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-violet));
-      box-shadow: 0 0 10px rgba(125, 211, 252, 0.55), 0 0 20px rgba(167, 139, 250, 0.30);
+      background: linear-gradient(135deg, #ffffff 0%, #c8c8c6 100%);
+      box-shadow:
+        inset 0 0.5px 0 rgba(255, 255, 255, 0.6),
+        0 0 10px rgba(255, 255, 255, 0.55),
+        0 0 22px rgba(255, 255, 255, 0.18);
       flex-shrink: 0;
       animation: bar-breathe 4.2s ease-in-out infinite;
     }
@@ -1188,20 +1189,22 @@ function renderArtifactShell(params: {
       0%, 100% { opacity: 0.7; transform: scale(1);   }
       50%      { opacity: 1;   transform: scale(1.15); }
     }
-    .bar-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .bar-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
     .bar-title {
-      font-family: var(--serif);
-      font-style: italic;
+      font-family: var(--font);
+      font-weight: 700;
       font-size: 14px;
+      letter-spacing: -0.2px;
       color: var(--text-primary);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
     .bar-meta {
-      font-family: var(--mono);
+      font-family: var(--font);
       font-size: 9px;
-      letter-spacing: 1.5px;
+      font-weight: 800;
+      letter-spacing: 2.4px;
       text-transform: uppercase;
       color: var(--text-ghost);
       display: flex;
@@ -1217,9 +1220,10 @@ function renderArtifactShell(params: {
       flex-shrink: 0;
     }
     .bar-path {
-      font-family: var(--mono);
-      font-size: 9px;
-      letter-spacing: 1px;
+      font-family: var(--font);
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
       color: var(--text-ghost);
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1240,25 +1244,26 @@ function renderArtifactShell(params: {
       white-space: pre-wrap;
       overflow: auto;
       line-height: 1.65;
-      font: 13px/1.65 var(--mono);
+      font: 600 13px/1.65 var(--font);
       color: rgba(255, 255, 255, 0.82);
     }
     .markdown {
       width: min(720px, calc(100% - 48px));
       margin: 0 auto;
       padding: 48px 0 64px;
-      line-height: 1.72;
+      line-height: 1.7;
       color: rgba(255, 255, 255, 0.86);
       font-size: 15px;
+      font-weight: 500;
     }
-    .markdown h1 { font-family: var(--serif); font-style: italic; font-weight: 400; color: white; font-size: 32px; line-height: 1.15; margin: 0 0 24px; letter-spacing: -0.5px; }
-    .markdown h2 { font-family: var(--serif); font-weight: 400; color: white; font-size: 22px; line-height: 1.2; margin: 36px 0 16px; letter-spacing: -0.2px; }
-    .markdown h3 { font-family: var(--sans); font-weight: 600; color: white; font-size: 16px; line-height: 1.3; margin: 28px 0 12px; letter-spacing: 0; }
+    .markdown h1 { font-family: var(--font); font-weight: 900; color: #ffffff; font-size: 36px; line-height: 1.05; margin: 0 0 24px; letter-spacing: -1.5px; }
+    .markdown h2 { font-family: var(--font); font-weight: 800; color: #ffffff; font-size: 24px; line-height: 1.15; margin: 36px 0 16px; letter-spacing: -0.6px; }
+    .markdown h3 { font-family: var(--font); font-weight: 700; color: #ffffff; font-size: 16px; line-height: 1.3; margin: 28px 0 12px; letter-spacing: -0.2px; }
     .markdown p { margin: 0 0 16px; }
-    .markdown code { background: rgba(255, 255, 255, 0.06); padding: 1px 6px; border-radius: 3px; font-family: var(--mono); font-size: 0.88em; color: rgba(255, 200, 160, 0.92); }
+    .markdown code { background: rgba(255, 255, 255, 0.06); padding: 1px 6px; border-radius: 3px; font-family: var(--font); font-weight: 700; font-size: 0.88em; color: #ffffff; }
     .markdown pre code { background: transparent; padding: 0; }
-    .markdown strong { color: white; font-weight: 600; }
-    .markdown a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(255, 107, 53, 0.4); }
+    .markdown strong { color: #ffffff; font-weight: 800; }
+    .markdown a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(255, 255, 255, 0.32); }
     .markdown a:hover { border-bottom-color: var(--accent); }
   </style>
 </head>
