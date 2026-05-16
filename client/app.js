@@ -1036,17 +1036,11 @@ function createCard(s, index) {
   card.className = "surface-card";
   card.dataset.id = s.id;
   card.style.animationDelay = ((index || 0) * 0.08) + "s";
-  // Stagger the ambient gleam so cards don't sweep in unison.
-  card.style.setProperty("--gleam-delay", (-(Math.random() * 7.2)).toFixed(2) + "s");
   card.onclick = () => navigate("/surface/" + s.id);
-  bindCardTilt(card);
-  const gleam = document.createElement("div");
-  gleam.className = "card-gleam";
-  card.appendChild(gleam);
 
-  // Preview thumbnail
-  const preview = document.createElement("div");
-  preview.className = "card-preview";
+  const disc = document.createElement("div");
+  disc.className = "card-disc";
+
   const previewUrl = s.preview_url || (s.artifact ? `/artifacts/${s.artifact.id}/view?preview=1` : `/surfaces/${s.id}/html`);
   const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
   const shouldUseIframePreview =
@@ -1058,7 +1052,9 @@ function createCard(s, index) {
   const hasExternalScripts = s.html && (s.html.includes('<script src') || s.html.includes('import('));
   if (shouldUseIframePreview) {
     const iframe = document.createElement("iframe");
-    iframe.sandbox = "allow-scripts allow-same-origin";
+    iframe.className = "card-frame";
+    iframe.sandbox = "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox";
+    iframe.allow = "autoplay; encrypted-media; picture-in-picture; clipboard-write";
     if (s.html && s.html.length < 8000 && !hasExternalScripts) {
       iframe.srcdoc = s.html;
     } else {
@@ -1066,41 +1062,34 @@ function createCard(s, index) {
     }
     iframe.tabIndex = -1;
     iframe.loading = "lazy";
-    preview.appendChild(iframe);
-    const overlay = document.createElement("div");
-    overlay.className = "card-preview-overlay";
-    preview.appendChild(overlay);
+    disc.appendChild(iframe);
   } else {
     const iconEl = document.createElement("div");
-    iconEl.className = "card-preview-icon";
+    iconEl.className = "card-disc-icon";
     iconEl.textContent = meta.icon || iconForMime(mime);
-    preview.appendChild(iconEl);
+    disc.appendChild(iconEl);
   }
 
-  // Live pip — surfaces touched in the last 60s wear an orange dot
   if (s.updated_at) {
     const ageMs = Date.now() - new Date(s.updated_at + "Z").getTime();
     if (ageMs < 60000) {
       const live = document.createElement("div");
       live.className = "card-live";
       live.textContent = "live";
-      preview.appendChild(live);
+      disc.appendChild(live);
     }
   }
+  card.appendChild(disc);
 
-  card.appendChild(preview);
-
-  // Card body
   const body = document.createElement("div");
   body.className = "card-body";
+  const subParts = [];
+  if (mime) subParts.push(labelForMime(mime));
+  const t = timeAgo(s.updated_at);
+  if (t) subParts.push(t);
   body.innerHTML = `
-    <div class="card-body-top">
-      ${meta.icon ? `<span class="card-icon">${meta.icon}</span>` : ""}
-      <div class="card-title">${escapeHtml(s.title)}</div>
-      ${mime ? `<div class="card-badge">${escapeHtml(labelForMime(mime))}</div>` : ""}
-    </div>
-    ${meta.description ? `<div class="card-description">${escapeHtml(meta.description)}</div>` : ""}
-    <div class="card-time">${timeAgo(s.updated_at)}</div>
+    <div class="card-title">${escapeHtml(s.title)}</div>
+    <div class="card-sub">${subParts.map(escapeHtml).join(" · ")}</div>
   `;
   card.appendChild(body);
 
@@ -1244,18 +1233,23 @@ function connectGlobalSSE() {
       if (card) {
         const titleEl = card.querySelector(".card-title");
         if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
-        const timeEl = card.querySelector(".card-time");
-        if (timeEl) timeEl.textContent = timeAgo(data.updated_at);
-        // Add (or refresh) the live pip
+        const subEl = card.querySelector(".card-sub");
+        if (subEl) {
+          const mime = data.artifact_mime || surfaces[idx].artifact_mime || "";
+          const parts = [];
+          if (mime) parts.push(labelForMime(mime));
+          const t = timeAgo(data.updated_at);
+          if (t) parts.push(t);
+          subEl.textContent = parts.join(" · ");
+        }
         let live = card.querySelector(".card-live");
         if (!live) {
           live = document.createElement("div");
           live.className = "card-live";
           live.textContent = "live";
-          const preview = card.querySelector(".card-preview");
-          if (preview) preview.appendChild(live);
+          const disc = card.querySelector(".card-disc");
+          if (disc) disc.appendChild(live);
         }
-        // Remove the pip after 60s so it stays meaningful.
         setTimeout(() => {
           const stillThere = card.querySelector(".card-live");
           if (stillThere) stillThere.remove();
