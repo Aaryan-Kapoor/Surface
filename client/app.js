@@ -677,6 +677,106 @@ function getRoute() {
 
 window.addEventListener("hashchange", render);
 
+// ── Cmd+K / Ctrl+K — quick surface finder ──
+
+window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    openSurfaceFinder();
+  }
+});
+
+function openSurfaceFinder() {
+  if (document.getElementById("surface-finder")) return;
+  const overlay = document.createElement("div");
+  overlay.id = "surface-finder";
+  overlay.className = "finder-overlay";
+  overlay.innerHTML = `
+    <div class="finder-panel" role="dialog" aria-label="Find surface">
+      <div class="finder-input-wrap">
+        <input class="finder-input" type="text" placeholder="Find a surface..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="finder-results" role="listbox"></div>
+      <div class="finder-footer">
+        <span>↑↓ navigate</span>
+        <span>↵ open</span>
+        <span>esc close</span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add("finder-overlay--visible"));
+
+  const input = overlay.querySelector(".finder-input");
+  const results = overlay.querySelector(".finder-results");
+  let filtered = surfaces.slice();
+  let activeIdx = 0;
+
+  const close = () => {
+    overlay.classList.remove("finder-overlay--visible");
+    setTimeout(() => overlay.remove(), 250);
+  };
+
+  const renderResults = () => {
+    const q = input.value.trim().toLowerCase();
+    filtered = q
+      ? surfaces.filter((s) => (s.title || "").toLowerCase().includes(q))
+      : surfaces.slice(0, 50);
+    activeIdx = 0;
+    if (filtered.length === 0) {
+      results.innerHTML = `<div class="finder-empty">No surfaces match "${escapeHtml(q)}"</div>`;
+      return;
+    }
+    results.innerHTML = filtered.map((s, i) => {
+      const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
+      const sub = [];
+      if (mime) sub.push(labelForMime(mime));
+      const t = timeAgo(s.updated_at);
+      if (t) sub.push(t);
+      return `
+        <div class="finder-result${i === 0 ? ' finder-result--active' : ''}" data-idx="${i}" role="option">
+          <div class="finder-result-title">${escapeHtml(s.title)}</div>
+          <div class="finder-result-sub">${sub.map(escapeHtml).join(' · ')}</div>
+        </div>
+      `;
+    }).join("");
+    results.querySelectorAll(".finder-result").forEach((el, i) => {
+      el.addEventListener("mouseenter", () => setActive(i));
+      el.addEventListener("click", () => select(i));
+    });
+  };
+
+  const setActive = (i) => {
+    if (filtered.length === 0) return;
+    activeIdx = ((i % filtered.length) + filtered.length) % filtered.length;
+    const items = results.querySelectorAll(".finder-result");
+    items.forEach((el, idx) => el.classList.toggle("finder-result--active", idx === activeIdx));
+    if (items[activeIdx]) items[activeIdx].scrollIntoView({ block: "nearest" });
+  };
+
+  const select = (i) => {
+    const s = filtered[i];
+    if (!s) return;
+    close();
+    navigate("/surface/" + s.id);
+  };
+
+  input.addEventListener("input", renderResults);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); setActive(activeIdx + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(activeIdx - 1); }
+    else if (e.key === "Enter") { e.preventDefault(); select(activeIdx); }
+  });
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+
+  renderResults();
+  input.focus();
+}
+
 // ── Cosmic substrate ──
 // One container holds: aurora ribbon, two/three nebulae, three star
 // layers (parallax via initParallax), and a positioning surface for
@@ -1008,16 +1108,14 @@ function renderGrid() {
     cycleEmptySuggestions(empty);
     mountGallery(empty);
   } else {
+    const toolbar = createGridToolbar();
+    gridView.appendChild(toolbar);
+
     const grid = document.createElement("div");
     grid.className = "grid";
     grid.id = "surface-grid";
-
-    surfaces.forEach((s, i) => {
-      const card = createCard(s, i);
-      grid.appendChild(card);
-    });
-
     gridView.appendChild(grid);
+    paintGrid(grid);
   }
 
   container.appendChild(gridView);
@@ -1028,6 +1126,87 @@ function renderGrid() {
   applyTheme(displayConfig);
 
   connectGlobalSSE();
+}
+
+// ── Grid filter / sort state ──
+
+let gridQuery = "";
+let gridSort = "newest";
+let gridFilter = "all";
+
+const FILTER_GROUPS = [
+  { id: "all",   label: "All",   match: () => true },
+  { id: "html",  label: "HTML",  match: (m) => m === "text/html" || m === "" },
+  { id: "video", label: "Video", match: (m) => m.startsWith("video/") },
+  { id: "audio", label: "Audio", match: (m) => m.startsWith("audio/") },
+  { id: "image", label: "Image", match: (m) => m.startsWith("image/") },
+  { id: "other", label: "Other", match: (m) => !(m === "text/html" || m === "" || m.startsWith("video/") || m.startsWith("audio/") || m.startsWith("image/")) },
+];
+
+function createGridToolbar() {
+  const bar = document.createElement("div");
+  bar.className = "grid-toolbar";
+  bar.innerHTML = `
+    <div class="grid-toolbar-left">
+      <input type="text" class="grid-search" placeholder="Search…" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off">
+      ${FILTER_GROUPS.map((f) => `
+        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${f.id}">${escapeHtml(f.label)}</button>
+      `).join("")}
+    </div>
+    <select class="grid-sort" aria-label="Sort">
+      <option value="newest"${gridSort === "newest" ? " selected" : ""}>Newest</option>
+      <option value="oldest"${gridSort === "oldest" ? " selected" : ""}>Oldest</option>
+      <option value="az"${gridSort === "az" ? " selected" : ""}>A–Z</option>
+      <option value="za"${gridSort === "za" ? " selected" : ""}>Z–A</option>
+    </select>
+  `;
+  const search = bar.querySelector(".grid-search");
+  search.addEventListener("input", () => { gridQuery = search.value; paintGrid(); });
+  bar.querySelectorAll(".grid-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      gridFilter = btn.dataset.filter;
+      bar.querySelectorAll(".grid-chip").forEach((b) => b.classList.toggle("grid-chip--active", b === btn));
+      paintGrid();
+    });
+  });
+  bar.querySelector(".grid-sort").addEventListener("change", (e) => { gridSort = e.target.value; paintGrid(); });
+  return bar;
+}
+
+function applyGridFilters(list) {
+  const q = gridQuery.trim().toLowerCase();
+  const matcher = (FILTER_GROUPS.find((f) => f.id === gridFilter) || FILTER_GROUPS[0]).match;
+  let out = list.filter((s) => {
+    const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
+    if (!matcher(mime)) return false;
+    if (q && !(s.title || "").toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const ts = (s) => new Date((s.updated_at || s.created_at || "1970-01-01") + "Z").getTime();
+  const cmp = {
+    newest: (a, b) => ts(b) - ts(a),
+    oldest: (a, b) => ts(a) - ts(b),
+    az:     (a, b) => (a.title || "").localeCompare(b.title || ""),
+    za:     (a, b) => (b.title || "").localeCompare(a.title || ""),
+  }[gridSort] || (() => 0);
+  out.sort(cmp);
+  return out;
+}
+
+function paintGrid(target) {
+  const grid = target || document.getElementById("surface-grid");
+  if (!grid) return;
+  const visible = applyGridFilters(surfaces);
+  grid.innerHTML = "";
+  if (visible.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "grid-empty";
+    empty.textContent = gridQuery ? `No surfaces match “${gridQuery}”` : "No surfaces in this filter";
+    grid.appendChild(empty);
+    return;
+  }
+  visible.forEach((s, i) => grid.appendChild(createCard(s, i)));
+  updateGridMeta();
 }
 
 function createCard(s, index) {
@@ -1080,6 +1259,31 @@ function createCard(s, index) {
       disc.appendChild(live);
     }
   }
+
+  const actions = document.createElement("div");
+  actions.className = "card-actions";
+  actions.innerHTML = `
+    <button type="button" class="card-action" data-action="copy" title="Copy link" aria-label="Copy link">${ICON_COPY}</button>
+    <button type="button" class="card-action" data-action="rename" title="Rename" aria-label="Rename">${ICON_PENCIL}</button>
+    <button type="button" class="card-action card-action--danger" data-action="delete" title="Delete" aria-label="Delete">${ICON_X}</button>
+  `;
+  actions.addEventListener("click", (e) => e.stopPropagation());
+  actions.querySelector('[data-action="copy"]').addEventListener("click", async () => {
+    const ok = await copyToClipboard(location.origin + "/surface/" + s.id);
+    if (ok) showToast("Link copied");
+  });
+  actions.querySelector('[data-action="rename"]').addEventListener("click", () => {
+    startRename(card, s.id);
+  });
+  actions.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+    if (!confirm(`Delete "${s.title}"?`)) return;
+    const res = await fetch("/artifacts/" + s.id, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      showToast(body.error || "Failed to delete", 3000, "error");
+    }
+  });
+  disc.appendChild(actions);
   card.appendChild(disc);
 
   const body = document.createElement("div");
@@ -1095,6 +1299,58 @@ function createCard(s, index) {
   card.appendChild(body);
 
   return card;
+}
+
+const ICON_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_PENCIL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+const ICON_X = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+function startRename(card, id) {
+  const titleEl = card.querySelector(".card-title");
+  if (!titleEl || titleEl.tagName === "INPUT") return;
+  const originalTitle = titleEl.textContent;
+  const input = document.createElement("input");
+  input.className = "card-title";
+  input.type = "text";
+  input.value = originalTitle;
+  input.maxLength = 200;
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let settled = false;
+  const finalize = (newText) => {
+    if (settled) return;
+    settled = true;
+    const span = document.createElement("div");
+    span.className = "card-title";
+    span.textContent = newText;
+    input.replaceWith(span);
+  };
+  const save = async () => {
+    const newTitle = input.value.trim();
+    if (!newTitle || newTitle === originalTitle) {
+      finalize(originalTitle);
+      return;
+    }
+    finalize(newTitle);
+    const res = await fetch("/artifacts/" + id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTitle }),
+    });
+    if (!res.ok) {
+      showToast("Failed to rename", 3000, "error");
+      const span = card.querySelector(".card-title");
+      if (span) span.textContent = originalTitle;
+    }
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.key === "Escape") { e.preventDefault(); finalize(originalTitle); }
+  });
+  input.addEventListener("blur", save);
+  input.addEventListener("click", (e) => e.stopPropagation());
 }
 
 // ── Surface View ──
