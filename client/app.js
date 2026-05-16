@@ -259,53 +259,43 @@ const SURFACE_IDEAS = [
   },
 ];
 
-let portalIndex = -1;
-let portalT = null;
-
-function pickNextIdeaIndex() {
-  if (SURFACE_IDEAS.length <= 1) return 0;
-  let next;
-  do { next = Math.floor(Math.random() * SURFACE_IDEAS.length); }
-  while (next === portalIndex);
-  return next;
-}
-
-function paintPortal(portal) {
-  const idea = SURFACE_IDEAS[portalIndex];
-  portal.querySelector(".portal-title").textContent = idea.title;
-  portal.querySelector(".portal-sub").textContent = idea.sub;
-  const promptText = portal.querySelector(".portal-prompt-text");
-  if (promptText) promptText.textContent = idea.prompt;
-  const promptBtn = portal.querySelector(".portal-prompt");
-  if (promptBtn) {
-    promptBtn.classList.remove("portal-prompt--copied");
-    promptBtn.dataset.prompt = idea.prompt;
-  }
-  const frame = portal.querySelector(".portal-demo");
-  if (frame && frame.src !== location.origin + idea.src) frame.src = idea.src;
-}
-
-function cyclePortal(root) {
-  if (portalT) { clearTimeout(portalT); portalT = null; }
+function mountGallery(root) {
   const portal = root.querySelector(".empty-portal");
   if (!portal) return;
-  const disc = portal.querySelector(".portal-disc");
-  const meta = portal.querySelector(".portal-meta");
+  const track = portal.querySelector(".portal-track");
+  if (!track) return;
 
-  portalIndex = pickNextIdeaIndex();
-  paintPortal(portal);
+  const cardHTML = (idea) => `
+    <div class="portal-card">
+      <div class="portal-disc">
+        <iframe class="portal-demo" tabindex="-1" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; clipboard-write" src="${escapeHtml(idea.src)}"></iframe>
+      </div>
+      <div class="portal-meta">
+        <div class="portal-label">A surface you could make</div>
+        <div class="portal-title">${escapeHtml(idea.title)}</div>
+        <div class="portal-sub">${escapeHtml(idea.sub)}</div>
+        <button type="button" class="portal-prompt" aria-label="Copy prompt">
+          <span class="portal-prompt-arrow">›</span>
+          <span class="portal-prompt-text">${escapeHtml(idea.prompt)}</span>
+        </button>
+      </div>
+    </div>
+  `;
 
-  const promptBtn = portal.querySelector(".portal-prompt");
-  if (promptBtn) {
-    promptBtn.addEventListener("click", async (e) => {
+  const cards = SURFACE_IDEAS.map(cardHTML).join("");
+  track.innerHTML = cards + cards;
+
+  const doubled = [...SURFACE_IDEAS, ...SURFACE_IDEAS];
+  track.querySelectorAll(".portal-prompt").forEach((btn, i) => {
+    const prompt = doubled[i].prompt;
+    btn.addEventListener("click", async (e) => {
       e.stopPropagation();
-      const text = SURFACE_IDEAS[portalIndex].prompt;
-      const textEl = promptBtn.querySelector(".portal-prompt-text");
+      const textEl = btn.querySelector(".portal-prompt-text");
       try {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(prompt);
       } catch {
         const ta = document.createElement("textarea");
-        ta.value = text;
+        ta.value = prompt;
         ta.style.position = "fixed";
         ta.style.opacity = "0";
         document.body.appendChild(ta);
@@ -315,33 +305,52 @@ function cyclePortal(root) {
       }
       const orig = textEl.textContent;
       textEl.textContent = "copied";
-      promptBtn.classList.add("portal-prompt--copied");
+      btn.classList.add("portal-prompt--copied");
       setTimeout(() => {
         if (textEl.textContent === "copied") textEl.textContent = orig;
-        promptBtn.classList.remove("portal-prompt--copied");
+        btn.classList.remove("portal-prompt--copied");
       }, 1100);
     });
-  }
+  });
 
-  const step = () => {
-    if (!portal.isConnected) return;
-    // Pause cycling while user is hovering or focused on the portal
-    if (portal.matches(":hover") || portal.matches(":focus-visible")) {
-      portalT = setTimeout(step, 1600);
-      return;
-    }
-    disc.classList.add("portal-disc--hidden");
-    meta.classList.add("portal-meta--hidden");
-    portalT = setTimeout(() => {
-      if (!portal.isConnected) return;
-      portalIndex = pickNextIdeaIndex();
-      paintPortal(portal);
-      disc.classList.remove("portal-disc--hidden");
-      meta.classList.remove("portal-meta--hidden");
-      portalT = setTimeout(step, 8000);
-    }, 480);
+  // Revolve via RAF with damped velocity so hover/unhover eases in and out
+  // rather than snapping (animation-play-state has no transition).
+  let position = 0;
+  let velocity = 0;
+  let baseSpeed = 0;
+  let targetVel = 0;
+  let hovering = false;
+  let halfHeight = 0;
+  let lastTime = 0;
+  const FULL_CYCLE_MS = 96000;
+  const DECAY_PER_SEC = 7;
+
+  const measure = () => {
+    halfHeight = track.scrollHeight / 2;
+    baseSpeed = halfHeight > 0 ? -halfHeight / FULL_CYCLE_MS : 0;
+    targetVel = hovering ? 0 : baseSpeed;
   };
-  portalT = setTimeout(step, 8000);
+  setTimeout(measure, 250);
+  window.addEventListener("resize", measure);
+
+  const tick = (now) => {
+    if (!track.isConnected) return;
+    const dt = lastTime ? Math.min(now - lastTime, 50) : 16;
+    lastTime = now;
+    const factor = 1 - Math.exp(-DECAY_PER_SEC * dt / 1000);
+    velocity += (targetVel - velocity) * factor;
+    position += velocity * dt;
+    if (halfHeight) {
+      if (position <= -halfHeight) position += halfHeight;
+      else if (position > 0) position -= halfHeight;
+    }
+    track.style.transform = `translate3d(0, ${position}px, 0)`;
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+
+  portal.addEventListener("mouseenter", () => { hovering = true; targetVel = 0; });
+  portal.addEventListener("mouseleave", () => { hovering = false; targetVel = baseSpeed; });
 }
 
 function showIdeaModal(idea) {
@@ -896,23 +905,14 @@ function renderGrid() {
         <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">Start Tutorial</button>
       </div>
       <div class="empty-portal" id="empty-portal">
-        <div class="portal-disc">
-          <iframe class="portal-demo" tabindex="-1" allow="autoplay; encrypted-media; picture-in-picture" src="about:blank"></iframe>
-        </div>
-        <div class="portal-meta">
-          <div class="portal-label">A surface you could make</div>
-          <div class="portal-title"></div>
-          <div class="portal-sub"></div>
-          <button type="button" class="portal-prompt" aria-label="Copy prompt">
-            <span class="portal-prompt-arrow">›</span>
-            <span class="portal-prompt-text"></span>
-          </button>
+        <div class="portal-gallery">
+          <div class="portal-track"></div>
         </div>
       </div>
     `;
     container.appendChild(empty);
     cycleEmptySuggestions(empty);
-    cyclePortal(empty);
+    mountGallery(empty);
   } else {
     const grid = document.createElement("div");
     grid.className = "grid";

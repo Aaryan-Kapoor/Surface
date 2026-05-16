@@ -219,40 +219,56 @@ button, input, select, textarea {
   min-width: 0;
 }
 
-/* ── Portal ──
-   Giant white disc on the right of the empty state. The disc is a
-   porthole — each cycle, an iframe inside it renders a fully-built
-   working preview of a surface the user could make. Click anywhere
-   on the column opens a modal with a copy-pasteable agent prompt
-   that builds that exact surface. Below the disc: label + title +
-   sub, plus a hover-only "click for the prompt" hint. */
+/* ── Portal gallery ──
+   A vertical column on the right of the empty state. The column is a
+   viewport masked top and bottom; inside it, a track of porthole cards
+   revolves upward continuously. Each card is a circular disc holding a
+   live iframe preview of a buildable surface, plus a label, title, sub,
+   and a copy-on-click prompt below. Hover pauses the revolve. */
 
 .empty-portal {
+  display: block;
+  flex-shrink: 0;
+  height: 80vh;
+  max-height: 920px;
+  width: clamp(360px, 40vw, 560px);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.portal-gallery {
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+  -webkit-mask: linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  mask: linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+}
+
+.portal-track {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 56px;
+  padding: 60px 0;
+  will-change: transform;
+}
+
+.portal-card {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 22px;
-  border: none;
-  background: transparent;
-  padding: 0;
   flex-shrink: 0;
-  color: inherit;
-  font-family: var(--font);
-  -webkit-tap-highlight-color: transparent;
 }
 
 .portal-disc {
-  width: clamp(340px, 38vw, 520px);
+  width: clamp(320px, 36vw, 480px);
   aspect-ratio: 1;
   border-radius: 50%;
   background: #ffffff;
   overflow: hidden;
   position: relative;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
-  transition: opacity .48s ease, box-shadow .25s ease;
 }
-
-.portal-disc--hidden { opacity: 0; }
 
 .portal-demo {
   position: absolute;
@@ -271,10 +287,7 @@ button, input, select, textarea {
   text-align: center;
   gap: 4px;
   max-width: 360px;
-  transition: opacity .48s ease;
 }
-
-.portal-meta--hidden { opacity: 0; }
 
 .portal-label {
   font-size: 11px;
