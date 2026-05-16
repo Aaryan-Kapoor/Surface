@@ -186,7 +186,7 @@ export function getArtifactFile(db: Database.Database, artifactId: string, fileP
     .get(artifactId, normalized) as ArtifactFile | undefined;
 }
 
-export function listArtifactCards(db: Database.Database): SurfaceCard[] {
+export function listArtifactCards(db: Database.Database, opts?: { includeHidden?: boolean }): SurfaceCard[] {
   const artifactRows = db
     .prepare(
       `SELECT
@@ -222,11 +222,18 @@ export function listArtifactCards(db: Database.Database): SurfaceCard[] {
     )
     .all() as SurfaceCard[];
 
-  return [...artifactRows, ...legacyRows].map((row) => ({
+  const all = [...artifactRows, ...legacyRows].map((row) => ({
     ...row,
     preview_url: row.artifact_id ? `/artifacts/${row.artifact_id}/view?preview=1` : `/surfaces/${row.id}/html`,
     view_url: row.artifact_id ? `/artifacts/${row.artifact_id}/view` : `/surfaces/${row.id}/html`,
   }));
+  if (opts?.includeHidden) return all;
+  return all.filter((row) => {
+    try {
+      const meta = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata;
+      return !(meta && (meta as any).hidden === true);
+    } catch { return true; }
+  });
 }
 
 export function listArtifacts(db: Database.Database): Artifact[] {

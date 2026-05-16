@@ -122,8 +122,9 @@ router.get("/surfaces/:id/stream", (req, res) => {
 });
 
 // List surfaces
-router.get("/surfaces", (_req, res) => {
-  res.json(listArtifactCards(getDb()));
+router.get("/surfaces", (req, res) => {
+  const includeHidden = req.query.include_hidden === "1" || req.query.include_hidden === "true";
+  res.json(listArtifactCards(getDb(), { includeHidden }));
 });
 
 // Serve surface HTML as a standalone page (used by iframe src= instead of srcdoc)
@@ -1070,7 +1071,9 @@ router.get("/proxy/pdf", async (req, res) => {
 });
 
 function cardPayload(id: string) {
-  const card = listArtifactCards(getDb()).find((item) => item.id === id);
+  // Include hidden rows so SSE listeners can see the hidden=true update and
+  // remove the card from view client-side (the default list filters them out).
+  const card = listArtifactCards(getDb(), { includeHidden: true }).find((item) => item.id === id);
   return card || { id };
 }
 

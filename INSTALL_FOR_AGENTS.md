@@ -72,10 +72,21 @@ Ask the user:
 
 > Want me to walk you through Surface in five minutes? It covers creating content, hot reload from your project, and reacting to clicks.
 
-- If yes: set `tutorial: in_progress`, run through `docs/TUTORIAL.md` step by step, set `tutorial: complete` at the end.
-- If no: set `tutorial: skipped`.
+If yes:
+
+1. Set `tutorial: in_progress`.
+2. Run `surface seed-demos` — links the seven example surfaces from `examples/demos/` (or unhides them if a previous tour left them archived). Each row is tagged `metadata.demo = true` so it's identifiable.
+3. Walk the user through `docs/TUTORIAL.md` step by step.
+4. At the end, run `surface clear-demos` — flips `metadata.hidden = true` on every demo-tagged row so they vanish from the dashboard. The artifact records are kept; running `surface seed-demos` again revives them in place rather than re-creating. Set `tutorial: complete`.
+
+If no:
+
+- Don't seed demos. Set `tutorial: skipped`.
+- If a previous interrupted run left demos behind, run `surface clear-demos` now to clean up.
 
 The tutorial is the single best onboarding mechanism. Skipping is fine, but don't silently bypass it — confirm with the user.
+
+Both `seed-demos` and `clear-demos` are idempotent — repeated calls are safe.
 
 ## Step 4 — Stamp the install
 
@@ -114,6 +125,7 @@ See `SKILL.md`. Quick reference:
 - `surface link <abs-path>` — preferred for files in the user's project (`surface touch <id>` after editing).
 - `surface create <title> --content -` — ad-hoc HTML pushed from stdin.
 - `surface present <abs-path>` — one-shot snapshot of a PDF/image/markdown.
+- `surface seed-demos` / `surface clear-demos` — tutorial-only example surfaces. Clear hides rather than deletes; seed un-hides. See Step 3.
 - `surface list`, `surface read`, `surface delete`, `surface open`, `surface exec`, `surface actions`, `surface reply`, `surface notify`, `surface theme`, `surface stream`.
 
 ## Operating rules

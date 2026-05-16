@@ -1,6 +1,9 @@
 #!/usr/bin/env -S npx tsx
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BASE = (process.env.SURFACE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 const TOKEN = process.env.SURFACE_TOKEN || "";
@@ -31,6 +34,8 @@ Commands:
   status                     Get display state
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
+  seed-demos                 Link every example demo as a tutorial surface (idempotent)
+  clear-demos                Delete every surface tagged metadata.demo === true
 
 Run "surface <command> --help" for command-specific options.
 
@@ -60,6 +65,21 @@ const CMD_HELP: Record<string, string> = {
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
   wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
+  "seed-demos": "surface seed-demos",
+  "clear-demos": "surface clear-demos",
+};
+
+// Hand-mapped titles for the bundled example demos. Filenames are derived from
+// the file basename; everything else is the same human label the empty-state
+// gallery uses, so the same prompts the agent reads in SKILL.md still apply.
+const DEMO_TITLES: Record<string, string> = {
+  "3d-astronaut.html": "Astronaut · 3D",
+  "maps-apple-park.html": "Apple Park · Google Maps",
+  "pacman.html": "Pac-Man",
+  "spotify-rickroll.html": "Never Gonna Give You Up · Spotify",
+  "tweet-trq212.html": "Thariq · X",
+  "windy-globe.html": "Wind · Windy",
+  "yatch-problem.html": "Yatch Problem · YouTube",
 };
 
 interface ParsedArgs {
@@ -98,6 +118,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     }
   }
   return { positional, flags };
+}
+
+function parseMetadataField(raw: unknown): Record<string, unknown> | null {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw as Record<string, unknown>;
+  if (typeof raw !== "string") return null;
+  try { return JSON.parse(raw); } catch { return null; }
 }
 
 function readStdin(): Promise<string> {
@@ -275,6 +302,70 @@ async function main() {
       const id = positional[0];
       if (!id) usage("usage: " + CMD_HELP.delete);
       out(await call("DELETE", `/artifacts/${encodeURIComponent(id)}`));
+      return;
+    }
+
+    case "seed-demos": {
+      const demosDir = path.resolve(__dirname, "..", "examples", "demos");
+      if (!fs.existsSync(demosDir)) {
+        fail(new Error(`Demo directory not found: ${demosDir}`));
+      }
+      const files = fs.readdirSync(demosDir).filter((f) => f.endsWith(".html")).sort();
+      // Include hidden rows so a previous `clear-demos` archive can be revived
+      // by flipping the hidden flag back off, rather than creating duplicates.
+      const existing: any[] = await call("GET", "/surfaces?include_hidden=1");
+      const byPath = new Map<string, any>();
+      for (const s of existing) {
+        const meta = parseMetadataField(s.metadata);
+        if (meta && typeof meta.original_path === "string") byPath.set(meta.original_path as string, s);
+      }
+      const seeded: Array<{ id: string; title: string; file: string }> = [];
+      const restored: Array<{ id: string; title: string; file: string }> = [];
+      const skipped: string[] = [];
+      for (const file of files) {
+        const abs = path.join(demosDir, file);
+        const found = byPath.get(abs);
+        if (found) {
+          const meta = parseMetadataField(found.metadata) || {};
+          if (meta.hidden === true) {
+            const nextMeta: Record<string, unknown> = { ...meta };
+            delete nextMeta.hidden;
+            await call("PUT", `/artifacts/${encodeURIComponent(found.id)}`, { metadata: nextMeta });
+            restored.push({ id: found.id, title: found.title, file });
+          } else {
+            skipped.push(file);
+          }
+          continue;
+        }
+        const title = DEMO_TITLES[file] || file.replace(/\.html$/, "");
+        const result = await call("POST", "/artifacts/link", {
+          path: abs,
+          title,
+          metadata: { demo: true },
+          open: false,
+        });
+        seeded.push({ id: result.artifact.id, title, file });
+      }
+      out({ seeded: seeded.length, restored: restored.length, skipped: skipped.length, items: [...seeded, ...restored] });
+      return;
+    }
+
+    case "clear-demos": {
+      // Soft-hide rather than delete: flip metadata.hidden = true on every
+      // demo-tagged surface. Artifact rows stay intact so `seed-demos` can
+      // revive them later instead of re-linking from disk.
+      const existing: any[] = await call("GET", "/surfaces?include_hidden=1");
+      const hidden: string[] = [];
+      const alreadyHidden: string[] = [];
+      for (const s of existing) {
+        const meta = parseMetadataField(s.metadata);
+        if (!meta || meta.demo !== true) continue;
+        if (meta.hidden === true) { alreadyHidden.push(s.id); continue; }
+        const nextMeta = { ...meta, hidden: true };
+        await call("PUT", `/artifacts/${encodeURIComponent(s.id)}`, { metadata: nextMeta });
+        hidden.push(s.id);
+      }
+      out({ hidden: hidden.length, already_hidden: alreadyHidden.length, ids: hidden });
       return;
     }
 

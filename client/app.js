@@ -1484,6 +1484,40 @@ function connectGlobalSSE() {
     const data = JSON.parse(e.data);
     pulseSpace();
     const idx = surfaces.findIndex((s) => s.id === data.id);
+    // A flip to metadata.hidden = true (e.g. via `surface clear-demos`) is the
+    // signal to remove the card from view without deleting the artifact.
+    let nextMeta = {};
+    try { nextMeta = typeof data.metadata === "string" ? JSON.parse(data.metadata) : (data.metadata || {}); } catch {}
+    const becameHidden = nextMeta && nextMeta.hidden === true;
+    if (becameHidden) {
+      if (idx !== -1) surfaces.splice(idx, 1);
+      const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+      if (card) {
+        card.classList.add("removing");
+        card.addEventListener("animationend", () => {
+          card.remove();
+          updateGridMeta();
+          if (surfaces.length === 0) render();
+        }, { once: true });
+        setTimeout(() => { if (card.isConnected) { card.remove(); updateGridMeta(); if (surfaces.length === 0) render(); } }, 600);
+      }
+      return;
+    }
+    // Un-hide path: surface_updated arrives for a row we don't have in view.
+    // Re-fetch and treat it like a fresh creation so the card reappears.
+    if (idx === -1) {
+      fetch("/surfaces/" + data.id).then((r) => r.ok ? r.json() : null).then((full) => {
+        if (!full) return;
+        surfaces.unshift(full);
+        if (document.querySelector(".empty-state")) { render(); return; }
+        const grid = document.getElementById("surface-grid");
+        if (grid && !grid.querySelector(`.surface-card[data-id="${full.id}"]`)) {
+          grid.prepend(createCard(full, 0));
+          updateGridMeta();
+        }
+      });
+      return;
+    }
     if (idx !== -1) {
       surfaces[idx] = { ...surfaces[idx], ...data };
       const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
