@@ -113,6 +113,33 @@ function showToast(text, duration = 4000, style = "info") {
   }, duration);
 }
 
+// ── Clipboard helper ──
+// async Clipboard API first; falls back to a hidden-textarea +
+// document.execCommand("copy") so non-secure contexts still get a real
+// auto-copy without forcing the user to ⌘C themselves.
+
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "0";
+  ta.style.left = "0";
+  ta.style.opacity = "0";
+  ta.style.pointerEvents = "none";
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch {}
+  ta.remove();
+  return ok;
+}
+
 // ── Tutorial modal ──
 // The "Take the tour" button on the empty state opens this. It hands
 // the user a copy-pasteable prompt that activates their agent's
@@ -164,31 +191,6 @@ function showTutorialModal() {
     copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeHtml(label)}`;
     copyBtn.classList.toggle("modal-copy-btn--done", !!done);
   };
-  // Copy via the async Clipboard API; if blocked (non-secure context,
-  // permissions, focus), silently drop to a hidden-textarea +
-  // execCommand("copy") so the user still gets a real copy without
-  // having to ⌘C themselves.
-  const copyToClipboard = async (text) => {
-    if (navigator.clipboard && window.isSecureContext) {
-      try { await navigator.clipboard.writeText(text); return true; } catch {}
-    }
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    ta.style.pointerEvents = "none";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    let ok = false;
-    try { ok = document.execCommand("copy"); } catch {}
-    ta.remove();
-    return ok;
-  };
   copyBtn.addEventListener("click", async () => {
     const ok = await copyToClipboard(TUTORIAL_PROMPT);
     setBtnLabel(ok ? "Copied" : "Copy failed", ok);
@@ -200,6 +202,218 @@ function showTutorialModal() {
 
 // Make available to inline onclick attributes
 window.showTutorialModal = showTutorialModal;
+
+// ── Surface-idea portal ──
+// A giant white circle on the right of the empty state, cycling
+// through evocative one-line surface ideas. Clicking opens a modal
+// with a fleshed-out prompt the user can hand to their agent.
+
+// Each idea has a `demo` field — a self-contained HTML document that
+// runs in an iframe inside the portal disc. Inline scripts are fine:
+// the iframes are sandboxed (allow-scripts only) so they can animate
+// without reaching into the parent. The demos are the surface itself,
+// not a description of it; clicking opens the prompt modal.
+
+const DEMO_BREATHING = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff}.b{width:64px;height:64px;border-radius:50%;background:#fff;animation:b 14s cubic-bezier(.45,0,.55,1) infinite}@keyframes b{0%{transform:scale(1)}28.5%,57%{transform:scale(3.4)}100%{transform:scale(1)}}</style></head><body><div class="b"></div></body></html>`;
+
+const DEMO_CONSTELLATION = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:-apple-system,Helvetica,Arial,sans-serif}.s{position:absolute;background:#fff;border-radius:50%;animation:tw 4s ease-in-out infinite}@keyframes tw{0%,100%{opacity:.3;transform:scale(1)}50%{opacity:1;transform:scale(1.4)}}</style></head><body><script>let h='';for(let i=0;i<70;i++){const sz=Math.random()<.08?4:Math.random()<.22?2.4:1.4;const op=.3+Math.random()*.6;h+='<div class="s" style="left:'+(Math.random()*100)+'%;top:'+(Math.random()*100)+'%;width:'+sz+'px;height:'+sz+'px;opacity:'+op+';animation-delay:'+(Math.random()*4)+'s"></div>'}document.body.innerHTML=h;</script></body></html>`;
+
+const DEMO_POSTMARK = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:Georgia,'Times New Roman',serif;color:#111}.p{width:230px;background-color:#ffffff;padding:28px 24px;color:#111;font-size:12px;line-height:1.65}.f{font-family:-apple-system,Helvetica,sans-serif;font-size:9px;color:#888;margin-bottom:14px;text-transform:uppercase;letter-spacing:1.4px}.l{margin-top:10px}.sig{margin-top:14px;text-align:right;font-style:italic;color:#444}</style></head><body><div class="p"><div class="f">Postmark · 2030</div><div class="l">Dear you,</div><div class="l">The thing you spent today worrying about — you won't remember it next month.</div><div class="l">The thing you started this morning, though, you'll think about for years.</div><div class="sig">— me</div></div></body></html>`;
+
+const DEMO_4AM = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff;gap:14px}.t{font-size:80px;font-weight:300;font-variant-numeric:tabular-nums;letter-spacing:-.03em;animation:p 3.4s ease-in-out infinite}.s{font-size:11px;color:rgba(255,255,255,.45);letter-spacing:1.6px;text-transform:uppercase}@keyframes p{0%,100%{opacity:.82}50%{opacity:1}}</style></head><body><div class="t" id="t">03:47</div><div class="s">the world is asleep</div><script>const hrs=[23,0,1,2,3,4];const h=hrs[Math.floor(Math.random()*hrs.length)];const m=Math.floor(Math.random()*60);document.getElementById('t').textContent=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')</script></body></html>`;
+
+const DEMO_GARDEN = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:flex-end;justify-content:center;padding-bottom:50px}svg{width:170px;height:320px;animation:sw 6s ease-in-out infinite;transform-origin:50% 100%}@keyframes sw{0%,100%{transform:rotate(-1.2deg)}50%{transform:rotate(1.2deg)}}.st{stroke:#fff;stroke-width:1.6;fill:none;stroke-linecap:round}.lf{fill:#fff;opacity:.88}.fl{fill:#fff}.fl-h{fill:#fff;opacity:.55}</style></head><body><svg viewBox="0 0 170 320"><path class="st" d="M85,315 Q85,250 85,190 Q78,158 64,134 Q54,112 60,86 Q66,62 78,40"/><ellipse class="lf" cx="64" cy="156" rx="15" ry="6.5" transform="rotate(-32 64 156)"/><ellipse class="lf" cx="76" cy="215" rx="13" ry="5.5" transform="rotate(28 76 215)"/><circle class="fl" cx="78" cy="38" r="10"/><circle class="fl-h" cx="78" cy="32" r="4.5"/></svg></body></html>`;
+
+const DEMO_TAROT = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:-apple-system,Helvetica,Arial,sans-serif}.k{position:relative;width:160px;height:230px}.c{position:absolute;inset:0;background:#000;border:1px solid rgba(255,255,255,.55);border-radius:5px}.c:nth-child(1){transform:translate(-8px,5px) rotate(-2.4deg)}.c:nth-child(2){transform:translate(-3px,2px) rotate(-.8deg)}.c:nth-child(3){transform:translate(2px,0) rotate(.5deg)}.c:nth-child(4){transform:translate(7px,-3px) rotate(1.8deg);animation:wob 6s ease-in-out infinite;display:flex;align-items:center;justify-content:center}.dot{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.6)}@keyframes wob{0%,100%{transform:translate(7px,-3px) rotate(1.8deg)}50%{transform:translate(10px,-7px) rotate(2.6deg)}}</style></head><body><div class="k"><div class="c"></div><div class="c"></div><div class="c"></div><div class="c"><div class="dot"></div></div></div></body></html>`;
+
+const DEMO_MEMENTO = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center}.g{display:grid;grid-template-columns:repeat(64,4px);gap:1px}.w{width:4px;height:4px;background:transparent;border:1px solid rgba(255,255,255,.16)}.w.f{background:#fff;border-color:transparent}</style></head><body><div class="g" id="g"></div><script>const C=64,R=63,T=C*R,L=Math.floor(T*0.36);let h='';for(let i=0;i<T;i++)h+='<div class="w'+(i<L?' f':'')+'"></div>';document.getElementById('g').innerHTML=h;</script></body></html>`;
+
+const DEMO_SMALLWINS = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff;font-size:13px;position:relative}.col{position:absolute;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:18px;padding-top:60%;animation:sc 32s linear infinite}.e{display:flex;gap:12px;align-items:baseline;white-space:nowrap}.d{font-size:11px;color:rgba(255,255,255,.32);font-variant-numeric:tabular-nums}.t{color:rgba(255,255,255,.9)}@keyframes sc{from{transform:translateY(0)}to{transform:translateY(-50%)}}</style></head><body><div class="col" id="col"></div><script>const w=["Wrote the email I'd been avoiding","Made tea instead of doomscrolling","Sent the PR","Walked outside before noon","Said no to the meeting","Read 20 pages","Called Dad","Closed 7 tabs","Shipped the typo fix","Asked for help","Cooked from scratch","Got the haircut","Apologized first","Logged off at 6","Finished the chapter"];const td=new Date();const fmt=d=>String(d.getMonth()+1).padStart(2,'0')+'/'+String(d.getDate()).padStart(2,'0');let h='';for(let p=0;p<2;p++){for(let i=0;i<w.length;i++){const d=new Date(td);d.setDate(d.getDate()-i);h+='<div class="e"><span class="d">'+fmt(d)+'</span><span class="t">'+w[i]+'</span></div>'}}document.getElementById('col').innerHTML=h;</script></body></html>`;
+
+const DEMO_LIGHTHOUSE = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff;position:relative}.q{font-size:19px;font-weight:400;line-height:1.45;max-width:280px;text-align:center;color:rgba(255,255,255,.88);position:relative;z-index:2;padding:0 30px}.b{position:absolute;top:0;bottom:0;width:55%;left:-55%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);animation:sw 9s linear infinite;z-index:1;pointer-events:none}@keyframes sw{0%{left:-55%}100%{left:100%}}</style></head><body><div class="q">"What am I doing this year? Why this and not something else?"</div><div class="b"></div></body></html>`;
+
+const DEMO_CONFESSIONAL = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:0 60px;gap:14px;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff;font-size:13px}.pst{color:rgba(255,255,255,.32);text-align:center;animation:fd 9s linear infinite;font-size:12px}.nw{color:#fff;text-align:center}.nw::after{content:"";display:inline-block;width:1px;height:14px;background:#fff;vertical-align:text-bottom;margin-left:3px;animation:bl 1s steps(2,end) infinite}@keyframes fd{0%{opacity:.45}100%{opacity:0}}@keyframes bl{0%,50%{opacity:1}51%,100%{opacity:0}}.ts{font-size:9px;color:rgba(255,255,255,.2);margin-left:5px}</style></head><body><div class="pst">I am tired of pretending <span class="ts">deletes in 47 min</span></div><div class="pst" style="animation-delay:-3s">I didn't mean what I said <span class="ts">deletes in 21 min</span></div><div class="nw">I think I'm done</div></body></html>`;
+
+const DEMO_BONFIRE = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff;font-size:14px;font-weight:400;position:relative}.r{position:absolute;left:50%;transform:translateX(-50%);animation:rs 10s linear infinite;white-space:nowrap;color:rgba(255,255,255,.72)}@keyframes rs{0%{bottom:18%;opacity:.7;letter-spacing:0;filter:blur(0)}55%{opacity:.32;letter-spacing:4px;filter:blur(.5px)}90%,100%{bottom:80%;opacity:0;letter-spacing:14px;filter:blur(3px)}}</style></head><body><span class="r" style="animation-delay:0s">the thing he said</span><span class="r" style="animation-delay:-3.3s">tonight's argument</span><span class="r" style="animation-delay:-6.6s">that old ambition</span></body></html>`;
+
+const DEMO_SUNDIAL = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden;display:flex;align-items:center;justify-content:center;font-family:-apple-system,Helvetica,Arial,sans-serif}.r{position:relative;width:340px;height:340px}.m{position:absolute;left:50%;top:50%;width:2px;height:14px;background:#fff;margin-left:-1px;margin-top:-156px;transform-origin:1px 156px;border-radius:1px}.pk{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:rgba(255,255,255,.32);font-size:10px;letter-spacing:2px;text-transform:uppercase}</style></head><body><div class="r" id="r"></div><script>const pk=16;let h='';for(let i=0;i<24;i++){const dist=Math.min(Math.abs(i-pk),24-Math.abs(i-pk));const op=Math.max(.12,1-dist*0.16);h+='<div class="m" style="transform:rotate('+(i*15)+'deg);opacity:'+op+'"></div>'}h+='<div class="pk">4 PM</div>';document.getElementById('r').innerHTML=h;</script></body></html>`;
+
+const SURFACE_IDEAS = [
+  {
+    title: "A constellation of your week",
+    sub: "Tasks as stars. Closer deadlines burn brighter.",
+    demo: DEMO_CONSTELLATION,
+    prompt: 'Make me a Surface called "Constellation". Show my upcoming week as a starfield on pure black — each task is a single white star, the closer its deadline the brighter and larger it glows. Hovering a star reveals the title; clicking marks it done and the star fades out like a dying ember. Add tasks by clicking empty space (prompt me for title + date). Persist via the Surface artifact API. White-on-black only, no other colors. The feeling should be: looking up at a sky that is actually mine.',
+  },
+  {
+    title: "A breathing room",
+    sub: "One slow circle. Inhale, hold, exhale.",
+    demo: DEMO_BREATHING,
+    prompt: 'Make me a Surface called "Breathing Room". A single white circle that grows for 4 seconds (inhale), holds for 4 (hold), shrinks for 6 (exhale), with the matching word fading in at each phase. The rest of the screen is black. No buttons, no settings, no counts, no streaks. Tapping anywhere switches to a stillness mode that just sits as long as I want. Should feel like the room is breathing with me.',
+  },
+  {
+    title: "Letters from your future self",
+    sub: "A daily letter. Postmarked from someone older.",
+    demo: DEMO_POSTMARK,
+    prompt: 'Make me a Surface called "Postmark 2030". Every morning, show one short letter (3-5 sentences) written by me-from-the-future to me-now — kind, specific, never preachy. Frame it like an opened envelope on a desk; serif body type, monochrome. I can write a one-paragraph reply that gets saved but never shown again — it is a release. Persist letters as artifacts. The mood is quiet correspondence across time.',
+  },
+  {
+    title: "The 4am club",
+    sub: "A journal that only opens when the world is asleep.",
+    demo: DEMO_4AM,
+    prompt: 'Make me a Surface called "4am Club". A black journal that only accepts entries between 11pm and 5am — outside those hours it shows a closed envelope and the time until it next opens. Inside, each entry is timestamped with how late I was up. No editing past entries, no streaks, no rewards — just an honest log of the hours when I think differently. Persist via Surface artifacts. Should feel like sneaking into your own confessional.',
+  },
+  {
+    title: "A garden that grows with focus",
+    sub: "Don't switch tabs. Watch it bloom.",
+    demo: DEMO_GARDEN,
+    prompt: 'Make me a Surface called "Focus Garden". A pure-white plant in pure black soil — when this tab is in focus and active, it grows by tiny visible increments; when I switch away, growth pauses. After 25 unbroken minutes, it flowers. After days of broken focus, it slowly wilts. Use document.visibilitychange to detect attention. No notifications, no scolding — the plant just lives or doesn\'t. Persist its state via Surface artifacts. The feeling: caring for something fragile that mirrors my attention.',
+  },
+  {
+    title: "A tarot deck for decisions",
+    sub: "Shuffle. Draw. Decide.",
+    demo: DEMO_TAROT,
+    prompt: 'Make me a Surface called "Decision Deck". A stack of 22 black cards face-down in the center. I click to draw — the top card flips with a flick animation and reveals one of 22 hand-written prompts ("Choose the option that scares you slightly more", "Wait until tomorrow", "Pick what you\'d tell a friend to pick", etc.). One draw per day; persist today\'s card. Pure typography on the cards, no illustrations. Should feel like consulting an oracle that respects me.',
+  },
+  {
+    title: "A clock that counts weeks, not minutes",
+    sub: "4,000 weeks. Some already spent.",
+    demo: DEMO_MEMENTO,
+    prompt: 'Make me a Surface called "Memento Mori". A tight grid of 4,000 small squares — one for each week of an 80-year life. Squares for weeks I\'ve already lived (ask me once for my birth date) are filled white; the rest are 1px hairline outlines. Below the grid: a single line reading "X weeks remaining". No countdown ticking, no animation — it\'s a still photograph of my finite time. Persist my birth date as artifact metadata.',
+  },
+  {
+    title: "A ledger of small wins",
+    sub: "Only the tiny victories. Logged in your own hand.",
+    demo: DEMO_SMALLWINS,
+    prompt: 'Make me a Surface called "Small Wins". A long scrollable column of single-line entries, each prefixed with today\'s date and dimming with age. The only input is a text field at the top: "What was a small win today?" Enter to log. No deletes, no edits, no shame for empty days — but no streaks either. The wins compound visually as the list lengthens. Persist as a Surface artifact. The feeling: a private accumulation of evidence that I am, in fact, building a life.',
+  },
+  {
+    title: "The lighthouse",
+    sub: "One question, all day, every day.",
+    demo: DEMO_LIGHTHOUSE,
+    prompt: 'Make me a Surface called "Lighthouse". The center of the screen holds a single question I answered once on setup ("What am I doing this year? Why this and not something else?") — and it stays there, only that question, every time I open this surface. An edit affordance refines the answer; previous versions fade into a small history below. Nothing else on screen. The metaphor: a beam I can return to when I drift.',
+  },
+  {
+    title: "A confession booth",
+    sub: "Write a secret. It deletes itself in an hour.",
+    demo: DEMO_CONFESSIONAL,
+    prompt: 'Make me a Surface called "Confessional". A black void with a single blinking caret. I type whatever I need to get out. There is no save button — entries auto-delete one hour after I close the tab, and they never leave my machine. While visible, each previous entry shows with a faint timestamp ("deletes in 47 min"). Persist with Surface artifacts but with an expiry; sweep expired ones on next render. Should feel like an unjudging room with the door closing behind me.',
+  },
+  {
+    title: "A bonfire for things you're letting go of",
+    sub: "Write what you're done carrying. Watch it burn.",
+    demo: DEMO_BONFIRE,
+    prompt: 'Make me a Surface called "Bonfire". A black screen with a small text field at the bottom: "What are you putting down?" When I submit, the text rises slowly to the center of the screen, lingers a few seconds, then dissolves character-by-character into faint scattered dots that fade out. Nothing is saved anywhere — no record, no list, no history. The whole point is that it\'s gone. Should feel like watching paper curl in flame.',
+  },
+  {
+    title: "A sundial of your peak hour",
+    sub: "A ring of 24 marks. The brightest one is when you ship.",
+    demo: DEMO_SUNDIAL,
+    prompt: 'Make me a Surface called "Sundial". A large white ring divided into 24 hourly marks. Every time I press the spacebar while on this surface, it logs the current hour. Over days, the most-pressed marks brighten — slowly forming a personal map of when I\'m actually awake to my own life. After a week I can see my real peak hours vs. the ones I tell myself. Persist hourly press counts via the Surface artifact API. Spare: a single ring, no labels until I hover a mark.',
+  },
+];
+
+let portalIndex = -1;
+let portalT = null;
+
+function pickNextIdeaIndex() {
+  if (SURFACE_IDEAS.length <= 1) return 0;
+  let next;
+  do { next = Math.floor(Math.random() * SURFACE_IDEAS.length); }
+  while (next === portalIndex);
+  return next;
+}
+
+function paintPortal(portal) {
+  const idea = SURFACE_IDEAS[portalIndex];
+  portal.querySelector(".portal-title").textContent = idea.title;
+  portal.querySelector(".portal-sub").textContent = idea.sub;
+  const frame = portal.querySelector(".portal-demo");
+  if (frame) frame.srcdoc = idea.demo;
+}
+
+function cyclePortal(root) {
+  if (portalT) { clearTimeout(portalT); portalT = null; }
+  const portal = root.querySelector(".empty-portal");
+  if (!portal) return;
+  const disc = portal.querySelector(".portal-disc");
+  const meta = portal.querySelector(".portal-meta");
+
+  portalIndex = pickNextIdeaIndex();
+  paintPortal(portal);
+
+  portal.addEventListener("click", () => {
+    showIdeaModal(SURFACE_IDEAS[portalIndex]);
+  });
+
+  const step = () => {
+    if (!portal.isConnected) return;
+    // Pause cycling while user is hovering or focused on the portal
+    if (portal.matches(":hover") || portal.matches(":focus-visible")) {
+      portalT = setTimeout(step, 1600);
+      return;
+    }
+    disc.classList.add("portal-disc--hidden");
+    meta.classList.add("portal-meta--hidden");
+    portalT = setTimeout(() => {
+      if (!portal.isConnected) return;
+      portalIndex = pickNextIdeaIndex();
+      paintPortal(portal);
+      disc.classList.remove("portal-disc--hidden");
+      meta.classList.remove("portal-meta--hidden");
+      portalT = setTimeout(step, 8000);
+    }, 480);
+  };
+  portalT = setTimeout(step, 8000);
+}
+
+function showIdeaModal(idea) {
+  if (document.getElementById("idea-modal")) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "idea-modal";
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="idea-title">
+      <button type="button" class="modal-close" aria-label="Close">×</button>
+      <div class="modal-eyebrow">A surface you could make</div>
+      <h2 id="idea-title" class="modal-title">${escapeHtml(idea.title)}</h2>
+      <p class="modal-lede">${escapeHtml(idea.sub)}</p>
+      <pre class="modal-prompt">${escapeHtml(idea.prompt)}</pre>
+      <div class="modal-actions">
+        <button type="button" class="modal-copy-btn" id="idea-copy-btn">Copy prompt</button>
+      </div>
+      <div class="modal-sub">Paste into your agent's chat and let it build.</div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    overlay.classList.remove("modal-overlay--visible");
+    overlay.addEventListener("transitionend", () => overlay.remove(), { once: true });
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+
+  overlay.querySelector(".modal-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  document.addEventListener("keydown", onKey);
+
+  const copyBtn = overlay.querySelector("#idea-copy-btn");
+  const setBtnLabel = (label, done) => {
+    copyBtn.textContent = label;
+    copyBtn.classList.toggle("modal-copy-btn--done", !!done);
+  };
+  copyBtn.addEventListener("click", async () => {
+    const ok = await copyToClipboard(idea.prompt);
+    setBtnLabel(ok ? "Copied" : "Copy failed", ok);
+    setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
+  });
+
+  requestAnimationFrame(() => overlay.classList.add("modal-overlay--visible"));
+}
+
+window.showIdeaModal = showIdeaModal;
 
 // ── Theme system ──
 
@@ -696,30 +910,29 @@ function renderGrid() {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
-      <div class="empty-glyph" aria-hidden="true">
-        <svg viewBox="0 0 100 100">
-          <circle class="ring-1" cx="50" cy="50" r="42" fill="none" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5" stroke-dasharray="2.4 4.6"/>
-          <circle class="ring-2" cx="50" cy="50" r="31" fill="none" stroke="rgba(255, 255, 255, 0.28)" stroke-width="0.5"/>
-          <circle class="ring-3" cx="50" cy="50" r="21" fill="none" stroke="rgba(255, 255, 255, 0.34)" stroke-width="0.5" stroke-dasharray="1 2.6"/>
-          <circle class="core" cx="50" cy="50" r="2.4" fill="rgba(255, 255, 255, 0.96)"/>
-          <line x1="50" y1="5"  x2="50" y2="11" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
-          <line x1="50" y1="89" x2="50" y2="95" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
-          <line x1="5"  y1="50" x2="11" y2="50" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
-          <line x1="89" y1="50" x2="95" y2="50" stroke="rgba(255, 255, 255, 0.42)" stroke-width="0.5"/>
-        </svg>
+      <div class="empty-text">
+        <div class="empty-prompt">What should I make?</div>
+        <div class="empty-suggestions">
+          <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
+        </div>
+        <div class="empty-sub">tell your agent</div>
+        <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">Start Tutorial</button>
       </div>
-      <div class="empty-prompt">What should I make?</div>
-      <div class="empty-suggestions">
-        <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
-      </div>
-      <div class="empty-sub">tell your agent</div>
-      <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">
-        <span class="empty-tour-glyph" aria-hidden="true"></span>
-        Start Tutorial
+      <button type="button" class="empty-portal" id="empty-portal" aria-label="Surface ideas — click to see a buildable prompt">
+        <div class="portal-disc">
+          <iframe class="portal-demo" tabindex="-1" sandbox="allow-scripts" srcdoc=""></iframe>
+        </div>
+        <div class="portal-meta">
+          <div class="portal-label">A surface you could make</div>
+          <div class="portal-title"></div>
+          <div class="portal-sub"></div>
+          <div class="portal-hint">click for the prompt</div>
+        </div>
       </button>
     `;
     container.appendChild(empty);
     cycleEmptySuggestions(empty);
+    cyclePortal(empty);
   } else {
     const grid = document.createElement("div");
     grid.className = "grid";
