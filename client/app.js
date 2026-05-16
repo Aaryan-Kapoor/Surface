@@ -240,10 +240,10 @@ const SURFACE_IDEAS = [
     prompt: "Surface this post from @trq212 on X",
   },
   {
-    title: "Aaryan-Kapoor/Surface · GitHub",
-    sub: "The last app",
-    src: "/demos/github-surface.html",
-    prompt: "Surface the Aaryan-Kapoor/Surface repo on GitHub",
+    title: "Pac-Man",
+    sub: "1980 · Namco",
+    src: "/demos/pacman.html",
+    prompt: "Surface a game of Pac-Man",
   },
   {
     title: "Astronaut · 3D",
