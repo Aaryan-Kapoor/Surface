@@ -235,18 +235,10 @@ button, input, select, textarea {
   border: none;
   background: transparent;
   padding: 0;
-  cursor: pointer;
   flex-shrink: 0;
   color: inherit;
   font-family: var(--font);
-  transition: transform .35s ease;
   -webkit-tap-highlight-color: transparent;
-}
-
-.empty-portal:hover { transform: scale(1.01); }
-.empty-portal:focus-visible { outline: none; }
-.empty-portal:focus-visible .portal-disc {
-  box-shadow: 0 0 0 2px #ffffff;
 }
 
 .portal-disc {
@@ -258,10 +250,6 @@ button, input, select, textarea {
   position: relative;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
   transition: opacity .48s ease, box-shadow .25s ease;
-}
-
-.empty-portal:hover .portal-disc {
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.42);
 }
 
 .portal-disc--hidden { opacity: 0; }
@@ -310,17 +298,40 @@ button, input, select, textarea {
   line-height: 1.4;
 }
 
-.portal-hint {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--fg-faint);
-  opacity: 0;
-  margin-top: 4px;
-  transition: opacity .2s ease;
+.portal-prompt {
+  background: none;
+  border: 0;
+  padding: 6px 0;
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: color .15s ease;
+  -webkit-tap-highlight-color: transparent;
+  max-width: 100%;
 }
 
-.empty-portal:hover .portal-hint,
-.empty-portal:focus-visible .portal-hint { opacity: 1; }
+.portal-prompt:hover,
+.portal-prompt:focus-visible { color: #ffffff; outline: none; }
+
+.portal-prompt-arrow { color: var(--fg-faint); }
+.portal-prompt:hover .portal-prompt-arrow,
+.portal-prompt:focus-visible .portal-prompt-arrow { color: #ffffff; }
+
+.portal-prompt-text {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+.portal-prompt--copied { color: #ffffff; }
+.portal-prompt--copied .portal-prompt-arrow { color: #ffffff; }
 
 .empty-prompt {
   font-size: 56px;

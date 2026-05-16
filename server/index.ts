@@ -62,6 +62,7 @@ app.use((req, res, next) => {
 });
 
 app.use(router);
+app.use("/demos", express.static(path.join(__dirname, "..", "surfaces")));
 app.use(express.static(path.join(__dirname, "..", "client")));
 
 app.listen(PORT, BIND, () => {
