@@ -322,8 +322,15 @@ function mountGallery(root) {
   let hovering = false;
   let halfHeight = 0;
   let lastTime = 0;
+  let manualOverride = false;
+  let resumeTimer = null;
   const FULL_CYCLE_MS = 96000;
   const DECAY_PER_SEC = 7;
+  const RESUME_DELAY_MS = 2500;
+
+  const scrollbar = root.querySelector(".portal-scrollbar");
+  const thumb = root.querySelector(".portal-scrollbar-thumb");
+  const rail = root.querySelector(".portal-scrollbar-rail");
 
   const measure = () => {
     halfHeight = track.scrollHeight / 2;
@@ -333,24 +340,107 @@ function mountGallery(root) {
   setTimeout(measure, 250);
   window.addEventListener("resize", measure);
 
+  const wrap = (p) => {
+    if (!halfHeight) return p;
+    if (p <= -halfHeight) return p + halfHeight;
+    if (p > 0) return p - halfHeight;
+    return p;
+  };
+
+  const updateThumb = () => {
+    if (!scrollbar || !thumb || halfHeight <= 0) return;
+    let p = (-position) / halfHeight;
+    p = ((p % 1) + 1) % 1;
+    const railH = scrollbar.offsetHeight;
+    const thumbH = thumb.offsetHeight;
+    thumb.style.top = (p * Math.max(0, railH - thumbH)) + "px";
+  };
+
+  const scheduleResume = () => {
+    if (resumeTimer) clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => { manualOverride = false; resumeTimer = null; }, RESUME_DELAY_MS);
+  };
+
   const tick = (now) => {
     if (!track.isConnected) return;
     const dt = lastTime ? Math.min(now - lastTime, 50) : 16;
     lastTime = now;
-    const factor = 1 - Math.exp(-DECAY_PER_SEC * dt / 1000);
-    velocity += (targetVel - velocity) * factor;
-    position += velocity * dt;
-    if (halfHeight) {
-      if (position <= -halfHeight) position += halfHeight;
-      else if (position > 0) position -= halfHeight;
+    if (!manualOverride) {
+      const factor = 1 - Math.exp(-DECAY_PER_SEC * dt / 1000);
+      velocity += (targetVel - velocity) * factor;
+      position += velocity * dt;
+      position = wrap(position);
     }
     track.style.transform = `translate3d(0, ${position}px, 0)`;
+    updateThumb();
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
 
   portal.addEventListener("mouseenter", () => { hovering = true; targetVel = 0; });
   portal.addEventListener("mouseleave", () => { hovering = false; targetVel = baseSpeed; });
+
+  // Scrollbar drag — pointer events so capture works off-thumb too
+  let dragging = false;
+  let dragStartY = 0;
+  let dragStartPos = 0;
+  if (thumb) {
+    thumb.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      e.preventDefault();
+      thumb.setPointerCapture(e.pointerId);
+      dragging = true;
+      manualOverride = true;
+      if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
+      thumb.classList.add("is-dragging");
+      document.body.classList.add("is-grabbing-scrollbar");
+      dragStartY = e.clientY;
+      dragStartPos = position;
+      velocity = 0;
+    });
+    thumb.addEventListener("pointermove", (e) => {
+      if (!dragging || !halfHeight) return;
+      const railH = scrollbar.offsetHeight;
+      const thumbH = thumb.offsetHeight;
+      const range = Math.max(1, railH - thumbH);
+      const deltaProgress = (e.clientY - dragStartY) / range;
+      position = wrap(dragStartPos - deltaProgress * halfHeight);
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { thumb.releasePointerCapture(e.pointerId); } catch {}
+      thumb.classList.remove("is-dragging");
+      document.body.classList.remove("is-grabbing-scrollbar");
+      scheduleResume();
+    };
+    thumb.addEventListener("pointerup", endDrag);
+    thumb.addEventListener("pointercancel", endDrag);
+  }
+
+  // Click on rail to jump-scroll to that position, then continue as a drag
+  if (rail) {
+    rail.addEventListener("pointerdown", (e) => {
+      if (e.target === thumb) return;
+      if (!halfHeight) return;
+      e.preventDefault();
+      manualOverride = true;
+      if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
+      const rect = scrollbar.getBoundingClientRect();
+      const railH = scrollbar.offsetHeight;
+      const thumbH = thumb.offsetHeight;
+      const range = Math.max(1, railH - thumbH);
+      const clicked = Math.max(0, Math.min(range, e.clientY - rect.top - thumbH / 2));
+      position = -((clicked / range) * halfHeight);
+      velocity = 0;
+      dragging = true;
+      dragStartY = e.clientY;
+      dragStartPos = position;
+      thumb.setPointerCapture(e.pointerId);
+      thumb.classList.add("is-dragging");
+      document.body.classList.add("is-grabbing-scrollbar");
+    });
+  }
 }
 
 function showIdeaModal(idea) {
@@ -908,6 +998,10 @@ function renderGrid() {
         <div class="portal-gallery">
           <div class="portal-track"></div>
         </div>
+      </div>
+      <div class="portal-scrollbar" aria-hidden="true">
+        <div class="portal-scrollbar-rail"></div>
+        <div class="portal-scrollbar-thumb"></div>
       </div>
     `;
     container.appendChild(empty);

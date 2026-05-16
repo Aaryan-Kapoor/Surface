@@ -270,6 +270,51 @@ button, input, select, textarea {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
 }
 
+.portal-scrollbar {
+  position: absolute;
+  top: 64px;
+  bottom: 64px;
+  right: 16px;
+  width: 14px;
+  z-index: 4;
+  cursor: pointer;
+}
+
+.portal-scrollbar-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateX(-0.5px);
+}
+
+.portal-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 84px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.38);
+  cursor: grab;
+  will-change: top;
+  transition: width .18s ease, background .18s ease, box-shadow .18s ease;
+}
+
+.portal-scrollbar:hover .portal-scrollbar-thumb,
+.portal-scrollbar-thumb.is-dragging {
+  width: 6px;
+  background: #ffffff;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.45);
+}
+
+.portal-scrollbar-thumb.is-dragging { cursor: grabbing; }
+
+body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
+
 .portal-demo {
   position: absolute;
   inset: 0;
@@ -768,6 +813,7 @@ button, input, select, textarea {
     justify-content: center;
   }
   .empty-portal { display: none; }
+  .portal-scrollbar { display: none; }
 }
 
 @media (max-width: 640px) {
