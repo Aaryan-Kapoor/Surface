@@ -227,6 +227,36 @@ const SURFACE_IDEAS = [
     src: "/demos/spotify-rickroll.html",
     prompt: "Surface Never Gonna Give You Up by Rick Astley",
   },
+  {
+    title: "Apple Park · Google Maps",
+    sub: "Cupertino, California",
+    src: "/demos/maps-apple-park.html",
+    prompt: "Surface Apple Park on Google Maps",
+  },
+  {
+    title: "Thariq · X",
+    sub: "@trq212",
+    src: "/demos/tweet-trq212.html",
+    prompt: "Surface this post from @trq212 on X",
+  },
+  {
+    title: "Aaryan-Kapoor/Surface · GitHub",
+    sub: "The last app",
+    src: "/demos/github-surface.html",
+    prompt: "Surface the Aaryan-Kapoor/Surface repo on GitHub",
+  },
+  {
+    title: "Astronaut · 3D",
+    sub: "Drag to rotate",
+    src: "/demos/3d-astronaut.html",
+    prompt: "Surface a rotating 3D astronaut",
+  },
+  {
+    title: "Wind · Windy",
+    sub: "Live atmospheric currents",
+    src: "/demos/windy-globe.html",
+    prompt: "Surface live wind currents on Windy",
+  },
 ];
 
 let portalIndex = -1;
