@@ -1035,7 +1035,8 @@ function createCard(s, index) {
   const card = document.createElement("div");
   card.className = "surface-card";
   card.dataset.id = s.id;
-  card.style.animationDelay = ((index || 0) * 0.08) + "s";
+  card.style.setProperty("--card-delay", ((index || 0) * 0.08) + "s");
+  card.style.setProperty("--bob-delay", (-(Math.random() * 7)).toFixed(2) + "s");
   card.onclick = () => navigate("/surface/" + s.id);
 
   const disc = document.createElement("div");
