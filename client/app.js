@@ -1221,34 +1221,23 @@ function createCard(s, index) {
   const disc = document.createElement("div");
   disc.className = "card-disc";
 
-  const previewUrl = s.preview_url || (s.artifact ? `/artifacts/${s.artifact.id}/view?preview=1` : `/surfaces/${s.id}/html`);
   const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
-  const shouldUseIframePreview =
-    previewUrl &&
-    !mime.startsWith("video/") &&
-    !mime.startsWith("audio/") &&
-    mime !== "application/pdf" &&
-    s.artifact_kind !== "project";
-  const hasExternalScripts = s.html && (s.html.includes('<script src') || s.html.includes('import('));
-  if (shouldUseIframePreview) {
-    const iframe = document.createElement("iframe");
-    iframe.className = "card-frame";
-    iframe.sandbox = "allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox";
-    iframe.allow = "autoplay; encrypted-media; picture-in-picture; clipboard-write";
-    if (s.html && s.html.length < 8000 && !hasExternalScripts) {
-      iframe.srcdoc = s.html;
-    } else {
-      iframe.src = previewUrl;
-    }
-    iframe.tabIndex = -1;
-    iframe.loading = "lazy";
-    disc.appendChild(iframe);
-  } else {
+  const thumbVersion = encodeURIComponent(s.updated_at || s.created_at || "");
+  const thumbUrl = `/artifacts/${s.id}/thumb${thumbVersion ? `?v=${thumbVersion}` : ""}`;
+  const img = document.createElement("img");
+  img.className = "card-thumb";
+  img.loading = "lazy";
+  img.decoding = "async";
+  img.alt = "";
+  img.src = thumbUrl;
+  img.onerror = () => {
+    img.remove();
     const iconEl = document.createElement("div");
     iconEl.className = "card-disc-icon";
     iconEl.textContent = meta.icon || iconForMime(mime);
-    disc.appendChild(iconEl);
-  }
+    disc.prepend(iconEl);
+  };
+  disc.appendChild(img);
 
   if (s.updated_at) {
     const ageMs = Date.now() - new Date(s.updated_at + "Z").getTime();
@@ -1260,6 +1249,8 @@ function createCard(s, index) {
     }
   }
 
+  card.appendChild(disc);
+
   const actions = document.createElement("div");
   actions.className = "card-actions";
   actions.innerHTML = `
@@ -1268,14 +1259,19 @@ function createCard(s, index) {
     <button type="button" class="card-action card-action--danger" data-action="delete" title="Delete" aria-label="Delete">${ICON_X}</button>
   `;
   actions.addEventListener("click", (e) => e.stopPropagation());
-  actions.querySelector('[data-action="copy"]').addEventListener("click", async () => {
+  actions.querySelector('[data-action="copy"]').addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const ok = await copyToClipboard(location.origin + "/surface/" + s.id);
     if (ok) showToast("Link copied");
+    else showToast("Copy failed", 3000, "error");
   });
-  actions.querySelector('[data-action="rename"]').addEventListener("click", () => {
+  actions.querySelector('[data-action="rename"]').addEventListener("click", (e) => {
+    e.stopPropagation();
     startRename(card, s.id);
   });
-  actions.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+  actions.querySelector('[data-action="delete"]').addEventListener("click", async (e) => {
+    e.stopPropagation();
     if (!confirm(`Delete "${s.title}"?`)) return;
     const res = await fetch("/artifacts/" + s.id, { method: "DELETE" });
     if (!res.ok) {
@@ -1283,8 +1279,7 @@ function createCard(s, index) {
       showToast(body.error || "Failed to delete", 3000, "error");
     }
   });
-  disc.appendChild(actions);
-  card.appendChild(disc);
+  card.appendChild(actions);
 
   const body = document.createElement("div");
   body.className = "card-body";
@@ -1565,6 +1560,16 @@ function connectGlobalSSE() {
         }
       });
     }
+  });
+
+  globalSSE.addEventListener("thumb_ready", (e) => {
+    const data = JSON.parse(e.data);
+    if (!data || !data.id) return;
+    const img = document.querySelector(`.surface-card[data-id="${data.id}"] .card-thumb`);
+    if (!img) return;
+    const url = new URL(img.src, location.origin);
+    url.searchParams.set("v", String(Date.now()));
+    img.src = url.pathname + "?" + url.searchParams.toString();
   });
 
   // ── Display commands from agent ──

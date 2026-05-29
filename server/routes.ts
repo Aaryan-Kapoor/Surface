@@ -93,6 +93,7 @@ import {
   broadcastGlobal,
   broadcastToSurface,
 } from "./sse.js";
+import { enqueueThumb, hasThumb, getThumbPath } from "./thumbs.js";
 
 export const router = Router();
 
@@ -237,6 +238,7 @@ router.put("/surfaces/:id", (req, res) => {
       version_id: result.version?.id,
       reload: true,
     });
+    enqueueThumb(result.artifact.id);
     res.json(surfaceResponseFromArtifact(result));
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -251,6 +253,7 @@ router.delete("/surfaces/:id", (req, res) => {
     res.status(404).json({ error: "Surface not found" });
     return;
   }
+  try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
   broadcastGlobal("surface_deleted", { id: req.params.id });
   res.json({ deleted: true });
 });
@@ -271,6 +274,7 @@ router.post("/artifacts/present-file", (req, res) => {
     const result = presentFile(getDb(), { filePath, title, metadata, copy, open });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
+    enqueueThumb(result.artifact.id);
     res.status(201).json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -291,6 +295,7 @@ router.post("/artifacts/link", (req, res) => {
     const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
+    enqueueThumb(result.artifact.id);
     res.status(201).json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -312,6 +317,7 @@ router.post("/artifacts/:id/touch", (req, res) => {
     updated_at: artifact?.updated_at,
     reload: true,
   });
+  enqueueThumb(req.params.id);
   res.json({ touched: true });
 });
 
@@ -343,6 +349,7 @@ router.post("/artifacts", (req, res) => {
       reason: "artifact_create",
     });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    enqueueThumb(result.artifact.id);
     res.status(201).json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -391,6 +398,7 @@ router.post("/artifacts/:id/rollback", (req, res) => {
     version_id: result.version?.id,
     reload: true,
   });
+  enqueueThumb(result.artifact.id);
   res.json(result);
 });
 
@@ -432,6 +440,7 @@ router.put("/artifacts/:id", (req, res) => {
       version_id: result.version?.id,
       reload: true,
     });
+    if (inputFiles) enqueueThumb(result.artifact.id);
     res.json(result);
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -444,6 +453,7 @@ router.delete("/artifacts/:id", (req, res) => {
     res.status(404).json({ error: "Artifact not found" });
     return;
   }
+  try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
   broadcastGlobal("surface_deleted", { id: req.params.id });
   res.json({ deleted: true });
 });
@@ -485,6 +495,57 @@ router.get("/artifacts/:id/view", (req, res) => {
     filePath: preferred.path,
     fileUrl,
     preview: isPreview,
+  }));
+});
+
+router.get("/artifacts/:id/thumb", (req, res) => {
+  const result = readArtifact(getDb(), req.params.id);
+  if (!result || !result.version) {
+    res.status(404).send("Artifact not found");
+    return;
+  }
+  const mime = result.artifact.mime || "";
+  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
+
+  if (req.query.regenerate === "1") {
+    try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+    enqueueThumb(req.params.id);
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+    res.send(renderThumbPlaceholder({
+      title: result.artifact.title || "Untitled",
+      mime,
+    }));
+    return;
+  }
+
+  if (hasThumb(req.params.id)) {
+    try {
+      res.setHeader("Content-Type", "image/png");
+      res.send(fs.readFileSync(getThumbPath(req.params.id)));
+      return;
+    } catch {}
+  }
+
+  if (mime.startsWith("image/")) {
+    const preferred =
+      result.files.find((f) => f.path === "index.html") ||
+      result.files.find((f) => f.mime === mime) ||
+      result.files[0];
+    if (preferred) {
+      try {
+        const bytes = readArtifactFileContent(preferred);
+        res.setHeader("Content-Type", preferred.mime || mime);
+        res.send(bytes);
+        return;
+      } catch {}
+    }
+  }
+
+  enqueueThumb(req.params.id);
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.send(renderThumbPlaceholder({
+    title: result.artifact.title || "Untitled",
+    mime,
   }));
 });
 
@@ -1345,6 +1406,56 @@ function renderArtifactShell(params: {
   </script>
 </body>
 </html>`;
+}
+
+function paletteForMime(mime: string) {
+  if (mime === "text/html") return { accent: "#ff5c3a", bg: "#fff5f1", text: "#1a1a1a", label: "HTML" };
+  if (mime.startsWith("video/")) return { accent: "#3b5bd9", bg: "#eef2fb", text: "#0f1c47", label: "VIDEO" };
+  if (mime.startsWith("audio/")) return { accent: "#0aaf52", bg: "#eefbf3", text: "#0a3b1f", label: "AUDIO" };
+  if (mime === "application/pdf") return { accent: "#c81e1e", bg: "#fdeeee", text: "#3b0a0a", label: "PDF" };
+  if (mime === "text/markdown") return { accent: "#4a4a4a", bg: "#f4f4f4", text: "#111", label: "MD" };
+  if (mime.startsWith("image/")) return { accent: "#6d28d9", bg: "#f3eefb", text: "#1e0a47", label: "IMAGE" };
+  if (mime.startsWith("text/")) return { accent: "#444", bg: "#f4f4f4", text: "#111", label: "TEXT" };
+  return { accent: "#666", bg: "#f4f4f4", text: "#111", label: "FILE" };
+}
+
+function wrapForThumb(text: string, max: number): string[] {
+  const trimmed = text.trim();
+  if (trimmed.length <= max) return [trimmed];
+  const words = trimmed.split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+  for (const w of words) {
+    const candidate = current ? current + " " + w : w;
+    if (candidate.length <= max) {
+      current = candidate;
+    } else {
+      if (current) lines.push(current);
+      current = w;
+      if (lines.length === 2) break;
+    }
+  }
+  if (current && lines.length < 2) lines.push(current);
+  if (lines.length === 2 && lines[1].length > max) {
+    lines[1] = lines[1].slice(0, max - 1) + "…";
+  }
+  return lines.slice(0, 2);
+}
+
+function renderThumbPlaceholder(params: { title: string; mime: string }): string {
+  const palette = paletteForMime(params.mime);
+  const lines = wrapForThumb(params.title, 18).map(escapeHtml);
+  const label = escapeHtml(palette.label);
+  const titleY = lines.length === 1 ? 360 : 340;
+  const titleLines = lines.map((line, i) =>
+    `<text x="300" y="${titleY + i * 48}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif" font-size="38" font-weight="500" fill="${palette.text}" letter-spacing="-0.5">${line}</text>`
+  ).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+    <rect width="600" height="600" fill="${palette.bg}"/>
+    <circle cx="300" cy="210" r="56" fill="${palette.accent}"/>
+    <text x="300" y="222" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif" font-size="22" font-weight="600" fill="#fff" letter-spacing="2">${label}</text>
+    ${titleLines}
+  </svg>`;
 }
 
 function escapeHtml(value: string): string {

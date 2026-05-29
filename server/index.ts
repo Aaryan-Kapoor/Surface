@@ -2,8 +2,10 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { initDb } from "./db.js";
+import { initDb, getDb } from "./db.js";
 import { router } from "./routes.js";
+import { listArtifactCards } from "./artifacts.js";
+import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -67,4 +69,22 @@ app.use(express.static(path.join(__dirname, "..", "client")));
 
 app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
+  setThumbServerPort(PORT);
+  if (!findChromeBin()) {
+    console.warn("[thumbs] no chrome binary found; dashboards will use SVG placeholders. Set SURFACE_CHROME to override.");
+    return;
+  }
+  try {
+    const cards = listArtifactCards(getDb(), { includeHidden: true });
+    let queued = 0;
+    for (const card of cards) {
+      if (!hasThumb(card.id)) {
+        enqueueThumb(card.id);
+        queued++;
+      }
+    }
+    if (queued) console.log(`[thumbs] queued ${queued} backfill capture(s)`);
+  } catch (err) {
+    console.error("[thumbs] backfill scan failed:", err);
+  }
 });
