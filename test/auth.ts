@@ -84,11 +84,6 @@ function sessionCookieFrom(res: Res): string | null {
   return m ? `surface_session=${m[1]}` : null;
 }
 
-function sessionTokenFrom(res: Res): string | null {
-  const cookie = sessionCookieFrom(res);
-  return cookie ? cookie.replace("surface_session=", "") : null;
-}
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function waitForReady(req: ReturnType<typeof makeClient>, timeoutMs = 15000) {

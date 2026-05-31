@@ -94,11 +94,14 @@ import {
   broadcastToSurface,
 } from "./sse.js";
 import {
+  DEFAULT_SESSION_TTL_SECONDS,
+  SESSION_COOKIE,
   consumePairingToken,
   createPairingToken,
   createSession,
   getSessionById,
   listPairingTokens,
+  readCookie,
   listSessions,
   revokePairingToken,
   revokeSession,
@@ -112,8 +115,6 @@ export const router = Router();
 // The global session middleware in index.ts has already resolved req.auth for
 // every request that reaches here (loopback, cookie, bearer, or static token).
 // Owner-only management endpoints re-check that role explicitly.
-
-const SESSION_COOKIE = "surface_session";
 
 function requireOwner(req: any, res: any): boolean {
   if (req.auth && req.auth.role === "owner") return true;
@@ -169,8 +170,6 @@ function sessionPayload(sessionId: string) {
     client: { label: s.label, userAgent: s.user_agent, ip: s.client_ip },
   };
 }
-
-const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 router.get("/api/auth/session", (req: any, res) => {
   const auth = req.auth;
@@ -271,9 +270,7 @@ router.post("/api/auth/clients/revoke", (req: any, res) => {
 });
 
 router.post("/api/auth/logout", (req: any, res) => {
-  const cookieHeader = req.header("Cookie") || "";
-  const match = cookieHeader.match(/(?:^|;\s*)surface_session=([^;]+)/);
-  const cookieToken = match ? decodeURIComponent(match[1]) : "";
+  const cookieToken = readCookie(req.header("Cookie"), SESSION_COOKIE);
   const bearer = (req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   let revoked = false;
   if (cookieToken) revoked = revokeSessionByToken(cookieToken) || revoked;

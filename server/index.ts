@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { initDb, getDb } from "./db.js";
 import { router } from "./routes.js";
 import { listArtifactCards } from "./artifacts.js";
-import { createPairingToken, verifySession } from "./auth.js";
+import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
 import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,9 +37,9 @@ initDb();
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-// Endpoints reachable without authentication. These are the minimum needed for
-// an unpaired browser to load the pair page and complete the handshake.
-const PUBLIC_GET_PATHS = new Set([
+// Unauthenticated browsers can only load the bootstrap shell and exchange a
+// one-time pairing token. All data/control endpoints still require auth.
+const PUBLIC_BOOTSTRAP_GET_PATHS = new Set([
   "/",
   "/index.html",
   "/app.js",
@@ -51,16 +51,10 @@ const PUBLIC_GET_PATHS = new Set([
 ]);
 
 function isPublicRequest(req: express.Request): boolean {
-  if (req.method === "GET" && PUBLIC_GET_PATHS.has(req.path)) return true;
+  if (req.method === "GET" && PUBLIC_BOOTSTRAP_GET_PATHS.has(req.path)) return true;
   if (req.method === "GET" && req.path === "/api/auth/session") return true;
   if (req.method === "POST" && req.path === "/api/auth/bootstrap") return true;
   return false;
-}
-
-function parseCookie(req: express.Request, name: string): string {
-  const header = req.header("Cookie") || "";
-  const match = header.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
-  return match ? decodeURIComponent(match[1]) : "";
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -78,7 +72,7 @@ function staticTokenMatch(req: express.Request, res: express.Response): boolean 
   if (!STATIC_TOKEN) return false;
   const bearer = (req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   const query = typeof req.query.token === "string" ? req.query.token : "";
-  const legacyCookie = parseCookie(req, "surface_token");
+  const legacyCookie = readCookie(req.header("Cookie"), "surface_token");
   const ok =
     constantTimeEquals(bearer, STATIC_TOKEN) ||
     constantTimeEquals(query, STATIC_TOKEN) ||
@@ -103,7 +97,7 @@ app.use((req, res, next) => {
     return next();
   }
 
-  const cookieToken = parseCookie(req, "surface_session");
+  const cookieToken = readCookie(req.header("Cookie"), SESSION_COOKIE);
   if (cookieToken) {
     const session = verifySession(cookieToken);
     if (session) {

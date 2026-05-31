@@ -49,6 +49,16 @@ The token rides in the URL **fragment**, never the query string, so it does not 
 
 Set `SURFACE_PUBLIC_URL` to the externally reachable origin so printed pairing URLs are clickable from another device.
 
+### What is public before pairing
+
+Unauthenticated access is limited to the bootstrap path only:
+
+- the app shell files needed to load and redirect (`/`, `/index.html`, `/app.js`, `/style.css`, `/manifest.json`, `/pair`, `/pair.html`, `/favicon.ico`)
+- `GET /api/auth/session`, which reports whether the browser already has a valid session
+- `POST /api/auth/bootstrap`, which exchanges a valid one-time pairing token for a session cookie
+
+Surface data and control routes such as `/surfaces`, `/artifacts/*`, `/stream`, `/display/*`, and credential-management endpoints still require loopback trust, a session cookie, a session bearer token, or the static `SURFACE_TOKEN`.
+
 ### Authentication order
 
 Every request resolves auth in this order: trusted loopback → `surface_session` cookie → `Authorization: Bearer <session-token>` → static `SURFACE_TOKEN` → 401. Cookies are the right transport for `EventSource`/SSE (`/stream`, `/surfaces/:id/stream`), which cannot set custom headers.

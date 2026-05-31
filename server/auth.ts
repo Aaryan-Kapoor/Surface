@@ -59,8 +59,14 @@ export function generateSessionToken(): string {
 
 export type Role = "owner" | "client";
 
-const DEFAULT_PAIRING_TTL_SECONDS = 5 * 60;
-const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const SESSION_COOKIE = "surface_session";
+export const DEFAULT_PAIRING_TTL_SECONDS = 5 * 60;
+export const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export function readCookie(header: string | undefined, name: string): string {
+  const match = (header || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
 
 // ── Pairing tokens ──
 
