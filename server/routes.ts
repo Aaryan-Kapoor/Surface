@@ -93,9 +93,194 @@ import {
   broadcastGlobal,
   broadcastToSurface,
 } from "./sse.js";
+import {
+  consumePairingToken,
+  createPairingToken,
+  createSession,
+  getSessionById,
+  listPairingTokens,
+  listSessions,
+  revokePairingToken,
+  revokeSession,
+  revokeSessionByToken,
+} from "./auth.js";
 import { enqueueThumb, hasThumb, getThumbPath } from "./thumbs.js";
 
 export const router = Router();
+
+// ── Auth (pairing tokens + sessions) ──
+// The global session middleware in index.ts has already resolved req.auth for
+// every request that reaches here (loopback, cookie, bearer, or static token).
+// Owner-only management endpoints re-check that role explicitly.
+
+const SESSION_COOKIE = "surface_session";
+
+function requireOwner(req: any, res: any): boolean {
+  if (req.auth && req.auth.role === "owner") return true;
+  res.status(403).json({ error: "Owner role required" });
+  return false;
+}
+
+function isSecureRequest(req: any): boolean {
+  const xfproto = (req.headers["x-forwarded-proto"] || "").toString().split(",")[0].trim().toLowerCase();
+  if (xfproto) return xfproto === "https";
+  return req.secure === true || req.protocol === "https";
+}
+
+function clientIp(req: any): string {
+  const xff = (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim();
+  return xff || req.socket?.remoteAddress || "";
+}
+
+function baseUrlFor(req: any, override?: unknown): string {
+  if (typeof override === "string" && override) return override.replace(/\/$/, "");
+  if (process.env.SURFACE_PUBLIC_URL) return process.env.SURFACE_PUBLIC_URL.replace(/\/$/, "");
+  const proto = isSecureRequest(req) ? "https" : "http";
+  const host = req.headers.host || `127.0.0.1:${process.env.PORT || 3000}`;
+  return `${proto}://${host}`;
+}
+
+function setSessionCookie(req: any, res: any, token: string, ttlSeconds: number) {
+  const parts = [
+    `${SESSION_COOKIE}=${token}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${ttlSeconds}`,
+  ];
+  if (isSecureRequest(req)) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function clearSessionCookie(req: any, res: any) {
+  const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+  if (isSecureRequest(req)) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+function sessionPayload(sessionId: string) {
+  const s = getSessionById(sessionId);
+  if (!s) return null;
+  return {
+    authenticated: true as const,
+    role: s.role,
+    sessionId: s.id,
+    expiresAt: s.expires_at,
+    client: { label: s.label, userAgent: s.user_agent, ip: s.client_ip },
+  };
+}
+
+const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+router.get("/api/auth/session", (req: any, res) => {
+  const auth = req.auth;
+  if (!auth) {
+    res.json({ authenticated: false, bootstrapMethods: ["one-time-token"] });
+    return;
+  }
+  if (auth.sessionId) {
+    const payload = sessionPayload(auth.sessionId);
+    if (payload) {
+      res.json(payload);
+      return;
+    }
+  }
+  // Loopback / static-token callers are authenticated but have no session row.
+  res.json({ authenticated: true, role: auth.role, via: auth.via });
+});
+
+router.post("/api/auth/bootstrap", (req: any, res) => {
+  const credential = typeof req.body?.credential === "string" ? req.body.credential.trim() : "";
+  const label = typeof req.body?.label === "string" ? req.body.label : null;
+  if (!credential) {
+    res.status(400).json({ error: "Missing credential" });
+    return;
+  }
+  const consumed = consumePairingToken(credential);
+  if (!consumed) {
+    res.status(401).json({ error: "Invalid, expired, or already-used pairing token" });
+    return;
+  }
+  const session = createSession({
+    role: consumed.role,
+    label: label || consumed.label,
+    clientIp: clientIp(req),
+    userAgent: req.headers["user-agent"] || null,
+    ttlSeconds: DEFAULT_SESSION_TTL_SECONDS,
+  });
+  setSessionCookie(req, res, session.token, DEFAULT_SESSION_TTL_SECONDS);
+  res.json(sessionPayload(session.id));
+});
+
+router.post("/api/auth/pairing-token", (req: any, res) => {
+  if (!requireOwner(req, res)) return;
+  const label = typeof req.body?.label === "string" ? req.body.label : null;
+  const ttlSeconds = Number.isFinite(req.body?.ttlSeconds) ? Number(req.body.ttlSeconds) : undefined;
+  const token = createPairingToken({ label, ttlSeconds });
+  res.json({
+    id: token.id,
+    credential: token.credential,
+    role: token.role,
+    pairingUrl: `${baseUrlFor(req, req.body?.baseUrl)}/pair#token=${token.credential}`,
+    expiresAt: token.expiresAt,
+  });
+});
+
+router.get("/api/auth/pairing-tokens", (req: any, res) => {
+  if (!requireOwner(req, res)) return;
+  res.json(listPairingTokens());
+});
+
+router.post("/api/auth/pairing-tokens/revoke", (req: any, res) => {
+  if (!requireOwner(req, res)) return;
+  const id = typeof req.body?.id === "string" ? req.body.id : "";
+  if (!id) {
+    res.status(400).json({ error: "Missing id" });
+    return;
+  }
+  res.json({ revoked: revokePairingToken(id) });
+});
+
+router.post("/api/auth/sessions", (req: any, res) => {
+  if (!requireOwner(req, res)) return;
+  const label = typeof req.body?.label === "string" ? req.body.label : null;
+  const ttlSeconds = Number.isFinite(req.body?.ttlSeconds) ? Number(req.body.ttlSeconds) : undefined;
+  const session = createSession({
+    role: "owner",
+    label,
+    clientIp: clientIp(req),
+    userAgent: req.headers["user-agent"] || null,
+    ttlSeconds,
+  });
+  res.json({ id: session.id, token: session.token, role: session.role, expiresAt: session.expiresAt });
+});
+
+router.get("/api/auth/clients", (req: any, res) => {
+  if (!requireOwner(req, res)) return;
+  res.json(listSessions());
+});
+
+router.post("/api/auth/clients/revoke", (req: any, res) => {
+  if (!requireOwner(req, res)) return;
+  const id = typeof req.body?.id === "string" ? req.body.id : "";
+  if (!id) {
+    res.status(400).json({ error: "Missing id" });
+    return;
+  }
+  res.json({ revoked: revokeSession(id) });
+});
+
+router.post("/api/auth/logout", (req: any, res) => {
+  const cookieHeader = req.header("Cookie") || "";
+  const match = cookieHeader.match(/(?:^|;\s*)surface_session=([^;]+)/);
+  const cookieToken = match ? decodeURIComponent(match[1]) : "";
+  const bearer = (req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  let revoked = false;
+  if (cookieToken) revoked = revokeSessionByToken(cookieToken) || revoked;
+  if (bearer) revoked = revokeSessionByToken(bearer) || revoked;
+  clearSessionCookie(req, res);
+  res.json({ revoked });
+});
 
 // ── Display presence (in-memory) ──
 let displayPresence: Record<string, any> = {

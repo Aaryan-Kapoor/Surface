@@ -52,7 +52,7 @@ For user-click delivery, prefer `surface wait --id <id> [--action <name>] [--tim
 - Webhook fan-out: surface actions POST a structured JSON envelope to `SURFACE_WEBHOOK_URL` + `SURFACE_WEBHOOK_PATH` (default `/hooks/agent`) when both URL and `SURFACE_WEBHOOK_TOKEN` are set. `OPENCLAW_*` env vars are legacy aliases.
 - Theme is persisted in `display_config`, then applied with CSS custom properties and raw CSS injection.
 - Marketplace is gated by `SURFACE_FEATURES_MARKETPLACE=1` and off by default.
-- Bind defaults to `127.0.0.1`. Non-loopback bind requires `SURFACE_TOKEN`; Surface refuses to boot otherwise.
+- Bind defaults to `127.0.0.1`. Non-loopback access is authenticated by one-time pairing tokens → durable `surface_session` cookies/bearer tokens (`/pair`, `surface auth …`, `/api/auth/*`). `SURFACE_TOKEN` still works as a static owner bearer. Behind a same-host reverse proxy set `SURFACE_TRUST_LOOPBACK=0`. See `SECURITY.md`.
 - Linked artifacts respect `SURFACE_LINK_ROOTS` (colon-separated allow-list) when set.
 - `.env` has OPENROUTER and webhook credentials; never commit it.
 - `.mcp.json` is gitignored.

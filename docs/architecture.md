@@ -113,7 +113,7 @@ The webhook is one of three delivery modes for `surface_action` events (see "Thr
 
 ## Security boundary
 
-Surface binds to `127.0.0.1` by default. Non-loopback binds require `SURFACE_TOKEN`; Surface refuses to boot otherwise. Loopback requests skip auth; non-loopback requests must present the token via `Authorization: Bearer` or `?token=`.
+Surface binds to `127.0.0.1` by default. Loopback requests are trusted unless `SURFACE_TRUST_LOOPBACK=0` (required when fronting Surface with a same-host reverse proxy). Non-loopback access is authenticated by one-time pairing tokens exchanged for durable sessions: a `surface_session` HttpOnly cookie for browsers (the right transport for SSE) or `Authorization: Bearer <session-token>` for CLI/agents. On non-loopback bind (or `SURFACE_PAIR_ON_START=1`) Surface mints and prints a startup pairing token + `/pair#token=…` URL. `SURFACE_TOKEN` remains valid as a static `owner` bearer for backward compatibility. Tokens are stored hashed (`sha256(serverSecret:token)`); the secret lives at `~/.surface/auth-secret` (`0600`).
 
 `SECURITY.md` documents the full threat model. Notable points:
 

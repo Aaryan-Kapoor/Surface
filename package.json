@@ -8,6 +8,7 @@
     "service": "tsx server/index.ts",
     "cli": "tsx bin/surface.ts",
     "test:artifacts": "tsx test/artifacts.ts",
+    "test:auth": "tsx test/auth.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {

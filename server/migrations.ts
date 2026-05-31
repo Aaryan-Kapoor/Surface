@@ -115,6 +115,43 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    description: "auth pairing tokens + sessions",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS auth_pairing_tokens (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          label TEXT,
+          role TEXT NOT NULL DEFAULT 'owner',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          expires_at TEXT NOT NULL,
+          consumed_at TEXT,
+          revoked_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_auth_pairing_tokens_active
+        ON auth_pairing_tokens(revoked_at, consumed_at, expires_at);
+
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          role TEXT NOT NULL DEFAULT 'owner',
+          label TEXT,
+          client_ip TEXT,
+          user_agent TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          expires_at TEXT NOT NULL,
+          last_seen_at TEXT,
+          revoked_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
+        ON auth_sessions(revoked_at, expires_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

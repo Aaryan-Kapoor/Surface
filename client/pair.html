@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Pair with this Surface</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      background: #05060a; color: #e8eaf0;
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    body { display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .card {
+      width: 100%; max-width: 380px;
+      background: rgba(18, 20, 28, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 28px 26px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+    }
+    h1 { font-size: 19px; margin: 0 0 6px; font-weight: 600; }
+    p.sub { margin: 0 0 22px; color: #9aa0ad; font-size: 13.5px; }
+    label { display: block; font-size: 12px; color: #9aa0ad; margin: 0 0 6px; letter-spacing: .02em; }
+    input {
+      width: 100%; padding: 12px 14px;
+      background: #0c0e15; color: #e8eaf0;
+      border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px;
+      font-size: 16px; letter-spacing: .12em; text-transform: uppercase;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    input:focus { outline: none; border-color: #5b8cff; }
+    .row { display: flex; gap: 10px; margin-top: 18px; }
+    button {
+      flex: 1; padding: 12px 14px; border-radius: 10px; border: 0;
+      font-size: 14px; font-weight: 600; cursor: pointer;
+    }
+    button.primary { background: #5b8cff; color: #04060d; }
+    button.primary:disabled { opacity: .55; cursor: default; }
+    button.ghost { background: rgba(255, 255, 255, 0.06); color: #e8eaf0; }
+    .msg { margin-top: 16px; font-size: 13px; min-height: 18px; }
+    .msg.error { color: #ff8087; }
+    .msg.ok { color: #62d39a; }
+    .msg.info { color: #9aa0ad; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Pair with this Surface</h1>
+    <p class="sub">Enter the one-time pairing token shown by the Surface server.</p>
+    <form id="pair-form" autocomplete="off">
+      <label for="token">Pairing token</label>
+      <input id="token" name="token" type="text" inputmode="latin" autocapitalize="characters"
+             spellcheck="false" placeholder="UKKD5N47XXZ8" maxlength="24" required>
+      <div class="row">
+        <button class="primary" id="submit" type="submit">Continue</button>
+        <button class="ghost" id="reload" type="button">Reload app</button>
+      </div>
+    </form>
+    <div class="msg info" id="msg"></div>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById("pair-form");
+      var input = document.getElementById("token");
+      var submitBtn = document.getElementById("submit");
+      var msg = document.getElementById("msg");
+
+      function setMsg(text, kind) {
+        msg.textContent = text || "";
+        msg.className = "msg " + (kind || "info");
+      }
+
+      // 1. Read the token from the URL fragment, then 2. immediately strip it so
+      // it never lingers in history, the address bar, or referrer headers.
+      var hash = window.location.hash || "";
+      var hashToken = "";
+      var m = hash.match(/(?:^#|&)token=([^&]+)/);
+      if (m) {
+        try { hashToken = decodeURIComponent(m[1]); } catch (e) { hashToken = m[1]; }
+      }
+      if (hashToken) {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+
+      function bootstrap(credential) {
+        submitBtn.disabled = true;
+        setMsg("Pairing…", "info");
+        fetch("/api/auth/bootstrap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential: credential, label: navigator.userAgent }),
+        })
+          .then(function (res) {
+            return res.json().then(function (body) { return { status: res.status, body: body }; });
+          })
+          .then(function (r) {
+            if (r.status >= 200 && r.status < 300 && r.body && r.body.authenticated) {
+              setMsg("Paired. Opening Surface…", "ok");
+              window.location.replace("/");
+              return;
+            }
+            submitBtn.disabled = false;
+            var err = (r.body && r.body.error) || "Pairing failed.";
+            setMsg(err, "error");
+          })
+          .catch(function () {
+            submitBtn.disabled = false;
+            setMsg("Server unreachable. Check your connection and try again.", "error");
+          });
+      }
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var credential = input.value.trim();
+        if (!credential) { setMsg("Enter a pairing token.", "error"); return; }
+        bootstrap(credential);
+      });
+
+      document.getElementById("reload").addEventListener("click", function () {
+        window.location.replace("/");
+      });
+
+      // 3. Prefill and auto-submit when the token arrived in the URL.
+      if (hashToken) {
+        input.value = hashToken;
+        bootstrap(hashToken);
+      } else {
+        input.focus();
+      }
+    })();
+  </script>
+</body>
+</html>

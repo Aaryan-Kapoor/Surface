@@ -74,4 +74,4 @@ surface wait --id "$ID" --action submit --timeout 3600 > /tmp/click.json &
 ## Environment
 
 - `SURFACE_URL` — base URL (default `http://127.0.0.1:3000`).
-- `SURFACE_TOKEN` — bearer token, required when Surface binds to a non-loopback address.
+- `SURFACE_TOKEN` — optional static owner bearer token for non-loopback access. Non-loopback clients otherwise pair via `/pair` (one-time token → durable session); manage with `surface auth pairing …` / `surface auth session …`.

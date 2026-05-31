@@ -20,7 +20,7 @@ Universal display for AI agents. Agents push HTML/CSS/JS to a PWA via the `surfa
 
 ## Key decisions
 
-- Binds to 127.0.0.1 by default. Non-loopback bind requires `SURFACE_TOKEN`; refuses to boot otherwise.
+- Binds to 127.0.0.1 by default. Non-loopback access uses one-time pairing tokens → durable sessions (cookie or bearer); `SURFACE_TOKEN` still works as a static owner bearer. Set `SURFACE_TRUST_LOOPBACK=0` when behind a same-host reverse proxy. See `SECURITY.md`.
 - Data lives in `~/.surface/` (`db.sqlite` + `artifacts/`). Override with `SURFACE_DATA_DIR`.
 - Surfaces render in iframes loaded from `/surfaces/:id/html` (not srcdoc) so they get a real origin for script loading
 - Preview cards use iframe thumbnails for simple surfaces, icon fallback for complex/script-heavy ones

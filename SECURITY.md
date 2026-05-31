@@ -25,14 +25,43 @@ Surface does **not** protect against:
 
 ## Exposing Surface Beyond Loopback
 
-If you set `SURFACE_BIND` to a non-loopback address (LAN IP, `0.0.0.0`, Tailscale interface, etc.), Surface refuses to start unless `SURFACE_TOKEN` is set to a non-empty value.
+Surface authenticates non-loopback access with **one-time pairing tokens** that are exchanged for **durable sessions**:
 
-Clients reaching Surface from a non-loopback address must present the token via either:
+- `pairing_tokens` are short-lived (5 min default), single-use credentials, drawn from a human-friendly alphabet, used only to establish trust.
+- `sessions` are long-lived (30 day default) credentials representing a paired browser, CLI, or agent. They are delivered as an `HttpOnly` cookie (`surface_session`) for browsers and usable as `Authorization: Bearer <session-token>` for CLI/agents.
 
-- `Authorization: Bearer <token>` header, or
-- `?token=<token>` query string.
+Only `owner`-role credentials exist today; scoped `client` roles may be added later.
 
-The recommended posture is to keep `SURFACE_BIND=127.0.0.1` and front Surface with a reverse proxy that handles TLS and authentication (Caddy, Nginx, Tailscale Funnel, Cloudflare Tunnel). Surface's own token check is a defense-in-depth measure, not a full auth system.
+Both pairing tokens and session tokens are stored only as `sha256(serverSecret:token)` hashes. The `serverSecret` lives at `~/.surface/auth-secret` (mode `0600`), so a leaked database (see below) does not directly yield usable credentials.
+
+### Pairing flow
+
+When Surface binds to a non-loopback address (or `SURFACE_PAIR_ON_START=1`), it mints and prints a one-time token at startup:
+
+```
+Surface server is ready.
+Connection string: https://surface-host
+Token: UKKD5N47XXZ8
+Pairing URL: https://surface-host/pair#token=UKKD5N47XXZ8
+```
+
+The token rides in the URL **fragment**, never the query string, so it does not reach server logs. A new browser opens `/pair`, the page strips the token from the URL, exchanges it at `POST /api/auth/bootstrap`, and receives a session cookie. Manage credentials with `surface auth pairing …` and `surface auth session …`, or the `/api/auth/*` endpoints (owner-only for management).
+
+Set `SURFACE_PUBLIC_URL` to the externally reachable origin so printed pairing URLs are clickable from another device.
+
+### Authentication order
+
+Every request resolves auth in this order: trusted loopback → `surface_session` cookie → `Authorization: Bearer <session-token>` → static `SURFACE_TOKEN` → 401. Cookies are the right transport for `EventSource`/SSE (`/stream`, `/surfaces/:id/stream`), which cannot set custom headers.
+
+`SURFACE_TOKEN` remains valid as a static `owner` Bearer credential (and via `?token=` / the legacy `surface_token` cookie) so existing CLI/agent configs keep working.
+
+### `SURFACE_TRUST_LOOPBACK` — read this before proxying
+
+Loopback (`127.0.0.1`/`::1`) is trusted unconditionally **by default** (`SURFACE_TRUST_LOOPBACK=1`).
+
+**If you front Surface with a reverse proxy on the same host (Tailscale Serve, Caddy, Nginx, Cloudflare Tunnel), every proxied request arrives from `127.0.0.1` and would be trusted with no pairing.** In that deployment you **must** set `SURFACE_TRUST_LOOPBACK=0` so Surface authenticates by session instead of by source address. Trusting loopback is only safe when Surface binds the externally reachable interface directly.
+
+The recommended posture is still to front Surface with a reverse proxy that handles TLS, set `SURFACE_TRUST_LOOPBACK=0`, and pair browsers through `/pair` over HTTPS.
 
 ## Dangerous Primitives
 

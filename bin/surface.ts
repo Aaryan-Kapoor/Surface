@@ -34,6 +34,7 @@ Commands:
   status                     Get display state
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
+  auth <pairing|session> ... Manage pairing tokens and durable sessions
   seed-demos                 Link every example demo as a tutorial surface (idempotent)
   clear-demos                Delete every surface tagged metadata.demo === true
 
@@ -65,6 +66,14 @@ const CMD_HELP: Record<string, string> = {
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
   wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
+  auth: [
+    "surface auth pairing create [--ttl 5m] [--label <l>] [--base-url <url>]",
+    "surface auth pairing list",
+    "surface auth pairing revoke <id>",
+    "surface auth session issue [--ttl 30d] [--label <l>]",
+    "surface auth session list",
+    "surface auth session revoke <id>",
+  ].join("\n"),
   "seed-demos": "surface seed-demos",
   "clear-demos": "surface clear-demos",
 };
@@ -143,6 +152,18 @@ async function readContent(flags: Record<string, string | boolean>): Promise<str
   if (flags.content === "-") return readStdin();
   if (typeof flags.content === "string") return flags.content;
   return undefined;
+}
+
+// Parse a human duration like "5m", "30d", "1h", "90s", or a bare number of
+// seconds into seconds. Returns undefined when the flag is absent.
+function parseDurationSeconds(raw: unknown): number | undefined {
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  const m = raw.trim().match(/^(\d+)\s*(s|m|h|d)?$/i);
+  if (!m) usage(`invalid duration: ${raw} (use e.g. 90s, 5m, 1h, 30d)`);
+  const n = Number(m![1]);
+  const unit = (m![2] || "s").toLowerCase();
+  const mult = unit === "d" ? 86400 : unit === "h" ? 3600 : unit === "m" ? 60 : 1;
+  return n * mult;
 }
 
 function parseMetadata(flags: Record<string, string | boolean>): Record<string, unknown> | undefined {
@@ -620,6 +641,59 @@ async function main() {
           }
         }
       }
+      return;
+    }
+
+    case "auth": {
+      const group = positional[0];
+      const action = positional[1];
+      const ttlSeconds = parseDurationSeconds(flags.ttl);
+      const label = typeof flags.label === "string" ? flags.label : undefined;
+
+      if (group === "pairing") {
+        if (action === "create") {
+          const body: Record<string, unknown> = {};
+          if (label !== undefined) body.label = label;
+          if (ttlSeconds !== undefined) body.ttlSeconds = ttlSeconds;
+          if (typeof flags["base-url"] === "string") body.baseUrl = flags["base-url"];
+          out(await call("POST", "/api/auth/pairing-token", body));
+          return;
+        }
+        if (action === "list") {
+          out(await call("GET", "/api/auth/pairing-tokens"));
+          return;
+        }
+        if (action === "revoke") {
+          const id = positional[2];
+          if (!id) usage("usage: surface auth pairing revoke <id>");
+          out(await call("POST", "/api/auth/pairing-tokens/revoke", { id }));
+          return;
+        }
+        usage("usage:\n" + CMD_HELP.auth);
+      }
+
+      if (group === "session") {
+        if (action === "issue") {
+          const body: Record<string, unknown> = {};
+          if (label !== undefined) body.label = label;
+          if (ttlSeconds !== undefined) body.ttlSeconds = ttlSeconds;
+          out(await call("POST", "/api/auth/sessions", body));
+          return;
+        }
+        if (action === "list") {
+          out(await call("GET", "/api/auth/clients"));
+          return;
+        }
+        if (action === "revoke") {
+          const id = positional[2];
+          if (!id) usage("usage: surface auth session revoke <id>");
+          out(await call("POST", "/api/auth/clients/revoke", { id }));
+          return;
+        }
+        usage("usage:\n" + CMD_HELP.auth);
+      }
+
+      usage("usage:\n" + CMD_HELP.auth);
       return;
     }
 

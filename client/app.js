@@ -1793,15 +1793,32 @@ async function render() {
 
 // ── Init ──
 
-Promise.all([
-  fetch("/display/config").then((r) => r.json()).catch(() => ({})),
-  fetch("/display/features").then((r) => r.json()).catch(() => ({ marketplace: false })),
-])
-  .then(([config, feats]) => {
-    features = { marketplace: false, ...feats };
-    applyTheme(config);
-    return render();
+function startApp() {
+  return Promise.all([
+    fetch("/display/config").then((r) => r.json()).catch(() => ({})),
+    fetch("/display/features").then((r) => r.json()).catch(() => ({ marketplace: false })),
+  ])
+    .then(([config, feats]) => {
+      features = { marketplace: false, ...feats };
+      applyTheme(config);
+      return render();
+    })
+    .catch(() => render());
+}
+
+// Auth gate: an unpaired browser (non-loopback, no session) is sent to /pair.
+// The session endpoint is public, so this only redirects on an explicit
+// `authenticated: false`; transient/network errors fall through to startApp so
+// we never bounce between / and /pair when the server is simply down.
+fetch("/api/auth/session")
+  .then((r) => r.json())
+  .then((s) => {
+    if (s && s.authenticated === false) {
+      window.location.replace("/pair");
+      return;
+    }
+    return startApp();
   })
-  .catch(() => render());
+  .catch(() => startApp());
 
 window.addEventListener("resize", () => reportPresence());
