@@ -2,6 +2,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,7 +68,7 @@ const CMD_HELP: Record<string, string> = {
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
   wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
-  pair: "surface pair [--base-url <url>] [--ttl 5m] [--label <label>] [--json]",
+  pair: "surface pair [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--label <label>] [--json] [--no-qr]",
   auth: [
     "surface auth pairing create [--ttl 5m] [--label <l>] [--base-url <url>]",
     "surface auth pairing list",
@@ -101,7 +102,7 @@ interface ParsedArgs {
 // Flags that never take a value. Anything not listed here that's followed by a
 // non-`--` token consumes that token as its value. Adding a flag here prevents
 // it from silently swallowing the next positional argument.
-const BOOLEAN_FLAGS = new Set(["help", "json", "no-ack", "no-open"]);
+const BOOLEAN_FLAGS = new Set(["help", "json", "no-ack", "no-open", "no-qr"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -208,8 +209,11 @@ function out(value: unknown) {
   else console.log(JSON.stringify(value, null, 2));
 }
 
-function printPairingLink(token: any, baseUrl: string) {
-  const pairingUrl = token?.pairingUrl || `${baseUrl.replace(/\/$/, "")}/pair#token=${token?.credential || ""}`;
+function printPairingLink(token: any, options: { baseUrl: string; hostedUrl?: string; qr?: boolean }) {
+  const directUrl = token?.pairingUrl || buildPairingUrl(options.baseUrl, token?.credential || "");
+  const pairingUrl = options.hostedUrl && token?.credential
+    ? buildHostedPairingUrl(options.hostedUrl, options.baseUrl, token.credential)
+    : directUrl;
   console.log(
     [
       "Surface pairing link",
@@ -217,9 +221,12 @@ function printPairingLink(token: any, baseUrl: string) {
       "Open this URL on the device you want to pair:",
       pairingUrl,
       "",
+      options.hostedUrl ? `Backend: ${options.baseUrl}` : "",
       `Token: ${token?.credential || ""}`,
       token?.expiresAt ? `Expires: ${token.expiresAt}` : "",
       "",
+      options.qr === false ? "" : renderTerminalQrCode(pairingUrl),
+      options.qr === false ? "" : "",
       "After pairing, the device keeps a session cookie. The one-time token cannot be reused.",
     ]
       .filter(Boolean)
@@ -625,11 +632,15 @@ async function main() {
       const ttlSeconds = parseDurationSeconds(flags.ttl);
       const label = typeof flags.label === "string" ? flags.label : "pairing link";
       const baseUrl = typeof flags["base-url"] === "string" ? flags["base-url"].replace(/\/$/, "") : BASE;
+      const hostedUrl = typeof flags["hosted-url"] === "string" ? flags["hosted-url"].replace(/\/$/, "") : undefined;
       const body: Record<string, unknown> = { label, baseUrl };
       if (ttlSeconds !== undefined) body.ttlSeconds = ttlSeconds;
       const token = await call("POST", "/api/auth/pairing-token", body);
-      if (flags.json) out(token);
-      else printPairingLink(token, baseUrl);
+      const output = hostedUrl && token?.credential
+        ? { ...token, hostedPairingUrl: buildHostedPairingUrl(hostedUrl, baseUrl, token.credential) }
+        : token;
+      if (flags.json) out(output);
+      else printPairingLink(output, { baseUrl, hostedUrl, qr: flags["no-qr"] !== true });
       return;
     }
 

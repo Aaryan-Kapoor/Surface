@@ -57,6 +57,7 @@ surface notify "deploy finished" --style success
 surface theme '{"colors":{"accent":"#ff0080"}}'
 surface wait --id <id> --action submit    # block until user clicks; exit 0 with action JSON
 surface stream                            # tail SSE events as JSONL
+surface pair --base-url http://host:3000  # print a one-time pairing URL + QR
 ```
 
 Full command reference: `surface --help` and `surface <cmd> --help`. Intent mapping: [`SKILL.md`](SKILL.md).

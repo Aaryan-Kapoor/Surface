@@ -45,12 +45,20 @@ Token: UKKD5N47XXZ8
 Pairing URL: https://surface-host/pair#token=UKKD5N47XXZ8
 ```
 
+Startup output also includes a terminal QR code for the pairing URL. If Surface binds a wildcard host such as `0.0.0.0`, the printed connection string resolves to a concrete network interface address instead of `0.0.0.0`.
+
 The token rides in the URL **fragment**, never the query string, so it does not reach server logs. A new browser opens `/pair`, the page strips the token from the URL, exchanges it at `POST /api/auth/bootstrap`, and receives a session cookie.
 
 To create another pairing link from a trusted local shell, run:
 
 ```
 surface pair --base-url https://surface-host
+```
+
+For hosted pairing pages that need to remember the backend separately, use:
+
+```
+surface pair --base-url https://backend-host --hosted-url https://surface-host
 ```
 
 Use `surface auth pairing …` and `surface auth session …` for lower-level credential management, or the `/api/auth/*` endpoints when building integrations.

@@ -7,6 +7,12 @@ import { initDb, getDb } from "./db.js";
 import { router } from "./routes.js";
 import { listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
+import {
+  buildPairingUrl,
+  formatHeadlessAccessOutput,
+  resolveConnectionString,
+  resolveListeningPort,
+} from "./startupAccess.js";
 import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,10 +33,10 @@ const TRUST_LOOPBACK = !["0", "false", "no"].includes(
   (process.env.SURFACE_TRUST_LOOPBACK || "1").toLowerCase(),
 );
 
-// Public base URL used to build pairing links. Set SURFACE_PUBLIC_URL to the
-// externally reachable origin (e.g. the Tailscale HTTPS hostname) so printed
-// pairing URLs are clickable from another device.
-const PUBLIC_BASE_URL = (process.env.SURFACE_PUBLIC_URL || `http://${BIND}:${PORT}`).replace(/\/$/, "");
+// Optional externally reachable origin (e.g. a Tailscale HTTPS hostname). When
+// unset and Surface binds a wildcard host, startup output resolves a concrete
+// interface address instead of printing unusable 0.0.0.0.
+const PUBLIC_BASE_URL = process.env.SURFACE_PUBLIC_URL?.replace(/\/$/, "");
 
 initDb();
 
@@ -133,7 +139,7 @@ app.use(router);
 app.use("/demos", express.static(path.join(__dirname, "..", "examples", "demos")));
 app.use(express.static(path.join(__dirname, "..", "client")));
 
-app.listen(PORT, BIND, () => {
+const httpServer = app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
   setThumbServerPort(PORT);
 
@@ -143,16 +149,14 @@ app.listen(PORT, BIND, () => {
   if (shouldPair) {
     try {
       const token = createPairingToken({ label: "startup" });
-      console.log(
-        [
-          "",
-          "Surface server is ready.",
-          `Connection string: ${PUBLIC_BASE_URL}`,
-          `Token: ${token.credential}`,
-          `Pairing URL: ${PUBLIC_BASE_URL}/pair#token=${token.credential}`,
-          "",
-        ].join("\n"),
-      );
+      const port = resolveListeningPort(httpServer.address(), PORT);
+      const connectionString = PUBLIC_BASE_URL || resolveConnectionString(BIND, port);
+      console.log("");
+      console.log(formatHeadlessAccessOutput({
+        connectionString,
+        token: token.credential,
+        pairingUrl: buildPairingUrl(connectionString, token.credential),
+      }));
     } catch (err) {
       console.error("[auth] failed to mint startup pairing token:", err);
     }
