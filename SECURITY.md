@@ -45,7 +45,15 @@ Token: UKKD5N47XXZ8
 Pairing URL: https://surface-host/pair#token=UKKD5N47XXZ8
 ```
 
-The token rides in the URL **fragment**, never the query string, so it does not reach server logs. A new browser opens `/pair`, the page strips the token from the URL, exchanges it at `POST /api/auth/bootstrap`, and receives a session cookie. Manage credentials with `surface auth pairing …` and `surface auth session …`, or the `/api/auth/*` endpoints (owner-only for management).
+The token rides in the URL **fragment**, never the query string, so it does not reach server logs. A new browser opens `/pair`, the page strips the token from the URL, exchanges it at `POST /api/auth/bootstrap`, and receives a session cookie.
+
+To create another pairing link from a trusted local shell, run:
+
+```
+surface pair --base-url https://surface-host
+```
+
+Use `surface auth pairing …` and `surface auth session …` for lower-level credential management, or the `/api/auth/*` endpoints when building integrations.
 
 Set `SURFACE_PUBLIC_URL` to the externally reachable origin so printed pairing URLs are clickable from another device.
 

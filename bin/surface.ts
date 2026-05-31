@@ -34,6 +34,7 @@ Commands:
   status                     Get display state
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
+  pair                       Create a one-time pairing URL for a new device
   auth <pairing|session> ... Manage pairing tokens and durable sessions
   seed-demos                 Link every example demo as a tutorial surface (idempotent)
   clear-demos                Delete every surface tagged metadata.demo === true
@@ -66,6 +67,7 @@ const CMD_HELP: Record<string, string> = {
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
   wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
+  pair: "surface pair [--base-url <url>] [--ttl 5m] [--label <label>] [--json]",
   auth: [
     "surface auth pairing create [--ttl 5m] [--label <l>] [--base-url <url>]",
     "surface auth pairing list",
@@ -99,7 +101,7 @@ interface ParsedArgs {
 // Flags that never take a value. Anything not listed here that's followed by a
 // non-`--` token consumes that token as its value. Adding a flag here prevents
 // it from silently swallowing the next positional argument.
-const BOOLEAN_FLAGS = new Set(["help", "no-ack", "no-open"]);
+const BOOLEAN_FLAGS = new Set(["help", "json", "no-ack", "no-open"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -204,6 +206,25 @@ function out(value: unknown) {
   if (value === null || value === undefined) return;
   if (typeof value === "string") console.log(value);
   else console.log(JSON.stringify(value, null, 2));
+}
+
+function printPairingLink(token: any, baseUrl: string) {
+  const pairingUrl = token?.pairingUrl || `${baseUrl.replace(/\/$/, "")}/pair#token=${token?.credential || ""}`;
+  console.log(
+    [
+      "Surface pairing link",
+      "",
+      "Open this URL on the device you want to pair:",
+      pairingUrl,
+      "",
+      `Token: ${token?.credential || ""}`,
+      token?.expiresAt ? `Expires: ${token.expiresAt}` : "",
+      "",
+      "After pairing, the device keeps a session cookie. The one-time token cannot be reused.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 function fail(err: any, code = 1): never {
@@ -597,6 +618,18 @@ async function main() {
       } else {
         await work;
       }
+      return;
+    }
+
+    case "pair": {
+      const ttlSeconds = parseDurationSeconds(flags.ttl);
+      const label = typeof flags.label === "string" ? flags.label : "pairing link";
+      const baseUrl = typeof flags["base-url"] === "string" ? flags["base-url"].replace(/\/$/, "") : BASE;
+      const body: Record<string, unknown> = { label, baseUrl };
+      if (ttlSeconds !== undefined) body.ttlSeconds = ttlSeconds;
+      const token = await call("POST", "/api/auth/pairing-token", body);
+      if (flags.json) out(token);
+      else printPairingLink(token, baseUrl);
       return;
     }
 
