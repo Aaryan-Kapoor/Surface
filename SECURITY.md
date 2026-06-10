@@ -21,7 +21,6 @@ Surface does **not** protect against:
 
 - Surface binds to `127.0.0.1` by default. Only the local host can reach the HTTP API.
 - All data lives under `~/.surface/` (override with `SURFACE_DATA_DIR`).
-- The marketplace is disabled by default.
 
 ## Exposing Surface Beyond Loopback
 

@@ -20,7 +20,7 @@ Branch: `feature/artifact-architecture`
 - Added `server/migrations.ts` with `PRAGMA user_version` framework.
 - Added `server/paths.ts` with `SURFACE_DATA_DIR` and legacy-path migration.
 - Replaced OpenClaw branding with generic `SURFACE_WEBHOOK_*` (OpenClaw env vars kept as aliases).
-- Marketplace gated behind `SURFACE_FEATURES_MARKETPLACE=1`; off by default.
+- Removed the catalog/Explore feature (routes, registry catalog, and client Explore view).
 - Updated `docs/architecture.md`, `README.md`, `AGENTS.md`, `.claude/claude.md`.
 
 ## Verified
@@ -30,7 +30,6 @@ Branch: `feature/artifact-architecture`
 - CLI smoke (isolated server on port 3099, `SURFACE_DATA_DIR=/tmp/...`) covers create / read / link / touch / update-rejection / delete.
 - `surface wait` covers live action delivery, action-name filter, pending-on-startup, timeout exit 3, `--no-ack`, reconnect across server bounce, concurrent waiters.
 - Auto-migration from legacy paths runs on first boot of fresh data dir.
-- Marketplace flag gates routes and Explore button correctly.
 - Bind hardening: `SURFACE_BIND=0.0.0.0` without `SURFACE_TOKEN` refuses to boot; with token, loopback bypasses auth, non-loopback requires `Authorization: Bearer` or `?token=`.
 
 ## QA pass

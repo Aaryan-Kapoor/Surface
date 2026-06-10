@@ -85,22 +85,12 @@ GET    /actions               List pending actions
 POST   /actions/:id/ack       Acknowledge an action
 GET    /stream                Global SSE
 GET    /surfaces/:id/stream   Per-surface SSE
-GET    /display/status / features / config
+GET    /display/status / config
 PUT    /display/config        Set theme / renderer / overlay
 POST   /display/reset / navigate / notify
 ```
 
 `PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for linked artifacts — edit the file on disk and `POST /artifacts/:id/touch` instead.
-
-## Marketplace (disabled by default)
-
-A built-in marketplace of pre-made surfaces, themes, renderers, and overlays exists in `registry/catalog.ts`. It is gated off because community-contributed renderers/overlays would run with full DOM access to the Surface origin and need a sandboxing story before being exposed.
-
-To enable for local experimentation:
-
-```bash
-SURFACE_FEATURES_MARKETPLACE=1 npm run dev
-```
 
 ## Display Control
 

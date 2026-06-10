@@ -71,9 +71,8 @@ Override the data dir with `SURFACE_DATA_DIR`. The legacy `SURFACE_WORKSPACE_DIR
 | Artifacts | `POST /artifacts`, `POST /artifacts/link`, `POST /artifacts/present-file`, `GET /artifacts`, `GET /artifacts/:id`, `PUT /artifacts/:id`, `DELETE /artifacts/:id`, `POST /artifacts/:id/touch`, `POST /artifacts/:id/rollback`, `GET /artifacts/:id/versions`, `GET /artifacts/:id/view`, `GET /artifacts/:id/files/*`, `GET /artifacts/:id/manifest` |
 | Surfaces (display projection) | `GET /surfaces`, `GET /surfaces/:id`, `GET /surfaces/:id/html`, `POST /surfaces/:id/actions`, `GET /surfaces/:id/actions`, `POST /surfaces/:id/exec`, `POST /surfaces/:id/reply`, `GET /surfaces/:id/stream` |
 | Actions queue | `GET /actions`, `POST /actions/:id/ack` |
-| Display | `GET /display/config`, `PUT /display/config`, `POST /display/reset`, `GET /display/status`, `POST /display/presence`, `POST /display/navigate`, `POST /display/notify`, `GET /display/features` |
+| Display | `GET /display/config`, `PUT /display/config`, `POST /display/reset`, `GET /display/status`, `POST /display/presence`, `POST /display/navigate`, `POST /display/notify` |
 | SSE | `GET /stream` (global) |
-| Marketplace (gated) | `/marketplace/*` returns 404 unless `SURFACE_FEATURES_MARKETPLACE=1` |
 | Proxies | `POST /api/chat` (OpenRouter), `GET /proxy/pdf`, `POST /api/nexlayer/*` |
 
 `PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for linked artifacts.
@@ -131,7 +130,7 @@ The original review surfaced more changes than this branch ships. The items belo
 - **Iframe sandboxing** — surface iframes still load same-origin and can `fetch('/artifacts')` for every other artifact. Per-surface origin or strict `sandbox` attribute is a separate refactor.
 - **XSS in `renderArtifactShell`** — title/path values injected through `JSON.stringify` inside `<script>` blocks need a safer template (e.g., `<script type="application/json">` plus DOM lookup).
 - **Legacy `surfaces` table removal** — fallback reads still happen; eager migrate and drop in a follow-up.
-- **Renderer/overlay/home → artifacts** — these slots store raw HTML in `display_config` rather than as first-class artifacts. With the marketplace gated, urgency is lower.
+- **Renderer/overlay/home → artifacts** — these slots store raw HTML in `display_config` rather than as first-class artifacts.
 - **N+1 grid fetches** — the PWA fetches each surface individually after the listing; the listing already has enough for the cards.
 - **Concurrency on workspace `update`** — multiple agents racing `artifact_update` on the same workspace artifact can silently overwrite. `If-Match` version preconditions remain a follow-up. Linked artifacts dodge this entirely since the filesystem mediates.
 - **SSE keepalive** — long-idle connections die at NAT timeouts; add a 15-30s heartbeat.

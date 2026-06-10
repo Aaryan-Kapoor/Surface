@@ -28,7 +28,6 @@ Universal display for AI agents. Agents push HTML/CSS/JS to a PWA via the `surfa
 - Webhook fan-out: structured JSON envelope to `SURFACE_WEBHOOK_URL` + `SURFACE_WEBHOOK_PATH` (default `/hooks/agent`) when token is set. `OPENCLAW_*` are legacy aliases.
 - Display control: agents own the display end-to-end — theme, navigation, notifications, JS execution
 - Theme persisted in `display_config` table, applied via CSS custom properties + raw CSS injection
-- Marketplace gated by `SURFACE_FEATURES_MARKETPLACE=1`; disabled by default.
 - Migrations: SQLite `PRAGMA user_version` via `server/migrations.ts`.
 - Linked artifacts (`source_type: "linked"`, `storage_kind: "external"`): bytes live in agent's project dir; `surface touch <id>` after edits. `update`/`rollback` return 409.
 - `SURFACE_LINK_ROOTS` (colon-separated) narrows accepted link paths if set.
