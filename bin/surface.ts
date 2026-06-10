@@ -49,6 +49,7 @@ Commands:
   reply <id> <text>          Send toast to surface
   notify <text>              Display ephemeral notification
   theme [<json>|-|reset]     Get / set / reset display theme
+  slot [<role> <id>|--clear] Show or assign display slots (renderer|home|overlay)
   status                     Get display state
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
@@ -104,6 +105,11 @@ const CMD_HELP: Record<string, string> = {
   reply: "surface reply <id> <text>",
   notify: "surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]",
   theme: "surface theme [<json>|-|reset]",
+  slot: [
+    "surface slot                          show current slot assignments",
+    "surface slot <renderer|home|overlay> <artifact-id>   make that artifact the slot",
+    "surface slot <renderer|home|overlay> --clear         vacate the slot",
+  ].join("\n"),
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
   wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
@@ -145,7 +151,7 @@ interface ParsedArgs {
 // it from silently swallowing the next positional argument.
 const BOOLEAN_FLAGS = new Set([
   "help", "json", "no-ack", "no-open", "no-qr", "include-hidden",
-  "freetext", "wait", "md", "toc", "autoplay", "loop", "user",
+  "freetext", "wait", "md", "toc", "autoplay", "loop", "user", "clear",
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.
@@ -994,6 +1000,35 @@ async function main() {
       out(await call("GET", "/display/status"));
       return;
 
+    case "slot": {
+      const role = positional[0];
+      if (!role) {
+        out(await call("GET", "/display/slots"));
+        return;
+      }
+      if (!["renderer", "home", "overlay"].includes(role)) usage("usage:\n" + CMD_HELP.slot);
+      const mergeRole = async (artifactId: string, set: boolean) => {
+        const data = await call("GET", `/artifacts/${encodeURIComponent(artifactId)}`);
+        let meta: Record<string, unknown> = {};
+        try { meta = JSON.parse(data.artifact.metadata) || {}; } catch {}
+        if (set) meta.display_role = role;
+        else delete meta.display_role;
+        await call("PUT", `/artifacts/${encodeURIComponent(artifactId)}`, { metadata: meta });
+      };
+      if (flags.clear === true) {
+        const slots = await call("GET", "/display/slots");
+        if (!slots[role]) { out({ [role]: null, note: "slot already empty" }); return; }
+        await mergeRole(slots[role], false);
+        out(await call("GET", "/display/slots"));
+        return;
+      }
+      const id = positional[1];
+      if (!id) usage("usage:\n" + CMD_HELP.slot);
+      await mergeRole(id, true);
+      out(await call("GET", "/display/slots"));
+      return;
+    }
+
     case "wait": {
       const surfaceId = typeof flags.id === "string" ? flags.id : undefined;
       const wantAction = typeof flags.action === "string" ? flags.action : undefined;
@@ -1032,43 +1067,66 @@ async function main() {
       const url = id ? `${BASE}/artifacts/${encodeURIComponent(id)}/stream` : `${BASE}/stream`;
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
-      const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("SSE body unavailable");
-      const decoder = new TextDecoder();
-      let buf = "";
-      let currentEvent = "message";
-      let dataLines: string[] = [];
+      // Reconnect with backoff until interrupted — a dropped connection (server
+      // restart, network blip) should not silently end the tail.
+      let backoff = 1000;
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl).replace(/\r$/, "");
-          buf = buf.slice(nl + 1);
-          if (line === "") {
-            if (dataLines.length > 0) {
-              const data = dataLines.join("\n");
-              let parsed: unknown = data;
-              try {
-                parsed = JSON.parse(data);
-              } catch {}
-              process.stdout.write(JSON.stringify({ event: currentEvent, data: parsed }) + "\n");
+        let res: Response;
+        try {
+          res = await fetch(url, { headers });
+        } catch {
+          await new Promise((r) => setTimeout(r, backoff));
+          backoff = Math.min(backoff * 2, 30000);
+          continue;
+        }
+        if (!res.ok || !res.body) {
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            throw new Error(`${res.status} ${res.statusText}`);
+          }
+          await new Promise((r) => setTimeout(r, backoff));
+          backoff = Math.min(backoff * 2, 30000);
+          continue;
+        }
+        backoff = 1000;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        let currentEvent = "message";
+        let dataLines: string[] = [];
+        while (true) {
+          let chunk: ReadableStreamReadResult<Uint8Array>;
+          try {
+            chunk = await reader.read();
+          } catch {
+            break;
+          }
+          if (chunk.done) break;
+          buf += decoder.decode(chunk.value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            const line = buf.slice(0, nl).replace(/\r$/, "");
+            buf = buf.slice(nl + 1);
+            if (line === "") {
+              if (dataLines.length > 0) {
+                const data = dataLines.join("\n");
+                let parsed: unknown = data;
+                try {
+                  parsed = JSON.parse(data);
+                } catch {}
+                process.stdout.write(JSON.stringify({ event: currentEvent, data: parsed }) + "\n");
+              }
+              currentEvent = "message";
+              dataLines = [];
+            } else if (line.startsWith(":")) {
+              // SSE comment / heartbeat — ignore
+            } else if (line.startsWith("event:")) {
+              currentEvent = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataLines.push(line.slice(5).trim());
             }
-            currentEvent = "message";
-            dataLines = [];
-          } else if (line.startsWith(":")) {
-            // SSE comment / heartbeat — ignore
-          } else if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            dataLines.push(line.slice(5).trim());
           }
         }
       }
-      return;
     }
 
     case "devices": {

@@ -1,12 +1,51 @@
 import { Router } from "express";
 import { getDb, getDisplayConfig, setDisplayConfig, resetDisplayConfig } from "../db.js";
-import { listArtifactCards } from "../artifacts.js";
+import { getArtifact, getArtifactFiles, getCurrentArtifactVersion, listArtifactCards, readArtifactFileContent } from "../artifacts.js";
+import type { Artifact } from "../artifacts.js";
 import { listSessions } from "../auth.js";
 import { addGlobalClient, broadcastGlobal, hasWaiter, LOCAL_TARGET } from "../sse.js";
 import { listPresence, reportPresence } from "../presence.js";
 import { deviceNameOf, targetOf } from "./helpers.js";
 
 export const displayRouter = Router();
+
+// ── Display slots (decided 2026-06: slots are artifacts) ──
+// The custom renderer, home widget, and overlay are ordinary artifacts whose
+// metadata carries display_role: "renderer" | "home" | "overlay" — versioned,
+// linkable, rollback-able. The newest non-hidden artifact with a role wins.
+
+export type SlotRole = "renderer" | "home" | "overlay";
+
+export function slotArtifact(role: SlotRole): Artifact | undefined {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT * FROM artifacts
+       WHERE deleted_at IS NULL AND json_extract(metadata, '$.display_role') = ?
+       ORDER BY updated_at DESC`,
+    )
+    .all(role) as Artifact[];
+  return rows.find((a) => {
+    try { return JSON.parse(a.metadata)?.hidden !== true; } catch { return true; }
+  });
+}
+
+function slotHtml(artifact: Artifact): string | null {
+  const version = getCurrentArtifactVersion(getDb(), artifact.id);
+  if (!version) return null;
+  const files = getArtifactFiles(getDb(), version.id);
+  const entry = files.find((f) => f.mime === "text/html" || f.path.endsWith(".html"));
+  if (!entry) return null;
+  try { return readArtifactFileContent(entry).toString("utf8"); } catch { return null; }
+}
+
+displayRouter.get("/display/slots", (_req, res) => {
+  const out: Record<string, string | null> = {};
+  for (const role of ["renderer", "home", "overlay"] as SlotRole[]) {
+    out[role] = slotArtifact(role)?.id ?? null;
+  }
+  res.json(out);
+});
 
 // Global SSE stream — connections are tagged with their delivery target so
 // directed events (--on <device>) reach only the intended screen.
@@ -34,10 +73,18 @@ displayRouter.get("/display/config", (_req, res) => {
   res.json(getDisplayConfig());
 });
 
-// Update display theme config
+// Update display theme config. The old raw-HTML slot keys are no longer
+// config — slots are artifacts now (metadata.display_role).
 displayRouter.put("/display/config", (req, res) => {
-  const config = setDisplayConfig(req.body);
+  const body = { ...req.body };
+  const rejected = ["renderer", "home", "overlay"].filter((k) => k in body);
+  for (const k of rejected) delete body[k];
+  const config = setDisplayConfig(body);
   broadcastGlobal("display_theme", config);
+  if (rejected.length) {
+    res.json({ ...config, _ignored: rejected, _hint: "slots are artifacts: set metadata.display_role on an artifact (surface slot <role> <id>)" });
+    return;
+  }
   res.json(config);
 });
 
@@ -128,8 +175,9 @@ displayRouter.post("/display/notify", (req, res) => {
 // Phase 4 (docs/display/theming.md).
 
 displayRouter.get("/display/renderer/html", (_req, res) => {
-  const config = getDisplayConfig();
-  if (!config.renderer) { res.status(404).send(""); return; }
+  const artifact = slotArtifact("renderer");
+  const html = artifact ? slotHtml(artifact) : null;
+  if (!html) { res.status(404).send(""); return; }
   const surfaces = listArtifactCards(getDb());
   const inject = `<script>
 // ── Surface Renderer API ──
@@ -175,19 +223,21 @@ window.onSurfaceChange = (handlers) => {
 };
 </script>\n`;
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(inject + config.renderer);
+  res.send(inject + html);
 });
 
 displayRouter.get("/display/home/html", (_req, res) => {
-  const config = getDisplayConfig();
-  if (!config.home) { res.status(404).send(""); return; }
+  const artifact = slotArtifact("home");
+  const html = artifact ? slotHtml(artifact) : null;
+  if (!html) { res.status(404).send(""); return; }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(config.home);
+  res.send(html);
 });
 
 displayRouter.get("/display/overlay/html", (_req, res) => {
-  const config = getDisplayConfig();
-  if (!config.overlay) { res.status(404).send(""); return; }
+  const artifact = slotArtifact("overlay");
+  const html = artifact ? slotHtml(artifact) : null;
+  if (!html) { res.status(404).send(""); return; }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(config.overlay);
+  res.send(html);
 });

@@ -7,16 +7,17 @@
     "dev": "tsx server/index.ts",
     "service": "tsx server/index.ts",
     "cli": "tsx bin/surface.ts",
+    "build:cli": "esbuild bin/surface.ts --bundle --platform=node --format=esm --outfile=dist/surface.mjs && sed -i '1s|.*|#!/usr/bin/env node|' dist/surface.mjs && chmod +x dist/surface.mjs",
+    "prepare": "npm run build:cli",
     "test:artifacts": "tsx test/artifacts.ts",
     "test:auth": "tsx test/auth.ts",
     "test:startup-access": "tsx test/startupAccess.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {
-    "surface": "./bin/surface.ts"
+    "surface": "./dist/surface.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
     "better-sqlite3": "^11.8.2",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
@@ -27,6 +28,7 @@
     "@types/express": "^5.0.2",
     "@types/node": "^22.15.3",
     "@types/uuid": "^10.0.0",
+    "esbuild": "^0.25.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   }

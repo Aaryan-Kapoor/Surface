@@ -344,6 +344,19 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
     });
     return;
   }
+  // Optional concurrency guard: If-Match pins the version this update was
+  // computed against; a mismatch means someone published in between.
+  const ifMatch = req.headers["if-match"];
+  if (existing && typeof ifMatch === "string" && ifMatch.trim()) {
+    const expected = ifMatch.trim().replace(/^"|"$/g, "");
+    if (expected !== existing.current_version_id) {
+      res.status(412).json({
+        error: "Version mismatch: the artifact changed since you read it",
+        current_version_id: existing.current_version_id,
+      });
+      return;
+    }
+  }
   try {
     const result = updateArtifact(getDb(), req.params.id, {
       title,

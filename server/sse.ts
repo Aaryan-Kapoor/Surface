@@ -21,6 +21,20 @@ const surfaceClients: Map<string, SSEClient[]> = new Map();
 
 let clientCounter = 0;
 
+// Keepalive heartbeat: a comment line every 20s so idle connections survive
+// proxies and NAT timeouts, and dead ones get detected by the TCP stack.
+const HEARTBEAT_MS = 20_000;
+setInterval(() => {
+  for (const client of globalClients) {
+    try { client.res.write(":hb\n\n"); } catch {}
+  }
+  for (const clients of surfaceClients.values()) {
+    for (const client of clients) {
+      try { client.res.write(":hb\n\n"); } catch {}
+    }
+  }
+}, HEARTBEAT_MS).unref();
+
 export function addGlobalClient(
   res: Response,
   target: string = LOCAL_TARGET,

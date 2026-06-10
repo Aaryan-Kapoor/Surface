@@ -4,6 +4,31 @@ let globalSSE = null;
 let surfaceSSE = null;
 let currentSurfaceId = null;
 let displayConfig = {};
+// Display slots are artifacts (metadata.display_role) — ids resolved by the
+// server at GET /display/slots.
+let displaySlots = { renderer: null, home: null, overlay: null };
+
+async function refreshSlots() {
+  try {
+    const next = await fetch("/display/slots").then((r) => r.json());
+    const changed = ["renderer", "home", "overlay"].filter((k) => displaySlots[k] !== next[k]);
+    displaySlots = next;
+    if (changed.includes("overlay")) renderOverlay();
+    if (changed.includes("renderer") || changed.includes("home")) render();
+    return changed.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// A surface event may have promoted/demoted a slot artifact.
+function maybeRefreshSlots(cardOrId) {
+  const id = typeof cardOrId === "string" ? cardOrId : cardOrId && cardOrId.id;
+  const meta = typeof cardOrId === "object" ? parseMetadata(cardOrId.metadata) : {};
+  const isSlotNow = meta && meta.display_role;
+  const wasSlot = id && (displaySlots.renderer === id || displaySlots.home === id || displaySlots.overlay === id);
+  if (isSlotNow || wasSlot) refreshSlots();
+}
 
 // ── postMessage bridge (iframe → server) ──
 
@@ -592,23 +617,15 @@ function applyTheme(config) {
     if (meta) meta.content = config.colors.void;
   }
 
-  // Persistent overlay (across all views)
-  renderOverlay(config);
-
-  // Refresh home widget if it changed
-  const hw = document.getElementById("home-widget");
-  if (hw && config.home) {
-    hw.src = "/display/home/html?" + Date.now();
-  } else if (hw && !config.home) {
-    hw.remove();
-  }
+  // Persistent overlay (across all views) — driven by the overlay slot.
+  renderOverlay();
 
   displayConfig = config;
 }
 
-function renderOverlay(config) {
+function renderOverlay() {
   let overlay = document.getElementById("display-overlay");
-  if (config.overlay) {
+  if (displaySlots.overlay) {
     if (!overlay) {
       overlay = document.createElement("iframe");
       overlay.id = "display-overlay";
@@ -622,16 +639,7 @@ function renderOverlay(config) {
   }
 }
 
-// ── Theme suspend/resume (for Explore view) ──
-
-function suspendTheme() {
-  const themeCSS = document.getElementById("theme-css");
-  if (themeCSS) themeCSS.disabled = true;
-  document.documentElement.removeAttribute("style");
-  document.body.removeAttribute("style");
-  const overlay = document.getElementById("display-overlay");
-  if (overlay) overlay.style.display = "none";
-}
+// ── Theme resume (re-applies after view swaps) ──
 
 function resumeTheme() {
   const themeCSS = document.getElementById("theme-css");
@@ -1010,7 +1018,7 @@ function renderGrid() {
   resumeTheme();
 
   // Custom renderer — agent controls entire grid view
-  if (displayConfig.renderer) {
+  if (displaySlots.renderer) {
     const iframe = document.createElement("iframe");
     iframe.id = "renderer-frame";
     iframe.src = "/display/renderer/html?" + Date.now();
@@ -1049,7 +1057,7 @@ function renderGrid() {
   gridView.appendChild(header);
 
   // Home widget (full HTML/JS iframe on the homescreen)
-  if (displayConfig.home) {
+  if (displaySlots.home) {
     const widget = document.createElement("iframe");
     widget.id = "home-widget";
     widget.className = "home-widget";
@@ -1076,7 +1084,7 @@ function renderGrid() {
     });
   }
 
-  if (surfaces.length === 0 && !displayConfig.home) {
+  if (surfaces.length === 0 && !displaySlots.home) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = `
@@ -1432,6 +1440,10 @@ async function renderSurface(id) {
 
   const iframe = document.createElement("iframe");
   iframe.className = "surface-frame";
+  // Same-origin by design (surface.js needs fetch/SSE); the sandbox attr still
+  // blocks top-navigation and modal abuse from surface content.
+  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
+  iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write");
   iframe.src = data.view_url || `/artifacts/${id}/view`;
   view.appendChild(iframe);
 
@@ -1505,6 +1517,7 @@ function connectGlobalSSE() {
     const meta = parseMetadata(full.metadata);
     if (meta && meta.hidden === true) return;
     surfaces.unshift(full);
+    maybeRefreshSlots(full);
     const grid = document.getElementById("surface-grid");
     if (grid) {
       const card = createCard(full, 0);
@@ -1527,6 +1540,7 @@ function connectGlobalSSE() {
   globalSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
     pulseSpace();
+    maybeRefreshSlots(data);
     const idx = surfaces.findIndex((s) => s.id === data.id);
     // A flip to metadata.hidden = true (e.g. via `surface clear-demos`) is the
     // signal to remove the card from view without deleting the artifact.
@@ -1594,6 +1608,7 @@ function connectGlobalSSE() {
   globalSSE.addEventListener("surface_deleted", (e) => {
     const data = JSON.parse(e.data);
     pulseSpace();
+    maybeRefreshSlots(data.id);
     surfaces = surfaces.filter((s) => s.id !== data.id);
     const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
     if (card) {
@@ -1672,12 +1687,9 @@ function connectGlobalSSE() {
   });
 
   globalSSE.addEventListener("display_theme", (e) => {
-    const prev = displayConfig.renderer;
     const data = JSON.parse(e.data);
     applyTheme(data);
     pulseSpace();
-    // Re-render if renderer was added/removed/changed
-    if ((prev || "") !== (data.renderer || "")) render();
   });
 }
 
@@ -1719,9 +1731,12 @@ async function render() {
 // ── Init ──
 
 function startApp() {
-  return fetch("/display/config")
-    .then((r) => r.json())
-    .then((config) => {
+  return Promise.all([
+    fetch("/display/config").then((r) => r.json()).catch(() => ({})),
+    fetch("/display/slots").then((r) => r.json()).catch(() => displaySlots),
+  ])
+    .then(([config, slots]) => {
+      displaySlots = slots;
       applyTheme(config);
       return render();
     })

@@ -72,13 +72,15 @@ Unauthenticated access is limited to the bootstrap path only:
 - `GET /api/auth/session`, which reports whether the browser already has a valid session
 - `POST /api/auth/bootstrap`, which exchanges a valid one-time pairing token for a session cookie
 
-Surface data and control routes such as `/surfaces`, `/artifacts/*`, `/stream`, `/display/*`, and credential-management endpoints still require loopback trust, a session cookie, a session bearer token, or the static `SURFACE_TOKEN`.
+Surface data and control routes such as `/artifacts/*`, `/stream`, `/display/*`, and credential-management endpoints still require loopback trust, a session cookie, or a session bearer token.
 
-### Authentication order
+### Authentication order and roles
 
-Every request resolves auth in this order: trusted loopback → `surface_session` cookie → `Authorization: Bearer <session-token>` → static `SURFACE_TOKEN` → 401. Cookies are the right transport for `EventSource`/SSE (`/stream`, `/surfaces/:id/stream`), which cannot set custom headers.
+Every request resolves auth in this order: trusted loopback → `surface_session` cookie → `Authorization: Bearer <session-token>` → 401. Cookies are the right transport for `EventSource`/SSE (`/stream`, `/artifacts/:id/stream`), which cannot set custom headers.
 
-`SURFACE_TOKEN` remains valid as a static `owner` Bearer credential (and via `?token=` / the legacy `surface_token` cookie) so existing CLI/agent configs keep working.
+Two roles (see `docs/auth/trust-model.md`): **`system`** — loopback and explicitly minted system bearers; full power. **`device`** — paired displays; viewing, clicking, workspace-artifact CRUD, presence, and display control only. Anything that touches the host filesystem (`link`, `present-file`), executes code (`exec`), drains the action inbox, writes surface state, registers bindings, or mints credentials requires `system`.
+
+The static `SURFACE_TOKEN` credential is **removed** (2026-06). A set env var is ignored with a startup warning. Remote agents mint a revocable, hashed session bearer instead: `surface auth session issue --role system --label <where>`, carried as `SURFACE_SESSION` in the agent's environment.
 
 ### `SURFACE_TRUST_LOOPBACK` — read this before proxying
 
@@ -92,13 +94,18 @@ The recommended posture is still to front Surface with a reverse proxy that hand
 
 These endpoints exist by design and exist for agent control. They are powerful enough to be worth calling out explicitly:
 
-- `POST /artifacts/present-file` reads any local file the Surface process can read and stores its content as an artifact. Anyone with API access can read SSH keys, `.env`, source files, etc.
-- `POST /artifacts/link` registers an absolute path on disk as a live artifact. The bytes are re-served on every request, so the file remains readable through Surface for the lifetime of the registration. See `SURFACE_LINK_ROOTS` below to narrow the allowed paths.
-- `POST /surfaces/:id/exec` injects arbitrary JavaScript into a surface's iframe in the user's browser.
-- `GET /proxy/pdf?url=...` is an unrestricted server-side fetch. It can reach loopback ports, RFC1918 ranges, and cloud metadata endpoints.
-- `POST /api/chat` proxies to OpenRouter using the host's `OPENROUTER_API_KEY`. Anyone with API access can spend that quota.
+- `POST /artifacts/present-file` reads any local file the Surface process can read and stores its content as an artifact. Anyone with **system-plane** access can read SSH keys, `.env`, source files, etc. (Paired devices cannot call it.)
+- `POST /artifacts/link` registers an absolute path on disk as a live artifact (system-plane only). The bytes are re-served on every request, so the file remains readable through Surface for the lifetime of the registration. See `SURFACE_LINK_ROOTS` below to narrow the allowed paths.
+- `POST /artifacts/:id/exec` injects arbitrary JavaScript into a surface's iframe in the user's browser (system-plane only).
+- `POST /artifacts/:id/bindings` registers a command Surface will execute when a user clicks (system-plane only; the command is argv-tokenized — never run through a shell — and click data only ever reaches it on stdin). Captured output lands in `~/.surface/logs/bindings/`.
+- `GET /proxy/pdf?url=...` is a server-side fetch; it refuses URLs resolving to loopback/private/metadata addresses but is still an outbound fetch on your behalf.
+- `POST /api/chat` proxies to OpenRouter using the host's `OPENROUTER_API_KEY`. Anyone with API access can spend that quota (rate-limited per minute).
 
-These are not bugs. They are why Surface requires authenticated access for non-loopback binds.
+These are not bugs; they are why the system/device split exists and why non-loopback access requires pairing.
+
+### Surface content isolation
+
+Surface HTML renders in same-origin iframes by design — the injected `surface.js` runtime needs same-origin `fetch`/SSE for state and actions. The PWA applies an iframe `sandbox` attribute that blocks top-navigation and modal abuse, but a malicious surface *script* still runs same-origin. The trust assumption is explicit: surfaces are authored by the user's own agents on the user's own machine. Don't link or present HTML from sources you don't trust. (A second-origin content domain was considered and deferred — it complicates pairing and remote access for a single-user tool; revisit if the trust assumption changes.)
 
 ## Narrowing Linked Artifacts
 

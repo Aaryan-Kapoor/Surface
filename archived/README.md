@@ -27,4 +27,6 @@ The adapter does not have its own bin entry anymore. Invoke it directly via `npx
 
 ## Restoring
 
-If you want to revive the MCP adapter as a first-class path: move `mcp.ts` back to `server/`, re-add the bin entry (`"surface-mcp": "./server/mcp.ts"`) and `"mcp"` script in `package.json`, restore the include in `tsconfig.json`, and re-document it in `INSTALL_FOR_AGENTS.md`.
+The `@modelcontextprotocol/sdk` dependency is no longer installed by default (it was dead weight for the CLI-only path). To run the adapter: `npm install @modelcontextprotocol/sdk` first.
+
+If you want to revive the MCP adapter as a first-class path: move `mcp.ts` back to `server/`, re-add the SDK to `dependencies`, re-add the bin entry (`"surface-mcp": "./server/mcp.ts"`) and `"mcp"` script in `package.json`, restore the include in `tsconfig.json`, and re-document it in `INSTALL_FOR_AGENTS.md`.
