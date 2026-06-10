@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Astronaut · 3D</title>
+<script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  model-viewer { width: 100%; height: 100%; background: transparent; --poster-color: transparent; }
+</style>
+</head>
+<body>
+<model-viewer
+  src="https://modelviewer.dev/shared-assets/models/Astronaut.glb"
+  alt="A 3D astronaut model"
+  auto-rotate
+  auto-rotate-delay="0"
+  rotation-per-second="45deg"
+  camera-controls
+  interaction-prompt="none"
+  shadow-intensity="0"
+  exposure="1"></model-viewer>
+</body>
+</html>
