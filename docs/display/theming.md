@@ -34,7 +34,7 @@ These three keys hold **raw HTML blobs stored directly in the config**, served f
 - **`GET /display/home/html`** (`server/routes.ts:1002`) returns the raw `home` HTML. The PWA mounts it as an auto-sizing iframe above the card grid (`client/app.js:1052`).
 - **`GET /display/overlay/html`** (`server/routes.ts:1009`) returns the raw `overlay` HTML. The PWA mounts it as a persistent overlay iframe (`renderOverlay`, `client/app.js:609`).
 
-All three are cache-busted with `?<timestamp>` on theme changes. Note honestly that the renderer/home/overlay are **raw HTML strings inside the display config, not first-class artifacts** — they cannot be versioned, linked from disk, thumbnailed, or rolled back like normal surfaces. This is a known design wart; see [../roadmap.md](../roadmap.md).
+All three are cache-busted with `?<timestamp>` on theme changes. Note honestly that the renderer/home/overlay are **raw HTML strings inside the display config, not first-class artifacts** — they cannot be versioned, linked from disk, thumbnailed, or rolled back like normal surfaces. **Decided (2026-06): in Phase 4 each slot becomes a first-class artifact** (an artifact whose metadata marks its display role), gaining versioning, linking, and rollback; the raw config blobs are removed. See [../roadmap.md](../roadmap.md).
 
 ## CSS layering and substrate toggle
 

@@ -10,7 +10,7 @@ Surfaces are [owned by projects](../auth/project-ownership.md), and the project 
 ```
 myapp/
   .surface/
-    config.json          # project-level settings
+    config.json          # project-level settings (e.g. bindings.enabled — the recorded wake-binding consent)
     surfaces/
       build-status.json  # one manifest per surface
       deploy-panel.json

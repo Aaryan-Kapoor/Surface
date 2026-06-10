@@ -46,7 +46,7 @@ The static `SURFACE_TOKEN` env credential (unhashed, no expiry, no revocation) i
 - Displays never use it — they pair.
 - The one legitimate remaining case, an agent on a *remote* machine (SSH dev box, container), mints a system bearer explicitly from loopback: `surface auth session create --role system --label devbox`.
 
-Migration: the static-token code path keeps working for one release with a startup deprecation warning, then is deleted along with the legacy `surface_token` cookie.
+Removal is immediate in Phase 1 (decided 2026-06): the static-token code path and the legacy `surface_token` cookie are deleted outright, with no deprecation release. The fresh-start schema reset (see [roadmap](../roadmap.md)) already breaks old configs, so there is nothing to keep compatible.
 
 ## Loopback trust caveats (unchanged)
 

@@ -31,6 +31,8 @@ A pre-registered command or webhook that Surface executes on the action's behalf
 
 Cost rationale: headless spawns consume usage/quota, so layer 2 only fires when layer 1 is absent, and it can be disabled per project (`.surface/config.json → bindings.enabled: false`) for users who never want spawned sessions.
 
+Consent (decided 2026-06): binding registration is **opt-in, asked once per project**. The first time an agent creates an interactive surface in a project, it asks the user "want clicks to wake me when I'm offline? (costs a headless session per wake)" and records the answer as `bindings.enabled` in `.surface/config.json` — durable, committed, never re-asked. Agents must not auto-register wake bindings without that recorded consent; SKILL.md carries the script.
+
 While a binding runs, the card shows "⟳ handling…" — the user sees that their click *did something*, which is what makes the loop trustworthy.
 
 ### Layer 3 — Inbox (always)

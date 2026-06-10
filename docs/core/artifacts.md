@@ -82,7 +82,7 @@ Workspace files are written under `files/` with a containment check so an artifa
 
 ## Planned changes
 
-The dual `surfaces` (legacy) / `artifacts` model is slated to be collapsed into a single artifact-first model, retiring the legacy table and the unused `sandbox_sessions`, `thumbnail_path`, and `pinned` columns. See [../roadmap.md](../roadmap.md) for the spec.
+The dual `surfaces` (legacy) / `artifacts` model is slated to be collapsed into a single artifact-first model, retiring the legacy table and the unused `sandbox_sessions`, `thumbnail_path`, and `pinned` columns. **Decided (2026-06): this happens as a fresh start** — a new single baseline migration (which also creates the Phase 2/3 `surface_state` and `surface_bindings` tables up front); a pre-baseline DB is archived to `db.sqlite.bak` at boot rather than row-migrated. See [../roadmap.md](../roadmap.md).
 
 ## Related
 - [linked-artifacts.md](linked-artifacts.md) — external/linked artifacts and the touch workflow

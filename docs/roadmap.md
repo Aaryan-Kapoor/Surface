@@ -15,16 +15,16 @@ One data model, real roles, project ownership, device management.
 
 | Work | Spec |
 |---|---|
-| Collapse the dual model: migrate legacy `surfaces` rows into artifacts at boot, drop the table; remove `/surfaces/*` API (307 redirects for one release); fold `surface_views` into artifacts (or a SQL view); drop dead schema (`sandbox_sessions`, `pinned`, `thumbnail_path`, `created_by`) | [core/artifacts.md](core/artifacts.md) |
+| **Fresh-start schema** (decided 2026-06): one new baseline migration with no legacy tables (`surfaces`, `surface_views`, `sandbox_sessions`, `pinned`, `thumbnail_path` all gone) and the Phase 2/3 tables (`surface_state`, `surface_bindings`) included up front so no inter-phase migrations are needed. An existing pre-baseline DB is archived to `db.sqlite.bak` at boot — no row migration, no `/surfaces/*` redirect shims; agents re-link/re-create surfaces | [core/artifacts.md](core/artifacts.md) |
 | Split `server/routes.ts` (1.6k lines) into routers: artifacts, display, actions, auth, integrations | — |
 | Grid list returns full card payloads (kills the client N+1) | [display/pwa.md](display/pwa.md) |
 | `project_root` column + `--agent` label on all create paths; dashboard grouping; `--project`/`--agent` filters | [auth/project-ownership.md](auth/project-ownership.md) |
 | Roles `system`/`device` + capability enforcement (incl. restricting `exec` to system); pairing defaults to `device` | [auth/trust-model.md](auth/trust-model.md) |
 | Device naming at pair time, `surface devices` list/revoke, rolling session expiry | [auth/device-pairing.md](auth/device-pairing.md) |
 | Per-device presence + `--on <device>` targeting for open/notify | [display/devices.md](display/devices.md) |
-| `SURFACE_TOKEN` deprecation warning (removal next release) | [auth/trust-model.md](auth/trust-model.md) |
+| `SURFACE_TOKEN` removed outright — no deprecation cycle (decided 2026-06); remote-machine agents mint a system bearer instead | [auth/trust-model.md](auth/trust-model.md) |
 
-**Done when:** a fresh DB has no legacy tables; a phone pairs with a name, appears in `surface devices`, and cannot exec/link/bind; `surface open x --on phone` moves only the phone; the grid loads with one fetch; all tests pass.
+**Done when:** a fresh DB has no legacy tables and a pre-baseline DB is archived (not migrated) at boot; a phone pairs with a name, appears in `surface devices`, and cannot exec/link/bind; `surface open x --on phone` moves only the phone; the grid loads with one fetch; all tests pass.
 
 ## Phase 2 — State & Templates
 
@@ -49,7 +49,7 @@ Clicks reliably reach agents — including agents that aren't running.
 | Bindings: schema, `--on-action/--run`, `surface bind/bindings/unbind`, command spawn (argv-safe, stdin batch, cwd=project_root, single-flight + coalescing, logs, `binding_status` SSE) and per-surface webhooks with retry | [interaction/bindings.md](interaction/bindings.md) |
 | Ladder semantics: waiter suppresses binding; card states (●/⟳/badge); per-project disable | [interaction/delivery-ladder.md](interaction/delivery-ladder.md) |
 | Inbox UX: pending badges, header count, session-start drain convention; TTL cleanup (handled 7d, pending 30d) | [interaction/actions-inbox.md](interaction/actions-inbox.md) |
-| SKILL.md rewrite: harness recipes (Claude Code `--resume {session} -p`, Codex `exec`, OpenClaw webhook), re-arm discipline, board/SURFACE.md conventions | [interaction/bindings.md](interaction/bindings.md#harness-recipes) |
+| SKILL.md rewrite: harness recipes (Claude Code `--resume {session} -p`, Codex `exec`, OpenClaw webhook), re-arm discipline, board/SURFACE.md conventions, **wake-binding consent: ask once per project before the first binding registration, record the answer in `.surface/config.json` (decided 2026-06)** | [interaction/bindings.md](interaction/bindings.md#harness-recipes) |
 
 **Done when:** clicking a surface with no agent alive spawns the bound command with the action batch on stdin and the card shows ⟳ then ✓; five rapid clicks cause one spawn; a waiter connected suppresses the binding; an unhandled overnight click is drained by the next morning's session.
 
@@ -61,8 +61,8 @@ Clicks reliably reach agents — including agents that aren't running.
 | Sandboxing decision: separate origin (second port) for artifact content + `renderArtifactShell` XSS fix | [operations/security.md](operations/security.md) |
 | Single-file CLI build (`esbuild --bundle`) so `surface` installs without the repo toolchain | [core/cli.md](core/cli.md) |
 | Install state out of `INSTALL_FOR_AGENTS.md` frontmatter → `~/.surface/install-state.json` (stops the by-design dirty tracked file) | [operations/install.md](operations/install.md) |
-| Remove `surfaces.db*` from repo root + gitignore; drop `suspendTheme` dead code; `SURFACE_TOKEN` removal | hygiene |
-| Renderer/home/overlay slots: become artifacts or get cut (decide) | [display/theming.md](display/theming.md) |
+| Remove `surfaces.db*` from repo root + gitignore; drop `suspendTheme` dead code | hygiene |
+| Renderer/home/overlay slots **become first-class artifacts** (decided 2026-06): versioned, listable, rollback-able like everything else; the raw HTML blobs in display config are removed | [display/theming.md](display/theming.md) |
 | If-Match preconditions on workspace `PUT` (concurrency) | [core/artifacts.md](core/artifacts.md) |
 
 ## Explicitly out of scope
