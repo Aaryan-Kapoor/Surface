@@ -132,7 +132,7 @@ Agents read via `surface actions [<id>]` or push via `surface stream`. Respond w
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) for the full picture. Quick version:
+See [`docs/README.md`](docs/README.md) for the full per-feature documentation tree ([`docs/architecture.md`](docs/architecture.md) is the orientation doc). Quick version:
 
 - One long-running service (Express 5 + better-sqlite3 + SSE) on `127.0.0.1:3000`.
 - All data under `~/.surface/` (`db.sqlite` + `artifacts/`).
