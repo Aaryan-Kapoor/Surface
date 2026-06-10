@@ -57,7 +57,10 @@ export function generateSessionToken(): string {
   return crypto.randomBytes(32).toString("base64url");
 }
 
-export type Role = "owner" | "client";
+// Two planes (docs/auth/trust-model.md): `system` is the agent plane — loopback
+// or an explicitly minted system bearer; full power. `device` is a paired
+// display — view/click only, enforced per-route.
+export type Role = "system" | "device";
 
 export const SESSION_COOKIE = "surface_session";
 export const DEFAULT_PAIRING_TTL_SECONDS = 5 * 60;
@@ -93,7 +96,9 @@ export function createPairingToken(params: {
 } = {}): CreatedPairingToken {
   const id = uuidv4();
   const credential = generatePairingCredential();
-  const role: Role = params.role === "client" ? "client" : "owner";
+  // Pairing is how displays join — tokens mint device sessions. System
+  // bearers are issued directly via createSession from the system plane.
+  const role: Role = params.role === "system" ? "system" : "device";
   const label = params.label ?? null;
   const ttl = params.ttlSeconds && params.ttlSeconds > 0 ? params.ttlSeconds : DEFAULT_PAIRING_TTL_SECONDS;
   getDb()
@@ -161,6 +166,7 @@ export interface SessionRow {
   label: string | null;
   client_ip: string | null;
   user_agent: string | null;
+  ttl_seconds: number;
   created_at: string;
   expires_at: string;
   last_seen_at: string | null;
@@ -183,12 +189,12 @@ export function createSession(params: {
 }): CreatedSession {
   const id = uuidv4();
   const token = generateSessionToken();
-  const role: Role = params.role === "client" ? "client" : "owner";
+  const role: Role = params.role === "system" ? "system" : "device";
   const ttl = params.ttlSeconds && params.ttlSeconds > 0 ? params.ttlSeconds : DEFAULT_SESSION_TTL_SECONDS;
   getDb()
     .prepare(
-      `INSERT INTO auth_sessions (id, token_hash, role, label, client_ip, user_agent, last_seen_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'))`,
+      `INSERT INTO auth_sessions (id, token_hash, role, label, client_ip, user_agent, ttl_seconds, last_seen_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now', '+' || ? || ' seconds'))`,
     )
     .run(
       id,
@@ -198,6 +204,7 @@ export function createSession(params: {
       params.clientIp ?? null,
       params.userAgent ?? null,
       ttl,
+      ttl,
     );
   const row = getDb()
     .prepare(`SELECT expires_at FROM auth_sessions WHERE id = ?`)
@@ -205,8 +212,10 @@ export function createSession(params: {
   return { id, token, role, expiresAt: row.expires_at };
 }
 
-// Verify a session token. Returns the live session row (and refreshes
-// last_seen_at) or null when the token is unknown, expired, or revoked.
+// Verify a session token. Returns the live session row or null when the token
+// is unknown, expired, or revoked. Expiry is rolling: every successful use
+// pushes expires_at out by the session's own ttl_seconds, so an active device
+// never falls off while an abandoned one ages out.
 export function verifySession(token: string): SessionRow | null {
   if (!token) return null;
   const row = getDb()
@@ -219,7 +228,12 @@ export function verifySession(token: string): SessionRow | null {
     .get(hashToken(token)) as SessionRow | undefined;
   if (!row) return null;
   getDb()
-    .prepare(`UPDATE auth_sessions SET last_seen_at = datetime('now') WHERE id = ?`)
+    .prepare(
+      `UPDATE auth_sessions
+       SET last_seen_at = datetime('now'),
+           expires_at = datetime('now', '+' || ttl_seconds || ' seconds')
+       WHERE id = ?`,
+    )
     .run(row.id);
   return row;
 }
@@ -227,7 +241,7 @@ export function verifySession(token: string): SessionRow | null {
 export function getSessionById(id: string): Omit<SessionRow, "revoked_at"> | null {
   const row = getDb()
     .prepare(
-      `SELECT id, role, label, client_ip, user_agent, created_at, expires_at, last_seen_at
+      `SELECT id, role, label, client_ip, user_agent, ttl_seconds, created_at, expires_at, last_seen_at
        FROM auth_sessions
        WHERE id = ? AND revoked_at IS NULL AND expires_at > datetime('now')`,
     )
@@ -235,16 +249,21 @@ export function getSessionById(id: string): Omit<SessionRow, "revoked_at"> | nul
   return row ?? null;
 }
 
-export function listSessions(): Omit<SessionRow, "revoked_at">[] {
+export function listSessions(opts?: { role?: Role }): Omit<SessionRow, "revoked_at">[] {
+  const where = ["revoked_at IS NULL", "expires_at > datetime('now')"];
+  const params: unknown[] = [];
+  if (opts?.role) {
+    where.push("role = ?");
+    params.push(opts.role);
+  }
   return getDb()
     .prepare(
-      `SELECT id, role, label, client_ip, user_agent, created_at, expires_at, last_seen_at
+      `SELECT id, role, label, client_ip, user_agent, ttl_seconds, created_at, expires_at, last_seen_at
        FROM auth_sessions
-       WHERE revoked_at IS NULL
-         AND expires_at > datetime('now')
+       WHERE ${where.join(" AND ")}
        ORDER BY created_at DESC`,
     )
-    .all() as Omit<SessionRow, "revoked_at">[];
+    .all(...params) as Omit<SessionRow, "revoked_at">[];
 }
 
 export function revokeSession(id: string): boolean {

@@ -135,6 +135,7 @@ const migrations: Migration[] = [
           label TEXT,
           client_ip TEXT,
           user_agent TEXT,
+          ttl_seconds INTEGER NOT NULL DEFAULT 2592000,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           expires_at TEXT NOT NULL,
           last_seen_at TEXT,

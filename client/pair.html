@@ -50,8 +50,12 @@
 <body>
   <div class="card">
     <h1>Pair with this Surface</h1>
-    <p class="sub">Enter the one-time pairing token shown by the Surface server.</p>
+    <p class="sub">Name this device, then enter the one-time pairing token shown by the Surface server.</p>
     <form id="pair-form" autocomplete="off">
+      <label for="device-name">Device name</label>
+      <input id="device-name" name="device-name" type="text" inputmode="text" autocapitalize="none"
+             spellcheck="false" placeholder="phone, desk-monitor, kitchen-tablet" maxlength="40"
+             style="text-transform:none;letter-spacing:normal;font-family:inherit;margin-bottom:14px;" required>
       <label for="token">Pairing token</label>
       <input id="token" name="token" type="text" inputmode="latin" autocapitalize="characters"
              spellcheck="false" placeholder="UKKD5N47XXZ8" maxlength="24" required>
@@ -67,8 +71,24 @@
     (function () {
       var form = document.getElementById("pair-form");
       var input = document.getElementById("token");
+      var nameInput = document.getElementById("device-name");
       var submitBtn = document.getElementById("submit");
       var msg = document.getElementById("msg");
+
+      // Friendly default device name guessed from the user agent. The user can
+      // (and should) override it — the label is how `surface devices`,
+      // revocation, and `--on <device>` targeting refer to this screen.
+      function guessDeviceName() {
+        var ua = navigator.userAgent;
+        if (/iPhone/.test(ua)) return "iphone";
+        if (/iPad/.test(ua)) return "ipad";
+        if (/Android/.test(ua)) return "android";
+        if (/Macintosh/.test(ua)) return "mac";
+        if (/Windows/.test(ua)) return "windows";
+        if (/Linux/.test(ua)) return "linux";
+        return "device";
+      }
+      nameInput.value = guessDeviceName();
 
       function setMsg(text, kind) {
         msg.textContent = text || "";
@@ -88,12 +108,13 @@
       }
 
       function bootstrap(credential) {
+        var label = (nameInput.value || "").trim() || guessDeviceName();
         submitBtn.disabled = true;
         setMsg("Pairing…", "info");
         fetch("/api/auth/bootstrap", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ credential: credential, label: navigator.userAgent }),
+          body: JSON.stringify({ credential: credential, label: label }),
         })
           .then(function (res) {
             return res.json().then(function (body) { return { status: res.status, body: body }; });
@@ -125,12 +146,15 @@
         window.location.replace("/");
       });
 
-      // 3. Prefill and auto-submit when the token arrived in the URL.
+      // 3. Prefill when the token arrived in the URL. No auto-submit: the user
+      // names the device first — that label is its identity from here on.
       if (hashToken) {
         input.value = hashToken;
-        bootstrap(hashToken);
+        setMsg("Token received. Name this device and continue.", "info");
+        nameInput.focus();
+        nameInput.select();
       } else {
-        input.focus();
+        nameInput.focus();
       }
     })();
   </script>

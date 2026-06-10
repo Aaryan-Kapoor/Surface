@@ -5,14 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Acceptance tests for the pairing/session auth system. We spawn a real server
-// with SURFACE_TRUST_LOOPBACK=0 so the auth gate is exercised even though the
-// test client connects over loopback. A static SURFACE_TOKEN is set so the test
-// can mint pairing tokens through the owner-only API to bootstrap the flow.
+// Acceptance tests for the two-plane trust model (docs/auth/trust-model.md).
+//
+// Boot 1 (trusted loopback — the agent plane): mint a system bearer, exactly
+// how an operator prepares remote access before fronting Surface with a proxy.
+// Boot 2 (SURFACE_TRUST_LOOPBACK=0 — every request must authenticate): exercise
+// pairing, device sessions, and the system/device capability split using only
+// that bearer and paired cookies.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
-const STATIC_TOKEN = "test-owner-static-token";
 
 let passed = 0;
 let failed = 0;
@@ -60,11 +62,13 @@ function makeClient(base: string) {
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
     if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
     if (opts.cookie) headers["Cookie"] = opts.cookie;
+    // Every request gets a deadline: a misbehaving endpoint (e.g. an SSE
+    // stream that should have 401'd) must fail the test, not hang it.
     const res = await fetch(`${base}${pathname}`, {
       method,
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-      signal: opts.signal,
+      signal: opts.signal ?? AbortSignal.timeout(10000),
     });
     let body: any = null;
     const text = await res.text();
@@ -100,6 +104,49 @@ async function waitForReady(req: ReturnType<typeof makeClient>, timeoutMs = 1500
   throw new Error("server did not become ready in time");
 }
 
+// Spawn tsx directly (not through npx) in its own process group so killServer
+// can take down the whole tree — killing a wrapper while the real server
+// survives is how orphaned test servers kept squatting on ports.
+function spawnServer(port: number, dataDir: string, env: Record<string, string>): ChildProcess {
+  const tsxBin = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
+  const child = spawn(tsxBin, ["server/index.ts"], {
+    cwd: REPO_ROOT,
+    detached: true,
+    env: {
+      ...process.env,
+      SURFACE_DATA_DIR: dataDir,
+      SURFACE_BIND: "127.0.0.1",
+      SURFACE_PAIR_ON_START: "0",
+      PORT: String(port),
+      ...env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout?.on("data", () => {});
+  child.stderr?.on("data", (d) => process.env.SURFACE_TEST_VERBOSE && process.stderr.write(d));
+  return child;
+}
+
+async function killServer(child: ChildProcess, port: number): Promise<void> {
+  try {
+    if (child.pid) process.kill(-child.pid, "SIGKILL");
+  } catch {
+    try { child.kill("SIGKILL"); } catch {}
+  }
+  // Wait until the port actually refuses connections so the next boot can't
+  // silently land on a survivor.
+  const start = Date.now();
+  while (Date.now() - start < 10000) {
+    try {
+      await fetch(`http://127.0.0.1:${port}/api/auth/session`, { signal: AbortSignal.timeout(500) });
+    } catch {
+      return;
+    }
+    await sleep(150);
+  }
+  throw new Error("old server still answering after kill");
+}
+
 async function main() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -109,51 +156,61 @@ async function main() {
   console.log(`\n=== Surface Auth Acceptance Tests ===`);
   console.log(`Port: ${port}  DataDir: ${dataDir}\n`);
 
-  const child: ChildProcess = spawn("npx", ["tsx", "server/index.ts"], {
-    cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      SURFACE_DATA_DIR: dataDir,
-      SURFACE_TRUST_LOOPBACK: "0",
-      SURFACE_TOKEN: STATIC_TOKEN,
-      SURFACE_BIND: "127.0.0.1",
-      SURFACE_PAIR_ON_START: "0",
-      PORT: String(port),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  child.stdout?.on("data", () => {});
-  child.stderr?.on("data", (d) => process.env.SURFACE_TEST_VERBOSE && process.stderr.write(d));
-
-  const cleanup = () => {
-    try { child.kill("SIGKILL"); } catch {}
+  let child: ChildProcess | null = null;
+  const cleanup = async () => {
+    if (child) await killServer(child, port).catch(() => {});
     try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
   };
 
   try {
+    // ── Boot 1: trusted loopback (the agent plane) ──
+    child = spawnServer(port, dataDir, {});
     await waitForReady(req);
 
-    // ── Unauthenticated baseline ──
+    const loopbackSess = await req("GET", "/api/auth/session");
+    check("loopback resolves to the system role", loopbackSess.body?.role === "system", loopbackSess.body);
+
+    const sysMint = await req("POST", "/api/auth/sessions", { body: { role: "system", label: "test-admin" } });
+    check("system bearer can be minted from loopback", sysMint.status === 200 && !!sysMint.body?.token && sysMint.body?.role === "system", sysMint.body);
+    const SYS = sysMint.body.token as string;
+
+    const aux = await req("POST", "/api/auth/sessions", { body: { role: "system", label: "logout-fodder" } });
+    const AUX = aux.body.token as string;
+
+    await killServer(child, port);
+    child = null;
+
+    // ── Boot 2: loopback untrusted — every request authenticates ──
+    child = spawnServer(port, dataDir, { SURFACE_TRUST_LOOPBACK: "0" });
+    await waitForReady(req);
+
+    const boot2Identity = await req("GET", "/api/auth/session");
+    check("boot 2 does not trust loopback", boot2Identity.body?.authenticated === false, boot2Identity.body);
+
+    // Unauthenticated baseline
     const sess0 = await req("GET", "/api/auth/session");
     check("unauthenticated session reports authenticated:false", sess0.body?.authenticated === false, sess0.body);
 
-    const surf401 = await req("GET", "/surfaces");
-    check("unauthenticated GET /surfaces is rejected", surf401.status === 401, surf401.status);
+    const cards401 = await req("GET", "/artifacts");
+    check("unauthenticated GET /artifacts is rejected", cards401.status === 401, cards401.status);
 
     const stream401 = await req("GET", "/stream");
     check("unauthenticated GET /stream is rejected", stream401.status === 401, stream401.status);
 
-    // ── Mint + one-time consumption ──
-    const mint = await req("POST", "/api/auth/pairing-token", {
-      token: STATIC_TOKEN,
-      body: { label: "Chrome on Test" },
-    });
-    check("owner can mint a pairing token", mint.status === 200 && !!mint.body?.credential, mint.body);
+    // Sessions survive restarts; the bearer minted in boot 1 still works.
+    const bearerAlive = await req("GET", "/artifacts", { token: SYS });
+    check("system bearer survives a server restart", bearerAlive.status === 200, bearerAlive.status);
+
+    // ── Mint + one-time consumption (device pairing) ──
+    const mint = await req("POST", "/api/auth/pairing-token", { token: SYS, body: { label: "phone" } });
+    check("system can mint a pairing token", mint.status === 200 && !!mint.body?.credential, mint.body);
+    check("pairing tokens mint device sessions", mint.body?.role === "device", mint.body?.role);
     check("pairing token response includes pairingUrl with fragment", typeof mint.body?.pairingUrl === "string" && mint.body.pairingUrl.includes("/pair#token="), mint.body?.pairingUrl);
     const credential = mint.body.credential as string;
 
-    const boot1 = await req("POST", "/api/auth/bootstrap", { body: { credential, label: "Chrome on Test" } });
+    const boot1 = await req("POST", "/api/auth/bootstrap", { body: { credential, label: "phone" } });
     check("one-time token creates a session", boot1.status === 200 && boot1.body?.authenticated === true, boot1.body);
+    check("paired session has the device role", boot1.body?.role === "device", boot1.body?.role);
     const sessionCookie = sessionCookieFrom(boot1);
     check("bootstrap sets surface_session cookie", !!sessionCookie, boot1.headers.get("set-cookie"));
     const bootSessionId = boot1.body?.sessionId as string;
@@ -162,65 +219,90 @@ async function main() {
     check("reused pairing token fails", boot2.status === 401, boot2.status);
 
     // ── Expired token ──
-    const mintExp = await req("POST", "/api/auth/pairing-token", { token: STATIC_TOKEN, body: { ttlSeconds: 1 } });
+    const mintExp = await req("POST", "/api/auth/pairing-token", { token: SYS, body: { ttlSeconds: 1 } });
     await sleep(1300);
     const bootExp = await req("POST", "/api/auth/bootstrap", { body: { credential: mintExp.body.credential } });
     check("expired pairing token fails", bootExp.status === 401, bootExp.status);
 
     // ── Revoked token ──
-    const mintRev = await req("POST", "/api/auth/pairing-token", { token: STATIC_TOKEN, body: {} });
-    const revT = await req("POST", "/api/auth/pairing-tokens/revoke", { token: STATIC_TOKEN, body: { id: mintRev.body.id } });
-    check("owner can revoke a pairing token", revT.body?.revoked === true, revT.body);
+    const mintRev = await req("POST", "/api/auth/pairing-token", { token: SYS, body: {} });
+    const revT = await req("POST", "/api/auth/pairing-tokens/revoke", { token: SYS, body: { id: mintRev.body.id } });
+    check("system can revoke a pairing token", revT.body?.revoked === true, revT.body);
     const bootRev = await req("POST", "/api/auth/bootstrap", { body: { credential: mintRev.body.credential } });
     check("revoked pairing token fails", bootRev.status === 401, bootRev.status);
 
-    // ── Cookie-auth ──
-    const cookieReq = await req("GET", "/surfaces", { cookie: sessionCookie! });
-    check("cookie-auth browser request passes", cookieReq.status === 200, cookieReq.status);
+    // ── Device capabilities ──
+    const cookieReq = await req("GET", "/artifacts", { cookie: sessionCookie! });
+    check("device can list surfaces", cookieReq.status === 200, cookieReq.status);
 
-    // ── Bearer-auth (directly issued session for CLI/agents) ──
-    const issued = await req("POST", "/api/auth/sessions", { token: STATIC_TOKEN, body: { label: "agent" } });
-    check("owner can issue a session directly", issued.status === 200 && !!issued.body?.token, issued.body);
-    const bearerReq = await req("GET", "/surfaces", { token: issued.body.token });
-    check("bearer-auth CLI request passes", bearerReq.status === 200, bearerReq.status);
+    const devCreate = await req("POST", "/artifacts", {
+      cookie: sessionCookie!,
+      body: { title: "From the phone", mime: "text/html", content: "<p>hi</p>" },
+    });
+    check("device can create a workspace artifact", devCreate.status === 201, { status: devCreate.status, body: devCreate.body });
+    const devArtifactId = devCreate.body?.artifact?.id as string;
 
-    // ── Paired browser can use SSE ──
-    const ac = new AbortController();
-    let sseStatus = 0;
-    let sseType = "";
-    try {
-      const sseRes = await fetch(`${base}/stream`, {
-        headers: { Cookie: sessionCookie!, Accept: "text/event-stream" },
-        signal: ac.signal,
-      });
-      sseStatus = sseRes.status;
-      sseType = sseRes.headers.get("content-type") || "";
-      ac.abort();
-    } catch {
-      ac.abort();
-    }
-    check("paired browser can open SSE /stream", sseStatus === 200 && sseType.includes("text/event-stream"), { sseStatus, sseType });
+    const devAction = await req("POST", `/artifacts/${devArtifactId}/actions`, {
+      cookie: sessionCookie!,
+      body: { action: "tap", data: { x: 1 } },
+    });
+    check("device can post an action (click)", devAction.status === 201, devAction.status);
 
-    // ── Owner can list sessions ──
-    const clients = await req("GET", "/api/auth/clients", { token: STATIC_TOKEN });
+    const devTheme = await req("PUT", "/display/config", { cookie: sessionCookie!, body: { title: "Phone set this" } });
+    check("device can use display control (theme)", devTheme.status === 200, devTheme.status);
+
+    const devLink = await req("POST", "/artifacts/link", {
+      cookie: sessionCookie!,
+      body: { path: "/etc/hostname", title: "nope" },
+    });
+    check("device cannot link disk paths", devLink.status === 403, devLink.status);
+
+    const devPresent = await req("POST", "/artifacts/present-file", {
+      cookie: sessionCookie!,
+      body: { path: "/etc/hostname" },
+    });
+    check("device cannot present files", devPresent.status === 403, devPresent.status);
+
+    const devExec = await req("POST", `/artifacts/${devArtifactId}/exec`, {
+      cookie: sessionCookie!,
+      body: { js: "1+1" },
+    });
+    check("device cannot exec JS", devExec.status === 403, devExec.status);
+
+    const devInbox = await req("GET", "/actions", { cookie: sessionCookie! });
+    check("device cannot read the action inbox", devInbox.status === 403, devInbox.status);
+
+    const devPairMint = await req("POST", "/api/auth/pairing-token", { cookie: sessionCookie!, body: {} });
+    check("device cannot mint pairing tokens", devPairMint.status === 403, devPairMint.status);
+
+    // System plane can drain what the device clicked.
+    const sysInbox = await req("GET", `/artifacts/${devArtifactId}/actions`, { token: SYS });
+    check("system reads the pending action", sysInbox.status === 200 && sysInbox.body?.some?.((a: any) => a.action === "tap"), sysInbox.body);
+
+    // ── Device registry ──
+    const devices = await req("GET", "/api/auth/devices", { token: SYS });
+    const deviceLabels = Array.isArray(devices.body) ? devices.body.map((d: any) => d.label) : [];
+    check("devices list shows the paired phone", devices.status === 200 && deviceLabels.includes("phone"), deviceLabels);
+
+    const revAmbig = await req("POST", "/api/auth/devices/revoke", { token: SYS, body: { device: "ph" } });
+    check("revoke by unambiguous label prefix works", revAmbig.status === 200 && revAmbig.body?.revoked === true, revAmbig.body);
+
+    const afterRevoke = await req("GET", "/artifacts", { cookie: sessionCookie! });
+    check("revoked device immediately loses access", afterRevoke.status === 401, afterRevoke.status);
+
+    // ── Session listing / logout ──
+    const clients = await req("GET", "/api/auth/clients", { token: SYS });
     const ids = Array.isArray(clients.body) ? clients.body.map((c: any) => c.id) : [];
-    check("owner can list active sessions", clients.status === 200 && ids.includes(bootSessionId), ids);
+    check("system can list active sessions", clients.status === 200 && !ids.includes(bootSessionId), ids);
 
-    // ── Revoked session immediately loses access ──
-    const revS = await req("POST", "/api/auth/clients/revoke", { token: STATIC_TOKEN, body: { id: bootSessionId } });
-    check("owner can revoke a session", revS.body?.revoked === true, revS.body);
-    const afterRevoke = await req("GET", "/surfaces", { cookie: sessionCookie! });
-    check("revoked session immediately loses access", afterRevoke.status === 401, afterRevoke.status);
-
-    // ── Logout clears the issued bearer session ──
-    const logout = await req("POST", "/api/auth/logout", { token: issued.body.token });
+    const logout = await req("POST", "/api/auth/logout", { token: AUX });
     check("logout revokes the current session", logout.body?.revoked === true, logout.body);
-    const afterLogout = await req("GET", "/surfaces", { token: issued.body.token });
+    const afterLogout = await req("GET", "/artifacts", { token: AUX });
     check("logged-out bearer token loses access", afterLogout.status === 401, afterLogout.status);
 
     console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
   } finally {
-    cleanup();
+    await cleanup();
   }
 
   process.exit(failed === 0 ? 0 : 1);

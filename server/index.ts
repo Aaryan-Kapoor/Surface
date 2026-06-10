@@ -1,5 +1,4 @@
 import "dotenv/config";
-import crypto from "crypto";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -18,9 +17,13 @@ import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thu
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const BIND = process.env.SURFACE_BIND || "127.0.0.1";
-// SURFACE_TOKEN remains valid as a static "owner" bearer credential alongside
-// the pairing/session system, so existing CLI/agent configs keep working.
-const STATIC_TOKEN = process.env.SURFACE_TOKEN || "";
+
+if (process.env.SURFACE_TOKEN) {
+  console.warn(
+    "[auth] SURFACE_TOKEN is no longer supported and is ignored. " +
+    "Remote agents mint a system bearer instead: surface auth session issue --role system",
+  );
+}
 
 const LOOPBACK_ADDRS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"]);
 const isLoopbackBind = LOOPBACK_ADDRS.has(BIND);
@@ -63,43 +66,14 @@ function isPublicRequest(req: express.Request): boolean {
   return false;
 }
 
-function constantTimeEquals(a: string, b: string): boolean {
-  if (!a || !b) return false;
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ab, bb);
-}
-
-// Match the static SURFACE_TOKEN via Bearer header, ?token= query, or the
-// legacy surface_token cookie. A valid query token also (re)sets the cookie so
-// a browser opening `http://host:port/?token=...` once keeps working.
-function staticTokenMatch(req: express.Request, res: express.Response): boolean {
-  if (!STATIC_TOKEN) return false;
-  const bearer = (req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-  const query = typeof req.query.token === "string" ? req.query.token : "";
-  const legacyCookie = readCookie(req.header("Cookie"), "surface_token");
-  const ok =
-    constantTimeEquals(bearer, STATIC_TOKEN) ||
-    constantTimeEquals(query, STATIC_TOKEN) ||
-    constantTimeEquals(legacyCookie, STATIC_TOKEN);
-  if (!ok) return false;
-  if (constantTimeEquals(query, STATIC_TOKEN) && !constantTimeEquals(legacyCookie, STATIC_TOKEN)) {
-    res.append(
-      "Set-Cookie",
-      `surface_token=${encodeURIComponent(STATIC_TOKEN)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
-    );
-  }
-  return true;
-}
-
 // Auth resolution order: trusted loopback → session cookie → session bearer →
-// static SURFACE_TOKEN → public handshake endpoints → 401. On success
-// `req.auth` carries the resolved role for downstream owner-only checks.
+// public handshake endpoints → 401. On success `req.auth` carries the resolved
+// role for downstream system-only checks. Loopback IS the agent plane: same
+// uid, same machine, full power (docs/auth/trust-model.md).
 app.use((req, res, next) => {
   const remote = req.socket.remoteAddress || "";
   if (TRUST_LOOPBACK && LOOPBACK_ADDRS.has(remote)) {
-    (req as any).auth = { role: "owner", via: "loopback" };
+    (req as any).auth = { role: "system", via: "loopback" };
     return next();
   }
 
@@ -107,7 +81,7 @@ app.use((req, res, next) => {
   if (cookieToken) {
     const session = verifySession(cookieToken);
     if (session) {
-      (req as any).auth = { role: session.role, sessionId: session.id, via: "cookie" };
+      (req as any).auth = { role: session.role, sessionId: session.id, label: session.label, via: "cookie" };
       return next();
     }
   }
@@ -116,14 +90,9 @@ app.use((req, res, next) => {
   if (bearer) {
     const session = verifySession(bearer);
     if (session) {
-      (req as any).auth = { role: session.role, sessionId: session.id, via: "bearer" };
+      (req as any).auth = { role: session.role, sessionId: session.id, label: session.label, via: "bearer" };
       return next();
     }
-  }
-
-  if (staticTokenMatch(req, res)) {
-    (req as any).auth = { role: "owner", via: "static-token" };
-    return next();
   }
 
   if (isPublicRequest(req)) return next();

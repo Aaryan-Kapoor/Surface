@@ -8,7 +8,10 @@ import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "..
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BASE = (process.env.SURFACE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
-const TOKEN = process.env.SURFACE_TOKEN || "";
+// Loopback callers need no credential. A remote agent (SSH box, container)
+// carries a system bearer minted from the system plane:
+//   surface auth session issue --role system --label devbox
+const TOKEN = process.env.SURFACE_SESSION || "";
 
 const HELP = `surface — universal display CLI
 
@@ -37,15 +40,17 @@ Commands:
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
   pair                       Create a one-time pairing URL for a new device
+  devices [revoke <name>]    List paired displays / revoke one by name
   auth <pairing|session> ... Manage pairing tokens and durable sessions
   seed-demos                 Link every example demo as a tutorial surface (idempotent)
-  clear-demos                Delete every surface tagged metadata.demo === true
+  clear-demos                Hide every surface tagged metadata.demo === true (seed-demos revives them)
 
 Run "surface <command> --help" for command-specific options.
 
 Environment:
-  SURFACE_URL    base URL (default: http://127.0.0.1:3000)
-  SURFACE_TOKEN  bearer token for non-loopback access
+  SURFACE_URL      base URL (default: http://127.0.0.1:3000)
+  SURFACE_SESSION  session bearer for non-loopback access
+                   (mint with: surface auth session issue --role system)
 `;
 
 const CMD_HELP: Record<string, string> = {
@@ -69,12 +74,13 @@ const CMD_HELP: Record<string, string> = {
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
   wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
-  pair: "surface pair [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--label <label>] [--json] [--no-qr]",
+  pair: "surface pair [--name <device-name>] [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--json] [--no-qr]",
+  devices: "surface devices [revoke <name-or-id>]",
   auth: [
     "surface auth pairing create [--ttl 5m] [--label <l>] [--base-url <url>]",
     "surface auth pairing list",
     "surface auth pairing revoke <id>",
-    "surface auth session issue [--ttl 30d] [--label <l>]",
+    "surface auth session issue [--role system|device] [--ttl 30d] [--label <l>]",
     "surface auth session list",
     "surface auth session revoke <id>",
   ].join("\n"),
@@ -660,7 +666,8 @@ async function main() {
 
     case "pair": {
       const ttlSeconds = parseDurationSeconds(flags.ttl);
-      const label = typeof flags.label === "string" ? flags.label : "pairing link";
+      const label = typeof flags.name === "string" ? flags.name
+        : typeof flags.label === "string" ? flags.label : "pairing link";
       const baseUrl = typeof flags["base-url"] === "string" ? flags["base-url"].replace(/\/$/, "") : BASE;
       const hostedUrl = typeof flags["hosted-url"] === "string" ? flags["hosted-url"].replace(/\/$/, "") : undefined;
       const body: Record<string, unknown> = { label, baseUrl };
@@ -718,6 +725,41 @@ async function main() {
       return;
     }
 
+    case "devices": {
+      if (positional[0] === "revoke") {
+        const target = positional[1];
+        if (!target) usage("usage: surface devices revoke <name-or-id>");
+        out(await call("POST", "/api/auth/devices/revoke", { device: target }));
+        return;
+      }
+      const devices: any[] = await call("GET", "/api/auth/devices");
+      if (flags.json) { out(devices); return; }
+      if (devices.length === 0) {
+        console.log("No paired devices. Pair one with: surface pair --name <device-name>");
+        return;
+      }
+      const rows = devices.map((d) => ({
+        label: d.label || d.id.slice(0, 8),
+        seen: d.last_seen_at ? d.last_seen_at + "Z" : null,
+        ip: d.client_ip || "",
+        expires: d.expires_at,
+      }));
+      const ago = (iso: string | null) => {
+        if (!iso) return "never";
+        const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+        if (mins < 2) return "live";
+        if (mins < 60) return `${mins}m ago`;
+        if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+        return `${Math.floor(mins / 1440)}d ago`;
+      };
+      const w = Math.max(5, ...rows.map((r) => r.label.length)) + 2;
+      console.log(`${"LABEL".padEnd(w)}${"LAST SEEN".padEnd(12)}${"IP".padEnd(18)}EXPIRES`);
+      for (const r of rows) {
+        console.log(`${r.label.padEnd(w)}${ago(r.seen).padEnd(12)}${r.ip.padEnd(18)}${r.expires}`);
+      }
+      return;
+    }
+
     case "auth": {
       const group = positional[0];
       const action = positional[1];
@@ -751,6 +793,7 @@ async function main() {
           const body: Record<string, unknown> = {};
           if (label !== undefined) body.label = label;
           if (ttlSeconds !== undefined) body.ttlSeconds = ttlSeconds;
+          if (typeof flags.role === "string") body.role = flags.role;
           out(await call("POST", "/api/auth/sessions", body));
           return;
         }

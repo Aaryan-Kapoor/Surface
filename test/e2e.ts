@@ -147,7 +147,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       return JSON.stringify(await res.json());
     }
     case "surface_list": {
-      const res = await fetch(`${SURFACE_URL}/surfaces`);
+      const res = await fetch(`${SURFACE_URL}/artifacts`);
       return JSON.stringify(await res.json());
     }
     default:
@@ -198,13 +198,13 @@ async function main() {
 
   // Verify server is running
   try {
-    await fetch(`${SURFACE_URL}/surfaces`);
+    await fetch(`${SURFACE_URL}/artifacts`);
   } catch {
     console.error("Surface server not running! Start with: npm run dev");
     process.exit(1);
   }
 
-  const beforeListRes = await fetch(`${SURFACE_URL}/surfaces`);
+  const beforeListRes = await fetch(`${SURFACE_URL}/artifacts`);
   const beforeSurfaces = await beforeListRes.json() as Array<{ id: string }>;
   const beforeIds = new Set(beforeSurfaces.map((surface) => surface.id));
 
@@ -216,7 +216,7 @@ async function main() {
   console.log(`  LLM response: ${t1.slice(0, 150)}...`);
 
   // Verify surface was created
-  const listRes = await fetch(`${SURFACE_URL}/surfaces`);
+  const listRes = await fetch(`${SURFACE_URL}/artifacts`);
   const surfaces = await listRes.json() as Array<{ id: string; title: string }>;
   console.log(`  Surfaces after create: ${surfaces.length}`);
   const createdSurface = surfaces.find((surface) => !beforeIds.has(surface.id));
@@ -246,10 +246,10 @@ async function main() {
   console.log(`  LLM response: ${t3.slice(0, 150)}...`);
 
   // Verify update
-  const readRes = await fetch(`${SURFACE_URL}/surfaces/${surfaceId}`);
-  const updated = await readRes.json() as { html: string };
-  const hasReset = updated.html.toLowerCase().includes("reset") ||
-                   updated.html.includes("= 0");
+  const readRes = await fetch(`${SURFACE_URL}/artifacts/${surfaceId}/files/index.html`);
+  const updatedHtml = await readRes.text();
+  const hasReset = updatedHtml.toLowerCase().includes("reset") ||
+                   updatedHtml.includes("= 0");
   console.log(`  Updated HTML contains reset: ${hasReset}`);
   console.log("  PASS\n");
 
@@ -262,7 +262,7 @@ async function main() {
   console.log(`  LLM response: ${t4.slice(0, 150)}...`);
 
   // Verify deletion
-  const listRes2 = await fetch(`${SURFACE_URL}/surfaces`);
+  const listRes2 = await fetch(`${SURFACE_URL}/artifacts`);
   const surfacesAfter = await listRes2.json() as Array<unknown>;
   const testSurfaceGone = !surfacesAfter.some((s: any) => s.id === surfaceId);
   console.log(`  Surface deleted: ${testSurfaceGone}`);

@@ -109,12 +109,16 @@ export const router = Router();
 
 // ── Auth (pairing tokens + sessions) ──
 // The global session middleware in index.ts has already resolved req.auth for
-// every request that reaches here (loopback, cookie, or bearer). Owner-only
-// management endpoints re-check that role explicitly.
+// every request that reaches here (loopback, cookie, or bearer).
+//
+// Capability enforcement (docs/auth/trust-model.md): anything that touches the
+// host filesystem, executes code, drains the agent inbox, or mints credentials
+// requires the `system` role. Paired `device` sessions keep viewing, clicking,
+// workspace-artifact CRUD, presence, and display control.
 
-function requireOwner(req: any, res: any): boolean {
-  if (req.auth && req.auth.role === "owner") return true;
-  res.status(403).json({ error: "Owner role required" });
+function requireSystem(req: any, res: any): boolean {
+  if (req.auth && req.auth.role === "system") return true;
+  res.status(403).json({ error: "System role required" });
   return false;
 }
 
@@ -208,7 +212,7 @@ router.post("/api/auth/bootstrap", (req: any, res) => {
 });
 
 router.post("/api/auth/pairing-token", (req: any, res) => {
-  if (!requireOwner(req, res)) return;
+  if (!requireSystem(req, res)) return;
   const label = typeof req.body?.label === "string" ? req.body.label : null;
   const ttlSeconds = Number.isFinite(req.body?.ttlSeconds) ? Number(req.body.ttlSeconds) : undefined;
   const token = createPairingToken({ label, ttlSeconds });
@@ -222,12 +226,12 @@ router.post("/api/auth/pairing-token", (req: any, res) => {
 });
 
 router.get("/api/auth/pairing-tokens", (req: any, res) => {
-  if (!requireOwner(req, res)) return;
+  if (!requireSystem(req, res)) return;
   res.json(listPairingTokens());
 });
 
 router.post("/api/auth/pairing-tokens/revoke", (req: any, res) => {
-  if (!requireOwner(req, res)) return;
+  if (!requireSystem(req, res)) return;
   const id = typeof req.body?.id === "string" ? req.body.id : "";
   if (!id) {
     res.status(400).json({ error: "Missing id" });
@@ -237,11 +241,14 @@ router.post("/api/auth/pairing-tokens/revoke", (req: any, res) => {
 });
 
 router.post("/api/auth/sessions", (req: any, res) => {
-  if (!requireOwner(req, res)) return;
+  if (!requireSystem(req, res)) return;
   const label = typeof req.body?.label === "string" ? req.body.label : null;
   const ttlSeconds = Number.isFinite(req.body?.ttlSeconds) ? Number(req.body.ttlSeconds) : undefined;
+  // The one legitimate remote-agent path: mint a system bearer from the system
+  // plane (e.g. loopback) and carry it to the SSH box / container.
+  const role = req.body?.role === "system" ? "system" as const : "device" as const;
   const session = createSession({
-    role: "owner",
+    role,
     label,
     clientIp: clientIp(req),
     userAgent: req.headers["user-agent"] || null,
@@ -250,13 +257,54 @@ router.post("/api/auth/sessions", (req: any, res) => {
   res.json({ id: session.id, token: session.token, role: session.role, expiresAt: session.expiresAt });
 });
 
+// ── Devices (paired display sessions) ──
+
+router.get("/api/auth/devices", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  res.json(listSessions({ role: "device" }).map((s) => ({
+    id: s.id,
+    label: s.label,
+    client_ip: s.client_ip,
+    user_agent: s.user_agent,
+    created_at: s.created_at,
+    last_seen_at: s.last_seen_at,
+    expires_at: s.expires_at,
+  })));
+});
+
+// Revoke by exact id, exact label, or unambiguous case-insensitive label
+// prefix. Ambiguity errors out with the candidate list rather than guessing.
+router.post("/api/auth/devices/revoke", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  const target = typeof req.body?.device === "string" ? req.body.device.trim() : "";
+  if (!target) {
+    res.status(400).json({ error: "Missing device (id or label)" });
+    return;
+  }
+  const devices = listSessions({ role: "device" });
+  const lower = target.toLowerCase();
+  let matches = devices.filter((d) => d.id === target || (d.label || "").toLowerCase() === lower);
+  if (matches.length === 0) {
+    matches = devices.filter((d) => (d.label || "").toLowerCase().startsWith(lower));
+  }
+  if (matches.length === 0) {
+    res.status(404).json({ error: `No device matches "${target}"`, devices: devices.map((d) => d.label || d.id) });
+    return;
+  }
+  if (matches.length > 1) {
+    res.status(400).json({ error: `"${target}" is ambiguous`, matches: matches.map((d) => d.label || d.id) });
+    return;
+  }
+  res.json({ revoked: revokeSession(matches[0].id), device: matches[0].label || matches[0].id });
+});
+
 router.get("/api/auth/clients", (req: any, res) => {
-  if (!requireOwner(req, res)) return;
+  if (!requireSystem(req, res)) return;
   res.json(listSessions());
 });
 
 router.post("/api/auth/clients/revoke", (req: any, res) => {
-  if (!requireOwner(req, res)) return;
+  if (!requireSystem(req, res)) return;
   const id = typeof req.body?.id === "string" ? req.body.id : "";
   if (!id) {
     res.status(400).json({ error: "Missing id" });
@@ -308,7 +356,8 @@ router.get("/artifacts", (req, res) => {
   res.json(listArtifactCards(getDb(), { includeHidden, project, agent }));
 });
 
-router.post("/artifacts/present-file", (req, res) => {
+router.post("/artifacts/present-file", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // reads the host filesystem
   const { path: filePath, title, metadata, copy, open, project_root } = req.body;
   if (!filePath) {
     res.status(400).json({ error: "path is required" });
@@ -325,7 +374,8 @@ router.post("/artifacts/present-file", (req, res) => {
   }
 });
 
-router.post("/artifacts/link", (req, res) => {
+router.post("/artifacts/link", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // serves files straight off the disk
   const { path: linkPath, entry, title, metadata, open, project_root } = req.body;
   if (!linkPath) {
     res.status(400).json({ error: "path is required" });
@@ -689,17 +739,21 @@ router.post("/artifacts/:id/actions", (req, res) => {
   res.status(201).json(act);
 });
 
-// Agent reads pending actions
-router.get("/actions", (_req, res) => {
+// Agent reads pending actions — the inbox belongs to the agent plane; a device
+// must never drain it.
+router.get("/actions", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   res.json(getPendingActions());
 });
 
-router.get("/artifacts/:id/actions", (req, res) => {
+router.get("/artifacts/:id/actions", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   res.json(getPendingActions(req.params.id));
 });
 
 // Agent acknowledges an action
-router.post("/actions/:id/ack", (req, res) => {
+router.post("/actions/:id/ack", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   const acked = ackAction(req.params.id);
   if (!acked) {
     res.status(404).json({ error: "Action not found" });
@@ -709,7 +763,8 @@ router.post("/actions/:id/ack", (req, res) => {
 });
 
 // Agent replies to a surface (shown as toast in the PWA)
-router.post("/artifacts/:id/reply", (req, res) => {
+router.post("/artifacts/:id/reply", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   if (!getArtifact(getDb(), req.params.id)) {
     res.status(404).json({ error: "Artifact not found" });
     return;
@@ -724,8 +779,9 @@ router.post("/artifacts/:id/reply", (req, res) => {
   res.json({ sent: true });
 });
 
-// Execute JS in a surface iframe
-router.post("/artifacts/:id/exec", (req, res) => {
+// Execute JS in a surface iframe — code execution, system plane only.
+router.post("/artifacts/:id/exec", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   if (!getArtifact(getDb(), req.params.id)) {
     res.status(404).json({ error: "Artifact not found" });
     return;
