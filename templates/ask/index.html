@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #0a0a0a;
+    color: #ededec;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    overflow-y: auto;
+  }
+  .card {
+    width: 100%;
+    max-width: 780px;
+    margin: auto;
+    padding: 44px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .kicker {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: rgba(237,237,236,.52);
+  }
+  .badge {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: rgba(237,237,236,.72);
+    border: 1px solid rgba(255,255,255,.14);
+    border-radius: 999px;
+    padding: 4px 11px;
+    background: rgba(18,20,28,.8);
+  }
+  .question {
+    margin: 0;
+    font-size: clamp(24px, 4.4vw, 40px);
+    font-weight: 650;
+    line-height: 1.16;
+    letter-spacing: -.015em;
+    overflow-wrap: anywhere;
+  }
+  .answered .question { opacity: .55; }
+  .expired .question {
+    text-decoration: line-through;
+    text-decoration-color: rgba(237,237,236,.45);
+    opacity: .55;
+  }
+
+  .context {
+    background: rgba(18,20,28,.8);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 14px;
+    padding: 6px 20px;
+    max-height: 38vh;
+    overflow: auto;
+    font-size: 14.5px;
+    line-height: 1.6;
+    color: rgba(237,237,236,.86);
+  }
+  .answered .context, .expired .context { opacity: .45; }
+  .context h1, .context h2, .context h3, .context h4 { color: #ededec; line-height: 1.25; margin: 1.1em 0 .45em; }
+  .context h1 { font-size: 1.35em; } .context h2 { font-size: 1.2em; }
+  .context h3 { font-size: 1.05em; } .context h4 { font-size: 1em; }
+  .context p { margin: .7em 0; }
+  .context a { color: #ededec; text-decoration: underline; text-decoration-color: rgba(237,237,236,.35); }
+  .context code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .9em;
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.06);
+    border-radius: 6px;
+    padding: .12em .4em;
+  }
+  .context pre {
+    background: rgba(0,0,0,.5);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 10px;
+    padding: 14px 16px;
+    overflow: auto;
+  }
+  .context pre code { background: none; border: 0; padding: 0; font-size: 13px; line-height: 1.55; }
+  .context ul, .context ol { margin: .7em 0; padding-left: 1.4em; }
+  .context li { margin: .25em 0; }
+  .context blockquote {
+    margin: .8em 0;
+    padding: .1em 1em;
+    border-left: 2px solid rgba(255,255,255,.18);
+    color: rgba(237,237,236,.62);
+  }
+  .context table { border-collapse: collapse; margin: .8em 0; width: 100%; font-size: .95em; }
+  .context th, .context td { border: 1px solid rgba(255,255,255,.08); padding: 6px 10px; text-align: left; }
+  .context th {
+    color: rgba(237,237,236,.52);
+    font-weight: 600;
+    font-size: .85em;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+  }
+  .context hr { border: 0; border-top: 1px solid rgba(255,255,255,.08); margin: 1em 0; }
+  .context img { max-width: 100%; border-radius: 8px; }
+
+  .options { display: flex; flex-wrap: wrap; gap: 10px; }
+  .opt {
+    font: inherit;
+    font-size: 15px;
+    font-weight: 550;
+    color: #ededec;
+    background: rgba(18,20,28,.8);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px;
+    padding: 12px 22px;
+    cursor: pointer;
+    transition: border-color .15s ease, box-shadow .15s ease, opacity .2s ease, transform .06s ease;
+  }
+  .opt:hover:not(:disabled) { border-color: rgba(255,255,255,.32); box-shadow: 0 0 22px rgba(255,255,255,.07); }
+  .opt:active:not(:disabled) { transform: scale(.985); }
+  .opt:disabled { cursor: default; }
+  .opt.selected { border-color: rgba(255,255,255,.4); }
+  .answered .opt { opacity: .3; }
+  .answered .opt.chosen {
+    opacity: 1;
+    border-color: rgba(255,255,255,.65);
+    background: rgba(255,255,255,.09);
+    box-shadow: 0 0 28px rgba(255,255,255,.14);
+  }
+  .expired .options, .expired .freetext { opacity: .4; pointer-events: none; }
+  .answered .freetext { opacity: .55; }
+
+  .freetext { display: flex; gap: 10px; }
+  .freetext input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 15px;
+    color: #ededec;
+    background: rgba(18,20,28,.8);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px;
+    padding: 12px 16px;
+    outline: none;
+  }
+  .freetext input::placeholder { color: rgba(237,237,236,.34); }
+  .freetext input:focus { border-color: rgba(255,255,255,.3); box-shadow: 0 0 22px rgba(255,255,255,.06); }
+  .freetext input:disabled { opacity: .6; }
+  .send {
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    color: #0b0b0c;
+    background: #ededec;
+    border: 0;
+    border-radius: 12px;
+    padding: 12px 22px;
+    cursor: pointer;
+    transition: opacity .15s ease, box-shadow .15s ease;
+  }
+  .send:hover:not(:disabled) { box-shadow: 0 0 24px rgba(255,255,255,.22); }
+  .send:disabled { opacity: .35; cursor: default; }
+
+  .meta { font-size: 13px; color: rgba(237,237,236,.52); }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="top">
+      <span class="kicker">Ask</span>
+      <span class="badge" id="badge" style="display:none">Expired</span>
+    </div>
+    <h1 class="question">{{question}}</h1>
+    <div class="context" id="context">{{{context_md}}}</div>
+    <div class="options" id="options"></div>
+    <div class="freetext" id="freetext">
+      <input id="answer-input" type="text" placeholder="Type an answer…" autocomplete="off">
+      <button id="send-btn" class="send" type="button">Send</button>
+    </div>
+    <div class="meta" id="meta" style="display:none"></div>
+  </main>
+
+  <script>
+  (function () {
+    function init() {
+      var Surface = window.Surface || {
+        state: {},
+        onState: function () { return function () {}; },
+        action: function () { return Promise.resolve(); }
+      };
+      var P = window.__TEMPLATE_PARAMS || {};
+      var options = Array.isArray(P.options) ? P.options.map(String) : [];
+      var freetext = !!P.freetext;
+      var expiresAt = P.expires_at ? Date.parse(String(P.expires_at)) : NaN;
+
+      var ctx = document.getElementById("context");
+      var optsEl = document.getElementById("options");
+      var ftRow = document.getElementById("freetext");
+      var input = document.getElementById("answer-input");
+      var send = document.getElementById("send-btn");
+      var badge = document.getElementById("badge");
+      var meta = document.getElementById("meta");
+
+      var selected = null;
+      var locked = false;
+
+      if (!String(P.context_md || "").trim()) ctx.style.display = "none";
+
+      options.forEach(function (opt) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "opt";
+        b.textContent = opt;
+        b.addEventListener("click", function () {
+          if (locked) return;
+          selected = opt;
+          var kids = optsEl.children;
+          for (var i = 0; i < kids.length; i++) kids[i].classList.toggle("selected", kids[i] === b);
+          var text = freetext && input.value.trim() ? input.value.trim() : null;
+          Surface.action("answer", { choice: opt, text: text });
+        });
+        optsEl.appendChild(b);
+      });
+      if (!options.length) optsEl.style.display = "none";
+
+      function submitText() {
+        if (locked) return;
+        var v = input.value.trim();
+        if (!v) return;
+        Surface.action("answer", { choice: selected, text: v });
+      }
+
+      if (!freetext) {
+        ftRow.style.display = "none";
+      } else {
+        input.addEventListener("input", function () {
+          send.disabled = locked || !input.value.trim();
+        });
+        input.addEventListener("keydown", function (e) {
+          if (e.key === "Enter") submitText();
+        });
+        send.addEventListener("click", submitText);
+        send.disabled = true;
+      }
+
+      function fmtTime(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return "";
+        var sameDay = d.toDateString() === new Date().toDateString();
+        return sameDay
+          ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      }
+
+      function render() {
+        var st = Surface.state || {};
+        var status = String(st.status || "open");
+        var answered = status === "answered";
+        var expired = !answered && (status === "expired" || (!isNaN(expiresAt) && Date.now() > expiresAt));
+        locked = answered || expired;
+
+        document.body.classList.toggle("answered", answered);
+        document.body.classList.toggle("expired", expired);
+        badge.style.display = expired ? "" : "none";
+
+        var btns = optsEl.querySelectorAll(".opt");
+        for (var i = 0; i < btns.length; i++) {
+          btns[i].disabled = locked;
+          btns[i].classList.remove("chosen");
+        }
+        if (freetext) {
+          input.disabled = locked;
+          send.disabled = locked || !input.value.trim();
+        }
+
+        if (answered) {
+          var a = st.answer || {};
+          if (a.choice != null) {
+            for (var j = 0; j < btns.length; j++) {
+              if (btns[j].textContent === String(a.choice)) btns[j].classList.add("chosen");
+            }
+          }
+          if (a.text && freetext && !input.value) input.value = String(a.text);
+          var line = "answered" + (a.device ? " from " + a.device : "");
+          var t = a.answered_at ? fmtTime(a.answered_at) : "";
+          if (t) line += " · " + t;
+          if (a.text && !freetext) line += ' · "' + String(a.text) + '"';
+          meta.textContent = line;
+          meta.style.display = "";
+        } else {
+          meta.style.display = "none";
+        }
+      }
+
+      Surface.onState(function () { render(); });
+      render();
+      setInterval(render, 30000);
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  })();
+  </script>
+</body>
+</html>

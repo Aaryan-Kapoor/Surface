@@ -1,0 +1,18 @@
+{
+  "name": "board",
+  "description": "Ambient multi-agent status board — each top-level state key is one agent's section",
+  "params": {
+    "title": {
+      "type": "string",
+      "default": "Agent Board",
+      "description": "Board header title"
+    },
+    "stale_after_min": {
+      "type": "number",
+      "default": 30,
+      "description": "Minutes without an update before a section dims as stale"
+    }
+  },
+  "state": {},
+  "actions": ["open_section"]
+}

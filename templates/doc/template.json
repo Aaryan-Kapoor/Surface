@@ -1,0 +1,32 @@
+{
+  "name": "doc",
+  "description": "Rendered markdown document with reading typography, optional table of contents, and live reload",
+  "params": {
+    "content_url": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "URL of the raw markdown file; supplied implicitly by the engine at render time"
+    },
+    "title": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Optional slim header title; hidden when empty"
+    },
+    "toc": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "Show a sticky sidebar listing h1-h3 with anchor links (hidden below 900px viewports)"
+    },
+    "width": {
+      "type": "string",
+      "required": false,
+      "default": "default",
+      "description": "Reading measure: narrow (55ch), default (72ch), or wide (95ch)"
+    }
+  },
+  "state": {},
+  "actions": []
+}
