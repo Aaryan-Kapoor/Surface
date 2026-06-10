@@ -1,37 +1,33 @@
 # Surface
 
-Universal display for AI agents. Agents push HTML/CSS/JS to a PWA via the `surface` CLI (canonical) or HTTP directly. Discovery via `SKILL.md` at the repo root.
+Universal display for AI agents. Agents push surfaces via the `surface` CLI (canonical) or HTTP directly. Discovery via `SKILL.md` at the repo root; per-feature docs in `docs/`.
 
 ## Stack
 
-- **Server**: Express 5 + SQLite (better-sqlite3) + SSE live updates
-- **Client**: Vanilla JS PWA, hash routing, sandboxed iframes via `src=/surfaces/:id/html`
-- **CLI**: `bin/surface.ts` — canonical agent interface, mirrors HTTP API as subcommands
-- **Agent contract**: `SKILL.md` (when/how) + `INSTALL_FOR_AGENTS.md` (bootstrap + tutorial state)
-- **MCP**: archived at `archived/mcp.ts` — kept for legacy users, not the recommended path
-- **Runtime**: `tsx` for dev server and CLI
+- **Server**: Express 5 + SQLite (better-sqlite3) + SSE; routers in `server/routes/`
+- **Client**: Vanilla JS PWA + `client/surface.js` runtime injected into surface HTML
+- **CLI**: `bin/surface.ts`, bundled to `dist/surface.mjs` on install (`prepare` → `build:cli`)
+- **Agent contract**: `SKILL.md` (when/how) + `INSTALL_FOR_AGENTS.md` (bootstrap; state in `~/.surface/install-state.json`)
+- **Templates**: `templates/` built-ins (ask, stream, video, board, doc); project/user overrides
+- **MCP**: archived at `archived/mcp.ts`; SDK not installed by default
+- **Runtime**: `tsx` for dev server; tests in `test/`
 
 ## Commands
 
-- `npm run dev` — start server on 127.0.0.1:3000
-- `npm run cli` — invoke CLI from source
-- `npm run test:artifacts` — artifact HTTP regression test
-- `npm run test:e2e` — end-to-end test via OpenRouter
+- `npm run dev` — server on 127.0.0.1:3000
+- `npm run test:artifacts` (needs running server) · `npm run test:auth` (self-contained) · `npm run test:startup-access`
+- `npx tsc --noEmit`
 
 ## Key decisions
 
-- Binds to 127.0.0.1 by default. Non-loopback access uses one-time pairing tokens → durable sessions (cookie or bearer); `SURFACE_TOKEN` still works as a static owner bearer. Set `SURFACE_TRUST_LOOPBACK=0` when behind a same-host reverse proxy. See `SECURITY.md`.
-- Data lives in `~/.surface/` (`db.sqlite` + `artifacts/`). Override with `SURFACE_DATA_DIR`.
-- Surfaces render in iframes loaded from `/surfaces/:id/html` (not srcdoc) so they get a real origin for script loading
-- Preview cards use iframe thumbnails for simple surfaces, icon fallback for complex/script-heavy ones
-- PDF embedding uses server-side `/proxy/pdf?url=` proxy + PDF.js v3 canvas rendering
-- Webhook fan-out: structured JSON envelope to `SURFACE_WEBHOOK_URL` + `SURFACE_WEBHOOK_PATH` (default `/hooks/agent`) when token is set. `OPENCLAW_*` are legacy aliases.
-- Display control: agents own the display end-to-end — theme, navigation, notifications, JS execution
-- Theme persisted in `display_config` table, applied via CSS custom properties + raw CSS injection
-- Migrations: SQLite `PRAGMA user_version` via `server/migrations.ts`.
-- Linked artifacts (`source_type: "linked"`, `storage_kind: "external"`): bytes live in agent's project dir; `surface touch <id>` after edits. `update`/`rollback` return 409.
-- `SURFACE_LINK_ROOTS` (colon-separated) narrows accepted link paths if set.
-- `.env` has OPENROUTER and webhook credentials — never commit
+- Two-plane auth: loopback = `system` (agents, full power); paired displays = `device` (view/click/workspace-CRUD/display control only). `SURFACE_TOKEN` removed — remote agents use `SURFACE_SESSION` bearers (`surface auth session issue --role system`). `SURFACE_TRUST_LOOPBACK=0` behind same-host proxies.
+- Fresh-start schema: baseline migration v10; pre-baseline `~/.surface/db.sqlite` archived to `.bak` at boot, not migrated.
+- Artifacts only (no legacy `surfaces`); cards from one `GET /artifacts` fetch; surfaces owned by `project_root` (git root), agents are `metadata.agent` labels.
+- Per-surface JSON state (`surface set/patch` → `state_patch` SSE) + `surface.js` bindings; templates instantiate to normal artifacts and re-render idempotently.
+- Delivery ladder: `surface wait` (waiter suppresses bindings) → `surface bind` (argv-safe spawn, action batch on stdin, single-flight + coalescing, logs in `~/.surface/logs/bindings/`) → inbox (badges; TTL 7d/30d).
+- Display slots (renderer/home/overlay) are artifacts with `metadata.display_role` (`surface slot`).
+- Surfaces render from real routes with a `sandbox` iframe attr; PDF via SSRF-guarded `/proxy/pdf`; linked artifacts respect `SURFACE_LINK_ROOTS`.
+- `.env` has OPENROUTER and webhook credentials — never commit.
 
 ## Conventions
 
