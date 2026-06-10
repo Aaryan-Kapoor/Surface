@@ -64,12 +64,12 @@ const CMD_HELP: Record<string, string> = {
   versions: "surface versions <id>",
   rollback: "surface rollback <id> <version>",
   delete: "surface delete <id>",
-  open: "surface open [<id>]",
+  open: "surface open [<id>] [--on <device>]",
   exec: "surface exec <id> [--js <code>|--file <path>|--js -]",
   actions: "surface actions [<id>]",
   ack: "surface ack <action-id>",
   reply: "surface reply <id> <text>",
-  notify: "surface notify <text> [--style info|success|warning|error] [--duration <ms>]",
+  notify: "surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]",
   theme: "surface theme [<json>|-|reset]",
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
@@ -456,7 +456,9 @@ async function main() {
 
     case "open": {
       const id = positional[0];
-      out(await call("POST", "/display/navigate", { surface_id: id }));
+      const body: Record<string, unknown> = { surface_id: id };
+      if (typeof flags.on === "string") body.device = flags.on;
+      out(await call("POST", "/display/navigate", body));
       return;
     }
 
@@ -500,6 +502,7 @@ async function main() {
       const body: Record<string, unknown> = { text };
       if (typeof flags.style === "string") body.style = flags.style;
       if (typeof flags.duration === "string") body.duration = Number(flags.duration);
+      if (typeof flags.on === "string") body.device = flags.on;
       out(await call("POST", "/display/notify", body));
       return;
     }
@@ -738,24 +741,25 @@ async function main() {
         console.log("No paired devices. Pair one with: surface pair --name <device-name>");
         return;
       }
-      const rows = devices.map((d) => ({
-        label: d.label || d.id.slice(0, 8),
-        seen: d.last_seen_at ? d.last_seen_at + "Z" : null,
-        ip: d.client_ip || "",
-        expires: d.expires_at,
-      }));
       const ago = (iso: string | null) => {
         if (!iso) return "never";
         const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
-        if (mins < 2) return "live";
+        if (mins < 2) return "just now";
         if (mins < 60) return `${mins}m ago`;
         if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
         return `${Math.floor(mins / 1440)}d ago`;
       };
+      const rows = devices.map((d) => ({
+        label: d.label || d.id.slice(0, 8),
+        seen: d.connected ? "live" : ago(d.last_seen_at ? d.last_seen_at + "Z" : null),
+        viewing: d.viewing || "—",
+        ip: d.client_ip || "",
+      }));
       const w = Math.max(5, ...rows.map((r) => r.label.length)) + 2;
-      console.log(`${"LABEL".padEnd(w)}${"LAST SEEN".padEnd(12)}${"IP".padEnd(18)}EXPIRES`);
+      const v = Math.max(7, ...rows.map((r) => r.viewing.length)) + 2;
+      console.log(`${"LABEL".padEnd(w)}${"LAST SEEN".padEnd(12)}${"VIEWING".padEnd(v)}IP`);
       for (const r of rows) {
-        console.log(`${r.label.padEnd(w)}${ago(r.seen).padEnd(12)}${r.ip.padEnd(18)}${r.expires}`);
+        console.log(`${r.label.padEnd(w)}${r.seen.padEnd(12)}${r.viewing.padEnd(v)}${r.ip}`);
       }
       return;
     }

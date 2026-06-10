@@ -1,0 +1,404 @@
+import { Router } from "express";
+import fs from "fs";
+import path from "path";
+import { getDb } from "../db.js";
+import {
+  createArtifact,
+  deleteArtifact,
+  getArtifact,
+  getArtifactFile,
+  getCurrentArtifactVersion,
+  inferMime,
+  isLinkedArtifact,
+  linkArtifact,
+  listArtifactCards,
+  listArtifactVersions,
+  normalizeArtifactPath,
+  presentFile,
+  readArtifact,
+  readArtifactFileContent,
+  setCurrentArtifactVersion,
+  touchArtifact,
+  updateArtifact,
+} from "../artifacts.js";
+import { addSurfaceClient, broadcastGlobal, broadcastToSurface } from "../sse.js";
+import { enqueueThumb, hasThumb, getThumbPath } from "../thumbs.js";
+import { defaultPathForMime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
+import { requireSystem, targetOf } from "./helpers.js";
+
+export const artifactsRouter = Router();
+
+// Full card payload for SSE listeners. Includes hidden rows so clients can see
+// a hidden=true update and remove the card themselves (the default list
+// filters them out).
+export function cardPayload(id: string) {
+  const card = listArtifactCards(getDb(), { includeHidden: true }).find((item) => item.id === id);
+  return card || { id };
+}
+
+// Per-surface SSE stream
+artifactsRouter.get("/artifacts/:id/stream", (req: any, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  addSurfaceClient(req.params.id, res, targetOf(req));
+});
+
+// Card list — the one fetch the dashboard grid needs.
+artifactsRouter.get("/artifacts", (req, res) => {
+  const includeHidden = req.query.include_hidden === "1" || req.query.include_hidden === "true";
+  const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
+  const agent = typeof req.query.agent === "string" && req.query.agent ? req.query.agent : undefined;
+  res.json(listArtifactCards(getDb(), { includeHidden, project, agent }));
+});
+
+artifactsRouter.post("/artifacts/present-file", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // reads the host filesystem
+  const { path: filePath, title, metadata, copy, open, project_root } = req.body;
+  if (!filePath) {
+    res.status(400).json({ error: "path is required" });
+    return;
+  }
+  try {
+    const result = presentFile(getDb(), { filePath, title, metadata, copy, open, project_root });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
+    enqueueThumb(result.artifact.id);
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+artifactsRouter.post("/artifacts/link", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // serves files straight off the disk
+  const { path: linkPath, entry, title, metadata, open, project_root } = req.body;
+  if (!linkPath) {
+    res.status(400).json({ error: "path is required" });
+    return;
+  }
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+  try {
+    const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata, project_root });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
+    enqueueThumb(result.artifact.id);
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
+  const ok = touchArtifact(getDb(), req.params.id);
+  if (!ok) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  const artifact = getArtifact(getDb(), req.params.id);
+  broadcastGlobal("surface_updated", cardPayload(req.params.id));
+  broadcastToSurface(req.params.id, "surface_updated", {
+    id: req.params.id,
+    title: artifact?.title,
+    metadata: artifact?.metadata,
+    updated_at: artifact?.updated_at,
+    reload: true,
+  });
+  enqueueThumb(req.params.id);
+  res.json({ touched: true });
+});
+
+artifactsRouter.post("/artifacts", (req, res) => {
+  const { id, title, kind, mime, source_type, metadata, files, content, path: filePath, project_root } = req.body;
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+  if (source_type === "linked") {
+    res.status(400).json({ error: "Use POST /artifacts/link to create linked artifacts" });
+    return;
+  }
+  const inputFiles = Array.isArray(files)
+    ? files
+    : content !== undefined
+      ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
+      : [];
+  try {
+    const result = createArtifact(getDb(), {
+      id,
+      title,
+      kind,
+      mime,
+      source_type,
+      project_root,
+      metadata,
+      files: inputFiles,
+      reason: "artifact_create",
+    });
+    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    enqueueThumb(result.artifact.id);
+    res.status(201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+artifactsRouter.get("/artifacts/:id", (req, res) => {
+  const result = readArtifact(getDb(), req.params.id);
+  if (!result) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  res.json({
+    ...result,
+    preview_url: `/artifacts/${result.artifact.id}/view?preview=1`,
+    view_url: `/artifacts/${result.artifact.id}/view`,
+  });
+});
+
+artifactsRouter.get("/artifacts/:id/versions", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  res.json(listArtifactVersions(getDb(), req.params.id));
+});
+
+artifactsRouter.post("/artifacts/:id/rollback", (req, res) => {
+  const { version } = req.body;
+  if (version === undefined) {
+    res.status(400).json({ error: "version is required" });
+    return;
+  }
+  const existing = getArtifact(getDb(), req.params.id);
+  if (isLinkedArtifact(existing)) {
+    res.status(409).json({ error: "Linked artifacts have no version history; git is the source of truth." });
+    return;
+  }
+  const result = setCurrentArtifactVersion(getDb(), req.params.id, version);
+  if (!result) {
+    res.status(404).json({ error: "Artifact version not found" });
+    return;
+  }
+  broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+  broadcastToSurface(result.artifact.id, "surface_updated", {
+    id: result.artifact.id,
+    title: result.artifact.title,
+    metadata: result.artifact.metadata,
+    updated_at: result.artifact.updated_at,
+    version_id: result.version?.id,
+    reload: true,
+  });
+  enqueueThumb(result.artifact.id);
+  res.json(result);
+});
+
+artifactsRouter.put("/artifacts/:id", (req, res) => {
+  const { title, kind, mime, metadata, files, content, path: filePath, reason } = req.body;
+  const inputFiles = Array.isArray(files)
+    ? files
+    : content !== undefined
+      ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
+      : undefined;
+  const existing = getArtifact(getDb(), req.params.id);
+  if (isLinkedArtifact(existing) && inputFiles) {
+    res.status(409).json({
+      error: "Linked artifacts are edited on disk. Use POST /artifacts/:id/touch after editing.",
+    });
+    return;
+  }
+  try {
+    const result = updateArtifact(getDb(), req.params.id, {
+      title,
+      kind,
+      mime,
+      metadata,
+      files: inputFiles,
+      reason: reason || "artifact_update",
+    });
+    if (!result) {
+      res.status(404).json({ error: "Artifact not found" });
+      return;
+    }
+    broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+    broadcastToSurface(result.artifact.id, "surface_updated", {
+      id: result.artifact.id,
+      title: result.artifact.title,
+      metadata: result.artifact.metadata,
+      updated_at: result.artifact.updated_at,
+      version_id: result.version?.id,
+      reload: true,
+    });
+    if (inputFiles) enqueueThumb(result.artifact.id);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+artifactsRouter.delete("/artifacts/:id", (req, res) => {
+  const deleted = deleteArtifact(getDb(), req.params.id);
+  if (!deleted) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+  broadcastGlobal("surface_deleted", { id: req.params.id });
+  res.json({ deleted: true });
+});
+
+artifactsRouter.get("/artifacts/:id/manifest", (req, res) => {
+  const version = getCurrentArtifactVersion(getDb(), req.params.id);
+  if (!version) {
+    res.status(404).json({ error: "Artifact version not found" });
+    return;
+  }
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.send(version.manifest_json);
+});
+
+artifactsRouter.get("/artifacts/:id/view", (req, res) => {
+  const result = readArtifact(getDb(), req.params.id);
+  if (!result || !result.version) {
+    res.status(404).send("Artifact not found");
+    return;
+  }
+  const preferred = pickRenderableFile(result.files, result.artifact.mime);
+  if (!preferred) {
+    res.status(404).send("Artifact has no files");
+    return;
+  }
+  const isPreview = req.query.preview === "1";
+  const fileUrl = `/artifacts/${encodeURIComponent(result.artifact.id)}/files/${preferred.path.split("/").map(encodeURIComponent).join("/")}`;
+
+  if (preferred.mime === "text/html") {
+    res.redirect(fileUrl);
+    return;
+  }
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(renderArtifactShell({
+    artifactId: result.artifact.id,
+    title: result.artifact.title,
+    mime: preferred.mime || result.artifact.mime || inferMime(preferred.path),
+    filePath: preferred.path,
+    fileUrl,
+    preview: isPreview,
+  }));
+});
+
+artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
+  const result = readArtifact(getDb(), req.params.id);
+  if (!result || !result.version) {
+    res.status(404).send("Artifact not found");
+    return;
+  }
+  const mime = result.artifact.mime || "";
+  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
+
+  if (req.query.regenerate === "1") {
+    try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+    enqueueThumb(req.params.id);
+    res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+    res.send(renderThumbPlaceholder({
+      title: result.artifact.title || "Untitled",
+      mime,
+    }));
+    return;
+  }
+
+  if (hasThumb(req.params.id)) {
+    try {
+      res.setHeader("Content-Type", "image/png");
+      res.send(fs.readFileSync(getThumbPath(req.params.id)));
+      return;
+    } catch {}
+  }
+
+  if (mime.startsWith("image/")) {
+    const preferred =
+      result.files.find((f) => f.path === "index.html") ||
+      result.files.find((f) => f.mime === mime) ||
+      result.files[0];
+    if (preferred) {
+      try {
+        const bytes = readArtifactFileContent(preferred);
+        res.setHeader("Content-Type", preferred.mime || mime);
+        res.send(bytes);
+        return;
+      } catch {}
+    }
+  }
+
+  enqueueThumb(req.params.id);
+  res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
+  res.send(renderThumbPlaceholder({
+    title: result.artifact.title || "Untitled",
+    mime,
+  }));
+});
+
+artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
+  const artifactId = req.params[0];
+  const filePath = req.params[1].split("/").map(decodeURIComponent).join("/");
+  try {
+    const file = getArtifactFile(getDb(), artifactId, filePath);
+    if (file) {
+      const contentType = file.mime || inferMime(file.path);
+      const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
+      res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
+      res.send(readArtifactFileContent(file));
+      return;
+    }
+    // Linked-artifact fallback: serve any file under workspace_path that wasn't pre-registered.
+    const artifact = getArtifact(getDb(), artifactId);
+    if (isLinkedArtifact(artifact) && artifact!.workspace_path) {
+      let normalized: string;
+      try {
+        normalized = normalizeArtifactPath(filePath);
+      } catch {
+        res.status(400).send("Invalid path");
+        return;
+      }
+      const root = path.resolve(artifact!.workspace_path);
+      const abs = path.resolve(root, normalized);
+      const sep = root.endsWith(path.sep) ? root : root + path.sep;
+      if (abs !== root && !abs.startsWith(sep)) {
+        res.status(403).send("Path escapes linked root");
+        return;
+      }
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+        res.status(404).send("File not found");
+        return;
+      }
+      // Resolve symlinks and re-verify containment — a symlink inside the linked
+      // dir that points outside it must not leak host files.
+      let realAbs: string;
+      let realRoot: string;
+      try {
+        realAbs = fs.realpathSync(abs);
+        realRoot = fs.realpathSync(root);
+      } catch {
+        res.status(404).send("File not found");
+        return;
+      }
+      const realSep = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
+      if (realAbs !== realRoot && !realAbs.startsWith(realSep)) {
+        res.status(403).send("Path escapes linked root");
+        return;
+      }
+      const mime = inferMime(realAbs);
+      const charset = mime.startsWith("text/") || mime === "application/json" || mime === "image/svg+xml";
+      res.setHeader("Content-Type", charset ? `${mime}; charset=utf-8` : mime);
+      res.send(fs.readFileSync(realAbs));
+      return;
+    }
+    res.status(404).send("Artifact file not found");
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});

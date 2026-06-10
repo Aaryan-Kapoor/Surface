@@ -3,7 +3,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initDb, getDb } from "./db.js";
-import { router } from "./routes.js";
+import { router } from "./routes/index.js";
 import { listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
 import {
