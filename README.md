@@ -1,16 +1,73 @@
-# Surface
+<div align="center">
 
-**The last app.** A universal display that AI agents own end-to-end.
+<img src="docs/assets/banner.svg" alt="Surface — the universal display for AI agents. An agent pushes content from a terminal; clicks flow back." width="100%">
 
-Instead of installing a weather app, a reading app, a game app — you have one Surface. Agents decide what goes on it.
+<br>
+<br>
 
-> "Surface me a game."
+**The last app.** One self-hosted display that AI agents own end-to-end:
+they push UI onto it, you tap it from any screen you own, and the tap finds
+its way back to an agent — even one that exited hours ago.
+
+[Quick start](#quick-start) ·
+[Connect an agent](#connect-an-agent) ·
+[The loop](#the-loop-clicks-always-come-back) ·
+[CLI](#the-cli) ·
+[HTTP API](#direct-http) ·
+[Docs](docs/README.md)
+
+</div>
+
+---
+
+## Why
+
+You don't need a weather app, a reading app, a kanban app, a game app. You
+need **one display** and an agent that can fill it:
+
+> "Surface me a pomodoro."
 > "Put today's paper on my surface."
-> "Make my surface look cyberpunk."
+> "Ask me before shipping — I'll be on my phone."
 
-Single deployment, single user. Self-hosted. Open source. Agents push content via a single shared CLI — no per-agent protocol.
+Agents can already write anything. What they're missing is a *place*: a
+persistent screen that outlives the session, follows you to your phone and
+TV, and carries your clicks back. Surface is that place. Single user,
+single deployment, all data on your machine, MIT-licensed.
 
-## Quick Start
+## What it feels like
+
+**A question that waits for you.** The agent puts a question on every
+screen you own and blocks until you answer — from your desk or your phone:
+
+```bash
+surface ask "Ship release v2.4.0 to production?" --options ship,hold --wait
+# … you tap [ship] on your phone …
+# → {"choice": "ship", "answered_at": "…", "device": "phone"}   exit 0
+```
+
+**A build you can watch from the couch.** Pipe any process into a live,
+scrolling, ANSI-colored stream surface; update a progress bar with one line:
+
+```bash
+surface create "Build" --id build --template stream
+make 2>&1 | surface append build -
+surface set build progress 0.92
+```
+
+**An approval at 11pm, hours after the agent exited.** Register a binding
+when you create the surface; when a click arrives and nobody is listening,
+Surface revives the exact session that has the context:
+
+```bash
+surface bind deploy-panel --action "approve|hold" \
+  --run 'claude -p --resume <session-id> "Handle the Surface action batch on stdin."'
+```
+
+The card shows **⟳ handling…** while the spawned session works, and the
+click is acknowledged when it's done. Nothing is fire-and-forget; nothing
+is lost.
+
+## Quick start
 
 ```bash
 git clone https://github.com/Aaryan-Kapoor/Surface.git
@@ -26,56 +83,121 @@ For a persistent Linux user service:
 systemctl --user status surface.service --no-pager
 ```
 
-Make the `surface` CLI available on `$PATH`:
+Put the single-file CLI on your `$PATH` (built automatically on install):
 
 ```bash
 npm link
 surface --help
 ```
 
-Surface binds to `127.0.0.1` by default and stores all data under `~/.surface/`. See [SECURITY.md](SECURITY.md) before exposing it beyond loopback.
+Surface binds to `127.0.0.1` and stores everything under `~/.surface/`.
+Read [SECURITY.md](SECURITY.md) before exposing it beyond loopback.
 
-## Connect an Agent
+**Extra screens** pair in seconds — `surface pair --name kitchen-tablet`
+prints a one-time URL + QR; the device names itself and shows up in
+`surface devices`, individually revocable, targetable with `--on`.
 
-The agent contract is two files:
+## Connect an agent
 
-- **[`SKILL.md`](SKILL.md)** — what `surface` does, when to use each command. Copy this into your agent's skills directory.
-- **[`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md)** — first-time bootstrap routine, including a tutorial flow for new users.
+The agent contract is two files — no MCP servers, no per-agent protocol,
+nothing to register. Any agent that can run a shell command (Claude Code,
+Cursor, Codex CLI, Aider, a cron script) works identically:
 
-Tell your agent: *"Read INSTALL_FOR_AGENTS.md and follow it."* Any agent that can run a shell command (Claude Code, Cursor, Codex CLI, Aider, custom scripts) works the same way.
+- **[`SKILL.md`](SKILL.md)** — what `surface` does and when to reach for
+  each command. Drop it into your agent's skills directory.
+- **[`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md)** — the first-run
+  bootstrap an agent follows on a new machine, including a guided tour for
+  new users.
 
-## CLI
+Tell your agent: *"Read INSTALL_FOR_AGENTS.md and follow it."* That's the
+whole integration.
+
+## The CLI
 
 ```bash
-surface list                              # what's already on the display
-surface ask "Ship to prod?" --options ship,hold --wait   # question on every screen; blocks for the answer
-surface link $(pwd)/demo.html --title D   # register a file in your project (live)
-surface touch <id>                        # broadcast reload after editing
+surface list                              # what's on the display (check before creating!)
+surface ask "Ship it?" --options ship,hold --wait      # question on every screen; blocks
+surface link $(pwd)/demo.html --title D   # serve a file straight out of your repo, live
+surface touch <id>                        # broadcast reload after editing it on disk
 surface doc ./README.md --toc             # rendered repo markdown, hot-reloading
 surface video https://youtu.be/abc123     # YouTube/web embed, one line
-surface create "Build" --id build --template stream      # live log surface…
+surface create "Build" --id build --template stream    # live log surface…
 make 2>&1 | surface append build -        # …pipe a process into it
 surface set build progress 0.42           # live state — bound elements re-render
 surface present ./report.pdf              # one-shot file snapshot
 surface open <id> --on phone              # show it (everywhere, or one device)
 surface notify "deploy finished" --style success
-surface wait --id <id> --action submit    # block until user clicks; exit 0 with action JSON
-surface bind <id> --action approve --run 'claude -p --resume <session> "…"'   # clicks wake you when offline
-surface devices                           # paired screens, live state, what each is viewing
-surface pair --name kitchen-tablet        # one-time pairing URL + QR for a new display
+surface wait --id <id> --action submit    # block until the user clicks
+surface bind <id> --action approve --run '…'           # clicks wake you when offline
+surface set board claude-code '{"status":"tests green"}'  # shared multi-agent status board
+surface devices                           # paired screens, live, what each is viewing
+surface slot renderer <id>                # an artifact takes over the whole homescreen
+surface theme '{"colors":{"accent":"#ff0080"}}'        # restyle the display
+surface sync                              # reconstitute a project's surfaces from .surface/
 ```
 
-Full command reference: `surface --help` and `surface <cmd> --help`. Intent mapping: [`SKILL.md`](SKILL.md).
+`surface --help` and `surface <cmd> --help` are authoritative; intent
+mapping lives in [`SKILL.md`](SKILL.md).
 
-## Templates: dynamic UI in one line
+## Templates and live state
 
-Agent-generated UI doesn't mean agents writing 200 lines of HTML. Templates are parameterized, reusable surfaces — `ask`, `stream`, `video`, `board` (the multi-agent status dashboard), `doc` ship built-in; agents promote their own one-off surfaces into templates with `surface template create <name> --from <id>`. Projects override user templates override built-ins. See [`docs/templates/overview.md`](docs/templates/overview.md).
+Agent-built UI doesn't mean 200 lines of hand-rolled HTML per update.
+Templates are parameterized surfaces — `ask`, `stream`, `video`, `board`,
+`doc` ship built-in, and agents promote any one-off surface into a reusable
+template with `surface template create <name> --from <id>`. Project
+templates override user templates override built-ins
+([docs](docs/templates/overview.md)).
 
-Every surface also carries a live JSON state doc (`surface set/patch`) and the injected `surface.js` runtime (`data-surface-bind`, `Surface.action()`) — updating a progress bar is one shell line, not an HTML rewrite.
+Every surface also carries a versioned JSON state document and an injected
+runtime (`surface.js`): elements marked `data-surface-bind` re-render on
+`surface set/patch`, and `Surface.action("approve", {...})` emits clicks
+without any postMessage boilerplate. Updating a dashboard number is a shell
+one-liner, not an HTML rewrite ([docs](docs/state/stateful-surfaces.md)).
+
+Projects own their surfaces: `surface init` scaffolds a committable
+`.surface/` directory (manifests, templates, config) plus a `SURFACE.md`,
+and `surface sync` reconstitutes everything on a fresh clone
+([docs](docs/state/project-directory.md)).
+
+## The loop: clicks always come back
+
+The hard problem isn't pushing pixels — it's that **agent lifetimes are
+shorter than surface lifetimes**. You tap "regenerate report" at 11pm; the
+session that built it ended at 5. Surface resolves every action down a
+three-layer ladder ([docs](docs/interaction/delivery-ladder.md)):
+
+1. **Live waiter** — a backgrounded `surface wait` exits with the action
+   JSON and the harness wakes the agent *in the session that has the
+   context*. While it's connected the card shows **● listening** — free,
+   instant, the default.
+2. **Binding** — nobody listening? Surface spawns the registered command
+   (`claude -p --resume …`, `codex exec`, a webhook into a daemon) with the
+   pending-action batch on stdin. Argv-safe (never a shell), single-flight,
+   rapid clicks coalesced into one batch. Opt-in, once per project.
+3. **Inbox** — otherwise the action stays pending, badges the card, and is
+   drained by `surface actions` at the next session start.
+
+## Yours, all the way down
+
+- **Display control** — colors, fonts, backgrounds, raw CSS, card order;
+  the homescreen renderer, home widget, and persistent overlay are
+  themselves artifacts (versioned, linkable, rollback-able) promoted with
+  `surface slot` ([docs](docs/display/theming.md)).
+- **Two trust planes** — loopback is the agent plane (`system`: full
+  power, attributed by name tag). Remote displays pair into named,
+  revocable `device` sessions that can view, click, and drive the display
+  but can never touch the filesystem, execute code, register bindings, or
+  mint credentials ([docs](docs/auth/trust-model.md)). A phone left in a
+  cab can browse your dashboard; it cannot reach your disk.
+- **Self-hosted, no cloud** — one process, one SQLite file, your machine.
 
 ## Direct HTTP
 
-The CLI is a thin wrapper over an HTTP API on `127.0.0.1:3000`. Same primitives, accessible from anything that can `fetch`:
+The CLI is a thin wrapper over a local HTTP API — anything that can
+`fetch` can drive the display.
+
+<details>
+<summary>Route map</summary>
 
 ```
 GET    /artifacts             Full card list (one fetch renders a dashboard)
@@ -99,52 +221,25 @@ POST   /display/reset /navigate /notify   (navigate/notify accept {device})
 GET    /api/auth/devices      Paired displays · POST /api/auth/devices/revoke
 ```
 
-`PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for linked artifacts — edit the file on disk and `POST /artifacts/:id/touch` instead.
+`PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for
+linked artifacts — edit the file on disk and `POST /artifacts/:id/touch`
+instead. Full reference: [docs/core/http-api.md](docs/core/http-api.md).
 
-## Reacting to clicks: the delivery ladder
-
-A click is never lost ([`docs/interaction/delivery-ladder.md`](docs/interaction/delivery-ladder.md)):
-
-1. **Live waiter** — a backgrounded `surface wait` exits with the action JSON and the harness wakes the agent *in the session that has the context*.
-2. **Binding** — no waiter connected? Surface spawns the registered command (`claude -p --resume …`, `codex exec`, a webhook into a daemon) with the pending-action batch on stdin. Argv-safe, single-flight, coalesced.
-3. **Inbox** — otherwise the action stays pending, badges the card, and is drained at the next session start (`surface actions`).
-
-Surfaces emit actions with the injected runtime — `Surface.action("approve", {env: "prod"})` — no postMessage boilerplate.
-
-## Display Control
-
-Agents own the display:
-
-- **Theming** — colors, fonts, backgrounds, starfield/nebula effects, raw CSS injection.
-- **Slots are artifacts** — the custom homescreen renderer, home widget, and persistent overlay are ordinary artifacts marked with `metadata.display_role` (`surface slot renderer <id>`): versioned, linkable, rollback-able.
-- **Per-device targeting** — `surface open/notify --on <device>` moves one named screen; `surface devices` shows the fleet.
-- **Live JS execution** — `surface exec <id> --js '...'` runs code inside a surface iframe without creating a new version.
-
-## Auth: two planes
-
-Loopback is the agent plane (`system` role — same machine, same uid, full power). Remote displays pair via one-time tokens into named, revocable `device` sessions that can view, click, and control the display but never touch the filesystem, execute code, or mint credentials. Remote *agents* carry a system bearer minted with `surface auth session issue --role system`. See [`docs/auth/trust-model.md`](docs/auth/trust-model.md).
+</details>
 
 ## Architecture
 
-See [`docs/README.md`](docs/README.md) for the full per-feature documentation tree ([`docs/architecture.md`](docs/architecture.md) is the orientation doc). Quick version:
+One long-running service (Express 5 + better-sqlite3 + SSE) on
+`127.0.0.1:3000`; a vanilla-JS PWA; a single-file CLI. Two artifact kinds:
+**workspace** (bytes owned by Surface, linear version history) and
+**linked** (bytes stay in your repo, served live from disk). No bundler, no
+client dependencies, no cloud.
 
-- One long-running service (Express 5 + better-sqlite3 + SSE) on `127.0.0.1:3000`.
-- All data under `~/.surface/` (`db.sqlite` + `artifacts/`).
-- Vanilla JS PWA, hash routing, sandboxed iframes.
-- Two artifact types: **workspace** (bytes owned by Surface, versioned) and **linked** (bytes in agent's project, served live from disk, no versioning).
-- CLI + `SKILL.md` as the canonical agent contract. MCP adapter lives in `archived/` for legacy users.
-
-## MCP (archived)
-
-Surface previously shipped an MCP stdio adapter. It now lives in [`archived/mcp.ts`](archived/) for backwards compatibility. New installs should use the CLI + `SKILL.md` path. See `archived/README.md`.
-
-## Stack
-
-- Express 5 + SQLite (better-sqlite3)
-- SSE for live updates
-- Vanilla JS PWA
-- `tsx` for dev, service, and CLI runtime
-- No bundler. No client-side dependencies.
+The full per-feature documentation tree lives in
+[`docs/README.md`](docs/README.md) —
+[`docs/architecture.md`](docs/architecture.md) is the orientation doc. The
+legacy MCP adapter is preserved in [`archived/`](archived/) but the CLI +
+`SKILL.md` is the canonical contract.
 
 ## License
 
