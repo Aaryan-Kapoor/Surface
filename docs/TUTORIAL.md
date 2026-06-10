@@ -1,6 +1,6 @@
 # Surface Tutorial
 
-> **For agents:** narrate each step to the user. Run the commands shown. Wait for visual confirmation before advancing. Update the `tutorial` field in `INSTALL_FOR_AGENTS.md` to `in_progress` after Step 1 and `complete` after Step 7. If the user wants to stop, set it to `skipped`.
+> **For agents:** narrate each step to the user. Run the commands shown. Wait for visual confirmation before advancing. Update the `tutorial` field in `~/.surface/install-state.json` to `in_progress` after Step 1 and `complete` after Step 7. If the user wants to stop, set it to `skipped`.
 
 This is a five-minute tour. By the end the user has a card on their display, has watched a hot reload, and has clicked a button you reacted to.
 
@@ -16,9 +16,9 @@ This is a five-minute tour. By the end the user has a card on their display, has
 surface status
 ```
 
-**Expect:** a JSON object with `current_view`, `viewport_width`, etc. If the command errors with `ECONNREFUSED`, the service isn't running — point the user at `scripts/install-systemd-user-service.sh` or `npm run dev` and retry.
+**Expect:** a JSON object with a `devices` list (each entry has `current_view`, `viewport_width`, etc. — empty until a browser has loaded the dashboard). If the command errors with `ECONNREFUSED`, the service isn't running — point the user at `scripts/install-systemd-user-service.sh` or `npm run dev` and retry.
 
-Set `tutorial: in_progress` in `INSTALL_FOR_AGENTS.md`.
+Set `tutorial: in_progress` in `~/.surface/install-state.json`.
 
 ---
 
@@ -169,4 +169,4 @@ Where to go next:
 - `docs/architecture.md` for the data model and process shape
 - `SECURITY.md` before exposing Surface beyond `127.0.0.1`
 
-Set `tutorial: complete` and `installed_at: <ISO timestamp>` in `INSTALL_FOR_AGENTS.md`.
+Set `tutorial: complete` and `installed_at: <ISO timestamp>` in `~/.surface/install-state.json`.

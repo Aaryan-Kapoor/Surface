@@ -1,10 +1,6 @@
 # Surface Documentation
 
-One file per feature, organized by concern. Every doc opens with a status line:
-
-- **Shipped** — describes the code as it runs today, with file references
-- **Partially shipped** — the base exists; the doc covers both what runs and what's approved on top
-- **Approved — not yet built** — a spec, reviewed and scheduled in the [roadmap](roadmap.md)
+One file per feature, organized by concern. Every doc opens with a status line. As of 2026-06 **everything here is Shipped** — all four roadmap phases are built, and each doc describes the code as it runs today, with file references. (The earlier statuses — *Partially shipped*, *Approved — not yet built* — are gone; the [roadmap](roadmap.md) is kept as the record of what was decided and why.)
 
 **New here (human or agent)?** Read in this order: [architecture.md](architecture.md) → [core/artifacts.md](core/artifacts.md) → [core/cli.md](core/cli.md) → [roadmap.md](roadmap.md). Then drill into whatever you're touching.
 
@@ -13,14 +9,14 @@ One file per feature, organized by concern. Every doc opens with a status line:
 | Doc | What |
 |---|---|
 | [architecture.md](architecture.md) | Orientation: process model, core concepts, the loop, trust summary |
-| [roadmap.md](roadmap.md) | The approved build plan — phases, scope, acceptance criteria, non-goals |
+| [roadmap.md](roadmap.md) | The build plan as decided and shipped — phases, scope, acceptance criteria, non-goals |
 | [TUTORIAL.md](TUTORIAL.md) | 7-step first-run walkthrough an agent narrates to the user |
 
 ## core/ — the shipped engine
 
 | Doc | What |
 |---|---|
-| [core/artifacts.md](core/artifacts.md) | Data model: artifacts, versions, files, storage kinds, legacy tables |
+| [core/artifacts.md](core/artifacts.md) | Data model: artifacts, versions, files, storage kinds, state/stream/binding tables |
 | [core/linked-artifacts.md](core/linked-artifacts.md) | Files living in user repos, served live; `link` + `touch` hot reload |
 | [core/cli.md](core/cli.md) | Complete `surface` command reference |
 | [core/http-api.md](core/http-api.md) | Complete HTTP route reference + auth resolution order |
@@ -31,7 +27,7 @@ One file per feature, organized by concern. Every doc opens with a status line:
 
 | Doc | What |
 |---|---|
-| [auth/trust-model.md](auth/trust-model.md) | The two planes: system (loopback agents) vs device (paired displays); capability matrix; `SURFACE_TOKEN` retirement |
+| [auth/trust-model.md](auth/trust-model.md) | The two planes: system (loopback agents) vs device (paired displays); capability matrix; `SURFACE_TOKEN` removal |
 | [auth/device-pairing.md](auth/device-pairing.md) | Pairing tokens → named, revocable device sessions |
 | [auth/project-ownership.md](auth/project-ownership.md) | Surfaces belong to git projects; agents are self-reported labels |
 

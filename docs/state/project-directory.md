@@ -1,7 +1,7 @@
 # The Project Directory: `.surface/` and `SURFACE.md`
 
-**Status:** Approved — not yet built (Phase 2)
-**Code (current):** none
+**Status:** Shipped (2026-06)
+**Code:** `bin/surface.ts` (`init`, `sync`, `sync --export`); binding consent is read by `server/bindings.ts` (`projectAllowsBindings`)
 
 Surfaces are [owned by projects](../auth/project-ownership.md), and the project should therefore *contain* its surfaces: their definitions live in a `.surface/` directory committed to the repo, reviewable in PRs, reconstituted on any machine by `surface sync`. This is infrastructure-as-code for UI. Live state **values** stay out of the repo (see [stateful-surfaces.md](stateful-surfaces.md)) — only definitions are versioned.
 
@@ -41,10 +41,10 @@ One JSON file per surface — id, title, template, params, declared state variab
 
 ## Commands
 
-- **`surface init`** — scaffolds `.surface/` and a starter `SURFACE.md` in the current project.
-- **`surface sync`** — idempotent reconcile of manifests against the running service: creates missing surfaces, updates drifted definitions (title, template, params, declared state schema/defaults, bindings). **Never touches live state values or version history.** Fresh clone + `surface sync` = the project's surfaces exist again.
+- **`surface init`** — scaffolds `.surface/` (with `config.json`, `surfaces/`, `templates/`) and a starter `SURFACE.md` in the current project.
+- **`surface sync`** — idempotent reconcile of manifests against the running service: creates missing surfaces and re-renders drifted ones (title, template, params); state `defaults` are applied only when the surface's state is still empty (`state_version === 0`). **Never touches live state values or version history** — an unchanged manifest is a no-op (the server's template re-render is idempotent). Fresh clone + `surface sync` = the project's surfaces exist again. Only template-based manifests sync; manifests without a `template` are skipped with a note.
 
-Surfaces created ad-hoc via `surface create` are *not* required to have manifests; `.surface/` is for the surfaces a project considers part of itself. `surface sync --export <id>` promotes an ad-hoc surface to a manifest.
+Surfaces created ad-hoc via `surface create` are *not* required to have manifests; `.surface/` is for the surfaces a project considers part of itself. `surface sync --export <id>` promotes an ad-hoc surface to a manifest. `bindings` entries in a manifest are declarative documentation — registration happens through `surface bind` (the [delivery ladder](../interaction/bindings.md)), and `sync` reminds you of that rather than auto-registering command execution.
 
 ## `SURFACE.md`
 

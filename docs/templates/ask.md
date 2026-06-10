@@ -1,7 +1,7 @@
 # `ask` — Context-Full Questions
 
-**Status:** Approved — not yet built (Phase 2; cold-start answer delivery rides Phase 3)
-**Code (current):** none
+**Status:** Shipped (2026-06)
+**Code:** `templates/ask/`, `bin/surface.ts` (`ask`), the server-side answered flip in `server/routes/actions.ts`
 
 `surface ask` is the human-in-the-loop primitive: an agent posts a question that renders on **every paired display**, and the user answers from wherever they are. It makes the phone the approval remote for every agent on the system.
 
@@ -41,18 +41,18 @@ EOF
 
 1. Instantiates the built-in `ask` template: question headline, rendered context block, option buttons / text input.
 2. The user's answer emits a single action: `{ action: "answer", data: { choice: "ship", text?: "…" } }`.
-3. Delivery follows the [ladder](../interaction/delivery-ladder.md): a `--wait`ing agent gets it immediately (layer 1); otherwise a binding can revive the asking session (`--on-action answer --run 'claude --resume {session} -p …'`); otherwise it lands in the inbox.
-4. After answering, the card flips to its answered state — chosen option highlighted, card dimmed — so a question is never answered twice. Expired asks render struck-through.
+3. Delivery follows the [ladder](../interaction/delivery-ladder.md): a `--wait`ing agent gets it immediately (layer 1); otherwise a binding can revive the asking session (`surface bind <id> --action answer --run 'claude --resume <session-id> -p …'`); otherwise it lands in the inbox.
+4. After answering, the card flips to its answered state — chosen option highlighted, card dimmed — so a question is never answered twice. The flip happens **server-side** the moment the `answer` action lands (state becomes `{status:"answered", answer:{…, answered_at, device}}`), independent of whether anything is listening. Expired asks render struck-through.
 
 `--wait` output:
 
 ```json
-{ "choice": "ship", "text": null, "answered_at": "2026-06-10T22:41:12Z", "device": "phone" }
+{ "choice": "ship", "text": null, "answered_at": "2026-06-10T22:41:12Z", "device": "phone", "surface_id": "…" }
 ```
 
 ## Template contract
 
-- **Params:** `question` (string, required), `context_md` (markdown), `options` (string list), `freetext` (bool), `expires_at` (timestamp).
+- **Params:** `question` (string, required), `context_md` (markdown), `options` (list — array or comma-separated string), `freetext` (bool), `expires_at` (ISO timestamp).
 - **State:** `status: open | answered | expired`, `answer` — set by the server, bindable by custom ask variants.
 - **Actions:** `answer`.
 

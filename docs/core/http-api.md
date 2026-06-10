@@ -1,118 +1,134 @@
 # HTTP API Reference
 
-**Status:** Shipped
-**Code:** `server/routes.ts`, `server/index.ts`
+**Status:** Shipped (2026-06)
+**Code:** `server/routes/{auth,artifacts,actions,display,integrations}.ts` (mounted by `server/routes/index.ts`), `server/index.ts`
 
-Surface is an Express app. A single global auth middleware in `server/index.ts` resolves `req.auth` for every request before the router runs; all routes below assume that resolution has happened. The server binds `127.0.0.1:3000` by default (`SURFACE_BIND`, `PORT`). Request bodies are JSON, `10mb` limit (`server/index.ts:44`).
+Surface is an Express app. A single global auth middleware in `server/index.ts` resolves `req.auth` for every request before the router runs; all routes below assume that resolution has happened. The server binds `127.0.0.1:3000` by default (`SURFACE_BIND`, `PORT`). Request bodies are JSON, `10mb` limit (`server/index.ts`).
 
 ## Auth resolution order
 
-The middleware at `server/index.ts:99-132` tries, in order, and sets `req.auth = { role, via }`:
+The middleware in `server/index.ts` tries, in order, and sets `req.auth = { role, via, sessionId?, label? }`:
 
-1. **Trusted loopback** — remote address in `{127.0.0.1, ::1, ::ffff:127.0.0.1, localhost}` and `SURFACE_TRUST_LOOPBACK != 0` → `owner` (`via: loopback`). Operators behind a loopback reverse proxy MUST set `SURFACE_TRUST_LOOPBACK=0`.
+1. **Trusted loopback** — remote address in `{127.0.0.1, ::1, ::ffff:127.0.0.1, localhost}` and `SURFACE_TRUST_LOOPBACK != 0` → `system` (`via: loopback`). Operators behind a loopback reverse proxy MUST set `SURFACE_TRUST_LOOPBACK=0`.
 2. **Session cookie** — `surface_session` cookie verified via `verifySession` → session role (`via: cookie`).
 3. **Session bearer** — `Authorization: Bearer <session-token>` verified → session role (`via: bearer`).
-4. **Static token** — `SURFACE_TOKEN` matched (constant-time) via bearer header, `?token=` query, or legacy `surface_token` cookie → `owner` (`via: static-token`); a valid `?token=` also sets the cookie (`staticTokenMatch`, `server/index.ts:77-94`).
-5. **Public bootstrap paths** — pass without auth (see below).
-6. Otherwise → **401** `{error, bootstrapMethods:["one-time-token"]}`.
+4. **Public bootstrap paths** — pass without auth (see below).
+5. Otherwise → **401** `{error, bootstrapMethods:["one-time-token"]}`.
 
-Owner-only management routes re-check `req.auth.role === "owner"` via `requireOwner`, returning **403** otherwise (`server/routes.ts:119-123`).
+Roles are `system` and `device` ([../auth/trust-model.md](../auth/trust-model.md)). System-only routes re-check `req.auth.role === "system"` via `requireSystem`, returning **403** otherwise (`server/routes/helpers.ts`). The static `SURFACE_TOKEN` path no longer exists; a set env var only logs a startup warning.
 
-**Public (no auth) requests** (`isPublicRequest`, `server/index.ts:59-64`): `GET` of `/`, `/index.html`, `/app.js`, `/style.css`, `/manifest.json`, `/pair`, `/pair.html`, `/favicon.ico`; `GET /api/auth/session`; `POST /api/auth/bootstrap`. Static assets serve from `client/` and `examples/demos/` (`server/index.ts:138-140`).
+**Public (no auth) requests** (`isPublicRequest`, `server/index.ts`): `GET` of `/`, `/index.html`, `/app.js`, `/style.css`, `/manifest.json`, `/pair`, `/pair.html`, `/favicon.ico`; `GET /api/auth/session`; `POST /api/auth/bootstrap`. Static assets serve from `client/` and `examples/demos/`.
 
-## Auth
+## Auth & devices (`server/routes/auth.ts`)
 
 | Method | Path | Body / Query | Response | Caller |
 | --- | --- | --- | --- | --- |
 | GET | `/api/auth/session` | — | `{authenticated, role, ...}` or `{authenticated:false}` | public |
 | POST | `/api/auth/bootstrap` | `{credential, label?}` | session payload + `Set-Cookie` | public; consumes a one-time pairing token |
-| POST | `/api/auth/pairing-token` | `{label?, ttlSeconds?, baseUrl?}` | `{id, credential, pairingUrl, expiresAt, role}` | owner |
-| GET | `/api/auth/pairing-tokens` | — | token summaries | owner |
-| POST | `/api/auth/pairing-tokens/revoke` | `{id}` | `{revoked}` | owner |
-| POST | `/api/auth/sessions` | `{label?, ttlSeconds?}` | `{id, token, role, expiresAt}` | owner |
-| GET | `/api/auth/clients` | — | session list | owner |
-| POST | `/api/auth/clients/revoke` | `{id}` | `{revoked}` | owner |
+| POST | `/api/auth/pairing-token` | `{label?, ttlSeconds?, baseUrl?}` | `{id, credential, pairingUrl, expiresAt, role}` | system |
+| GET | `/api/auth/pairing-tokens` | — | token summaries | system |
+| POST | `/api/auth/pairing-tokens/revoke` | `{id}` | `{revoked}` | system |
+| POST | `/api/auth/sessions` | `{label?, ttlSeconds?, role?}` | `{id, token, role, expiresAt}` | system; `role:"system"` mints a system bearer (the remote-agent path) |
+| GET | `/api/auth/clients` | — | session list | system |
+| POST | `/api/auth/clients/revoke` | `{id}` | `{revoked}` | system |
 | POST | `/api/auth/logout` | cookie/bearer | `{revoked}` + clears cookie | any |
+| GET | `/api/auth/devices` | — | device sessions + `connected` (live SSE) + `viewing` (presence) | system |
+| POST | `/api/auth/devices/revoke` | `{device}` (id, label, or unambiguous label prefix) | `{revoked, device}`; 400 on ambiguity with candidates | system |
 
 See [../auth/device-pairing.md](../auth/device-pairing.md) and [../auth/trust-model.md](../auth/trust-model.md).
 
-## Artifacts CRUD
+## Artifacts CRUD (`server/routes/artifacts.ts`)
 
 | Method | Path | Body / Query | Response | Notes |
 | --- | --- | --- | --- | --- |
-| GET | `/artifacts` | — | raw artifact rows | |
-| POST | `/artifacts` | `{title, files[]\|content, mime?, kind?, source_type?, metadata?, id?}` | `{artifact,version,files}` (201) | rejects `source_type:"linked"` (400) |
-| GET | `/artifacts/:id` | — | `{artifact,version,files}` | 404 if missing/deleted |
-| PUT | `/artifacts/:id` | same as POST + `reason?` | `{artifact,version,files}` | new version if `files`/`content`; **409** if linked + files |
+| GET | `/artifacts` | `?project=`, `?agent=`, `?include_hidden=1` | full card payloads (incl. `pending_actions`, `listening`, `preview_url`/`view_url`) | the one fetch the dashboard grid needs |
+| POST | `/artifacts` | `{title, files[]\|content, mime?, kind?, source_type?, metadata?, id?, project_root?}` or `{template, params?, id?, title?, …}` | `{artifact,version,files}` (201) | rejects `source_type:"linked"` (400); with `template` it instantiates server-side (**system**; re-POST with the same id re-renders, idempotently when output is unchanged) |
+| GET | `/artifacts/:id` | — | `{artifact,version,files, preview_url, view_url}` | 404 if missing/deleted |
+| PUT | `/artifacts/:id` | same as POST + `reason?`; optional `If-Match: <version-id>` header | `{artifact,version,files}` | new version if `files`/`content`; **409** if linked + files; **412** on `If-Match` mismatch |
 | DELETE | `/artifacts/:id` | — | `{deleted:true}` | soft delete; removes thumb |
 | GET | `/artifacts/:id/versions` | — | version rows | |
 | POST | `/artifacts/:id/rollback` | `{version}` (int or version-id) | `{artifact,version,files}` | **409** if linked |
 | GET | `/artifacts/:id/manifest` | — | version `manifest_json` | |
-| POST | `/artifacts/present-file` | `{path, title?, metadata?, copy?, open?}` | artifact (201) | copies a file into the workspace |
+| POST | `/artifacts/present-file` | `{path, title?, metadata?, copy?, open?, project_root?}` | artifact (201) | **system** (reads the host filesystem) |
+| POST | `/artifacts/link` | `{path, entry?, title, metadata?, open?, project_root?, template?, params?}` | artifact (201) | **system**; directory link requires `entry`; see [linked-artifacts.md](linked-artifacts.md) |
+| POST | `/artifacts/:id/touch` | — | `{touched:true}` | broadcasts `surface_updated` reload; 404 if missing |
 
-Legacy surface-compat routes proxy to the same artifact layer: `GET/POST /surfaces`, `GET /surfaces/:id`, `GET /surfaces/:id/html`, `PUT /surfaces/:id`, `DELETE /surfaces/:id` (`server/routes.ts:308-441`). `GET /surfaces` returns denormalized cards (`?include_hidden=1` to include `metadata.hidden` rows). See [artifacts.md](artifacts.md).
+## Templates (`server/routes/artifacts.ts`)
 
-## Linking
+| Method | Path | Query | Response |
+| --- | --- | --- | --- |
+| GET | `/api/templates` | `?project=` | `[{name, source, description}]` (project → user → built-in) |
+| GET | `/api/templates/:name` | `?project=` | `{name, source, dir, contract}` |
+
+## State & stream chunks (`server/routes/artifacts.ts`)
 
 | Method | Path | Body | Response | Notes |
 | --- | --- | --- | --- | --- |
-| POST | `/artifacts/link` | `{path, entry?, title, metadata?, open?}` | artifact (201) | directory link requires `entry`; see [linked-artifacts.md](linked-artifacts.md) |
-| POST | `/artifacts/:id/touch` | — | `{touched:true}` | broadcasts `surface_updated` reload; 404 if missing |
+| GET | `/artifacts/:id/state` | — | `{state, state_version}` | open to devices |
+| PATCH | `/artifacts/:id/state` | JSON patch (deep-merged; `null` deletes a key) | `{state, state_version}` | **system**; broadcasts `state_patch`; PATCHing the missing id `board` materializes the default board; board sections get server-stamped `updated_at` |
+| GET | `/artifacts/:id/chunks` | — | `{chunks}` | current ring buffer |
+| POST | `/artifacts/:id/append` | `{content, kind?}` or `{chunks:[{kind?,content}]}` | `{appended, last_seq}` (201) | **system**; broadcasts `stream_append`; cap from `metadata.stream_cap` (default 2000) |
 
-## Files / view / thumb
+## Files / view / thumb (`server/routes/artifacts.ts`)
 
 | Method | Path | Query | Response | Notes |
 | --- | --- | --- | --- | --- |
-| GET | `/artifacts/:id/view` | `preview=1` | HTML | redirects to the file for `text/html`, else a renderer shell for img/video/audio/pdf/md/text (`server/routes.ts:653-681`) |
-| GET | `/artifacts/:id/files/*` | — | file bytes | served from `artifact_files`; linked artifacts fall back to disk under `workspace_path` with path-escape/symlink **403** guards (`server/routes.ts:734-793`) |
+| GET | `/artifacts/:id/view` | `preview=1` | HTML | redirects to the file for `text/html`; renders the artifact's template on the fly for non-HTML entries of templated artifacts (e.g. `doc`); else a renderer shell for img/video/audio/pdf/md/text (`server/render.ts`) |
+| GET | `/artifacts/:id/files/*` | — | file bytes | served from `artifact_files`; HTML gets the `surface.js` runtime injected; linked artifacts fall back to disk under `workspace_path` with path-escape/symlink **403** guards |
 | GET | `/artifacts/:id/thumb` | `regenerate=1`, `v=` | PNG or SVG placeholder | cached PNG if present, image passthrough for image mimes, else SVG placeholder + enqueue capture. See [thumbnails.md](thumbnails.md). |
 
-## Display control
+## Actions / bindings / reply / exec (`server/routes/actions.ts`)
+
+| Method | Path | Body | Response | Notes |
+| --- | --- | --- | --- | --- |
+| POST | `/artifacts/:id/actions` | `{action, data?}` | action row (201) | user→agent; broadcasts `surface_action`, fans out webhook, runs the [delivery ladder](../interaction/delivery-ladder.md); `ask` answers flip state server-side |
+| GET | `/actions` | — | pending actions (all) | **system** — the inbox belongs to the agent plane |
+| GET | `/artifacts/:id/actions` | — | pending actions (one surface) | **system** |
+| POST | `/actions/:id/ack` | — | `{acknowledged:true}` | **system**; broadcasts `actions_acked` with the new pending count |
+| POST | `/artifacts/:id/bindings` | `{action_pattern?, run?\|webhook_url?, cwd?, timeout_seconds?}` | binding (201) | **system** |
+| GET | `/artifacts/:id/bindings` | — | bindings for one surface | **system** |
+| GET | `/bindings` | — | all bindings | **system** |
+| DELETE | `/bindings/:id` | — | `{deleted:true}` | **system** |
+| PATCH | `/bindings/:id` | `{enabled}` | `{updated:true}` | **system** |
+| POST | `/artifacts/:id/reply` | `{text}` | `{sent:true}` | **system**; broadcasts `agent_reply` (toast) |
+| POST | `/artifacts/:id/exec` | `{js}` | `{executed:true}` | **system**; broadcasts `surface_exec` |
+
+Optional webhook fan-out on `surface_action` posts to `SURFACE_WEBHOOK_URL + SURFACE_WEBHOOK_PATH` with `SURFACE_WEBHOOK_TOKEN` (legacy `OPENCLAW_*` aliases), throttling failure toasts to one/minute (`server/routes/actions.ts`). See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
+
+## Display control (`server/routes/display.ts`)
 
 | Method | Path | Body | Response | Effect |
 | --- | --- | --- | --- | --- |
 | GET | `/display/config` | — | theme config | |
-| PUT | `/display/config` | theme JSON (merged) | merged config | broadcasts `display_theme` |
+| PUT | `/display/config` | theme JSON (merged) | merged config | broadcasts `display_theme`; `renderer`/`home`/`overlay` keys are rejected (slots are artifacts now) |
 | POST | `/display/reset` | — | `{reset:true}` | clears theme, broadcasts `display_theme` `{}` |
-| GET | `/display/status` | — | presence + `stale` flag | in-memory; stale after 60s |
-| POST | `/display/presence` | `{current_view, current_surface_id, viewport_*}` | `{ok:true}` | PWA reports presence |
-| POST | `/display/navigate` | `{surface_id?}` | `{navigated:true}` | broadcasts `display_navigate` |
-| POST | `/display/notify` | `{text, duration?, style?}` | `{sent:true}` | broadcasts `display_notify` |
-| GET | `/display/renderer/html` \| `/home/html` \| `/overlay/html` | — | HTML or 404 | custom display HTML from theme config |
+| GET | `/display/status` | — | `{devices:[…]}` per-device presence + `stale` flag | in-memory; stale after 60s |
+| POST | `/display/presence` | `{current_view, current_surface_id, viewport_*}` | `{ok:true}` | keyed by the caller's session target |
+| POST | `/display/navigate` | `{surface_id?, device?}` | `{navigated, device}` | broadcasts `display_navigate` (to one device when named) |
+| POST | `/display/notify` | `{text, duration?, style?, device?}` | `{sent, device}` | broadcasts `display_notify` (to one device when named) |
+| GET | `/display/slots` | — | `{renderer, home, overlay}` artifact ids (or null) | newest non-hidden artifact with `metadata.display_role` wins |
+| GET | `/display/renderer/html` \| `/home/html` \| `/overlay/html` | — | HTML or 404 | served from the slot artifact's HTML entry; the renderer gets an injected API script |
 
-See [../display/theming.md](../display/theming.md).
+See [../display/theming.md](../display/theming.md) and [../display/devices.md](../display/devices.md).
 
-## Actions / reply / exec
-
-| Method | Path | Body | Response | Notes |
-| --- | --- | --- | --- | --- |
-| POST | `/surfaces/:id/actions` | `{action, data?}` | action row (201) | user→agent; broadcasts `surface_action`, fans out webhook |
-| GET | `/actions` | — | pending actions (all) | agent polls |
-| GET | `/surfaces/:id/actions` | — | pending actions (one surface) | |
-| POST | `/actions/:id/ack` | — | `{acknowledged:true}` | marks handled |
-| POST | `/surfaces/:id/reply` | `{text}` | `{sent:true}` | broadcasts `agent_reply` (toast) |
-| POST | `/surfaces/:id/exec` | `{js}` | `{executed:true}` | broadcasts `surface_exec` |
-
-Optional webhook fan-out on `surface_action` posts to `SURFACE_WEBHOOK_URL + SURFACE_WEBHOOK_PATH` with `SURFACE_WEBHOOK_TOKEN` (legacy `OPENCLAW_*` aliases), throttling failure toasts to one/minute (`server/routes.ts:11-57`). See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
-
-## SSE streams
+## SSE streams (`server/routes/display.ts`, `server/routes/artifacts.ts`)
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/stream` | global event stream (all surfaces) |
-| GET | `/surfaces/:id/stream` | per-surface stream (404 if neither artifact nor legacy surface exists) |
+| GET | `/stream` | global event stream; connections are tagged with their device target; `?wait_for=<surface-id\|*>` registers a layer-1 waiter (system only) |
+| GET | `/artifacts/:id/stream` | per-surface stream (404 if the artifact doesn't exist) |
 
 Full event catalog: [events.md](events.md).
 
-## Proxies
+## Proxies (`server/routes/integrations.ts`)
 
 | Method | Path | Body / Query | Notes |
 | --- | --- | --- | --- |
-| POST | `/api/chat` | `{messages, model?, stream?}` | OpenRouter proxy; needs `OPENROUTER_API_KEY`; rate-limited `SURFACE_CHAT_RATE_LIMIT`/min (default 30, **429** on excess); SSE passthrough when `stream` (`server/routes.ts:1066-1141`). |
+| POST | `/api/chat` | `{messages, model?, stream?}` | OpenRouter proxy; needs `OPENROUTER_API_KEY`; rate-limited `SURFACE_CHAT_RATE_LIMIT`/min (default 30, **429** on excess); SSE passthrough when `stream`. |
 | POST | `/api/nexlayer/deploy` | `{yaml, sessionToken?}` | proxies `startUserDeployment` |
 | POST | `/api/nexlayer/extend` | `{applicationName, sessionToken}` | proxies `extendDeployment` |
 | GET | `/api/nexlayer/status` | `?sessionToken=` | proxies `getReservations` |
-| GET | `/proxy/pdf` | `?url=` | streams a remote PDF stripping X-Frame-Options; refuses private/loopback/link-local/metadata hosts (SSRF guard) and refuses to follow redirects (`server/routes.ts:1143-1228`). |
+| GET | `/proxy/pdf` | `?url=` | streams a remote PDF stripping X-Frame-Options; refuses private/loopback/link-local/metadata hosts (SSRF guard) and refuses to follow redirects. |
 
 ## Related
 - [events.md](events.md) — SSE event payloads

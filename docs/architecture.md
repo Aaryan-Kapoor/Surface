@@ -55,8 +55,8 @@ Two planes ([auth/trust-model.md](auth/trust-model.md)): **loopback = system** (
 
 ## Stack
 
-Express 5, better-sqlite3, native `fetch`, vanilla-JS PWA, `tsx` runtime, no bundler, no client dependencies. Headless Chrome (optional) for card screenshots. Schema versioned via `PRAGMA user_version` (`server/migrations.ts`).
+Express 5, better-sqlite3, native `fetch`, vanilla-JS PWA, `tsx` runtime for the server, no client dependencies. The CLI also ships as a single esbuild-bundled file (`dist/surface.mjs`, built by `npm run build:cli` via the `prepare` hook). Headless Chrome (optional) for card screenshots. Schema versioned via `PRAGMA user_version` (`server/migrations.ts`).
 
 ## Where the detail lives
 
-This file is orientation only. [README.md](README.md) indexes the full tree: `core/` (shipped engine), `auth/`, `interaction/`, `state/`, `templates/`, `display/`, `operations/`, and [roadmap.md](roadmap.md) for what ships when.
+This file is orientation only. [README.md](README.md) indexes the full tree: `core/` (the engine), `auth/`, `interaction/`, `state/`, `templates/`, `display/`, `operations/`, and [roadmap.md](roadmap.md) for the record of what was decided and why.

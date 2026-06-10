@@ -1,7 +1,7 @@
 # `video` — Embedded Video
 
-**Status:** Approved — not yet built (Phase 2)
-**Code (current):** none — direct video *files* already render via the artifact shell (`GET /artifacts/:id/view`)
+**Status:** Shipped (2026-06)
+**Code:** `templates/video/`, `bin/surface.ts` (`video`); direct video *files* render via the artifact shell (`GET /artifacts/:id/view`) instead
 
 `surface video` puts a video on the user's screen with one line — primarily YouTube and other embeds, which today require the agent to hand-write an iframe embed page every time (two of the original demo surfaces were exactly that boilerplate).
 
@@ -14,7 +14,7 @@ surface video https://youtu.be/abc123 --start 90 --autoplay
 
 | Flag | Meaning |
 |---|---|
-| `--title` | Card title (defaults to fetched title when available, else the URL) |
+| `--title` | Card title (defaults to the URL) |
 | `--start <s>` | Start offset in seconds |
 | `--autoplay` / `--loop` | Player behavior (autoplay is muted, per browser policy) |
 | `--id`, `--agent` | As on `surface create` |

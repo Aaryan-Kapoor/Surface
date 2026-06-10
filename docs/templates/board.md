@@ -1,7 +1,7 @@
 # `board` — The Multi-Agent Status Board
 
-**Status:** Approved — not yet built (Phase 2; depends on attribution from Phase 1)
-**Code (current):** none
+**Status:** Shipped (2026-06)
+**Code:** `templates/board/`, board materialization + section timestamping in `server/routes/artifacts.ts` (`PATCH /artifacts/board/state`)
 
 The board makes Surface itself a **multi-agent dashboard**: one surface where every agent on the system posts its current status into its own section, and the user watches their whole agent fleet at a glance — ambient on the desk monitor, glanceable on the phone. It is human-visible multi-agent coordination, and it requires **no new backend primitive**: the board is just a template + [namespaced state](../state/stateful-surfaces.md) + [agent attribution](../auth/project-ownership.md). That it falls out of three already-justified pieces is the architecture working as intended.
 

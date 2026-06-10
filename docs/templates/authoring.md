@@ -1,7 +1,7 @@
 # Authoring Templates
 
-**Status:** Approved — not yet built (Phase 2)
-**Code (current):** none
+**Status:** Shipped (2026-06)
+**Code:** `bin/surface.ts` (`template create`), `server/templates.ts` (resolution + contract)
 
 Agents are expected to author templates, not just consume them. The SKILL.md rule of thumb: **before building the same UI a second time, make it a template.** A template costs a few minutes once and turns every future instance into one CLI line.
 
@@ -15,7 +15,7 @@ The natural path — an agent builds a one-off surface, it works, it's worth kee
 surface template create release-card --from <artifact-id>
 ```
 
-This copies the artifact's HTML into a template directory, scaffolds `template.json`, and (best-effort) suggests params for the literal values it finds. The agent then edits the contract: which hard-coded strings become `{{params}}`, which numbers become state vars.
+This copies the artifact's HTML into a template directory (`<project>/.surface/templates/<name>/`, or `~/.surface/templates/` with `--user`) and scaffolds an empty `template.json`. The agent then edits the contract: which hard-coded strings become `{{params}}`, which numbers become state vars.
 
 ### Scaffold by hand
 
@@ -37,8 +37,8 @@ Project templates override user templates override built-ins ([overview.md](over
 
 Keep params few and typed; everything else is state or content:
 
-- **`params`** — set once at instantiation (`string`, `number`, `boolean`, `markdown`, `url`). `markdown` params render server-side; `url` params are validated.
-- **`state`** — variables that change while the surface lives; declare them so `surface sync` can type-check and default them ([../state/stateful-surfaces.md](../state/stateful-surfaces.md)).
+- **`params`** — set once at instantiation (`string`, `number`, `boolean`, `markdown`, `url`, `list`). `markdown` params render server-side; `url` params are validated.
+- **`state`** — variables that change while the surface lives; declared defaults seed the surface's state at instantiation ([../state/stateful-surfaces.md](../state/stateful-surfaces.md)).
 - **`actions`** — names the template emits, so `surface template show` documents what to `wait` for or [bind](../interaction/bindings.md).
 
 ## Markup conventions
@@ -53,7 +53,7 @@ Keep params few and typed; everything else is state or content:
 ```bash
 surface create "test" --template release-card --param version=0.0 --id tpl-test
 surface set tpl-test stage building        # exercise state bindings
-surface wait --surface tpl-test --timeout 60   # exercise actions, then click in the browser
+surface wait --id tpl-test --timeout 60    # exercise actions, then click in the browser
 surface delete tpl-test
 ```
 

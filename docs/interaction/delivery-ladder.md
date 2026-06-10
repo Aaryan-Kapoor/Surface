@@ -1,7 +1,7 @@
 # The Delivery Ladder
 
-**Status:** Approved — not yet built (Phase 3). Layer 1 partially exists (`surface wait`).
-**Code (current):** `bin/surface.ts` (`wait`), webhook fan-out in `server/routes.ts`
+**Status:** Shipped (2026-06)
+**Code:** `bin/surface.ts` (`wait`), `server/bindings.ts` (`dispatchAction`), `server/sse.ts` (waiter registry), `server/routes/display.ts` (`/stream?wait_for=`), webhook fan-out in `server/routes/actions.ts`
 
 The central problem of agent↔screen interaction: **agent process lifetime ≪ surface lifetime.** A Claude Code session ends at 5pm; the user taps "regenerate report" on their phone at 11pm. Nothing is polling. Nothing will ever poll. Long-polling alone cannot solve this — and spawning a fresh agent for every click burns usage and loses context. The ladder resolves the tension by trying the cheapest, most-context-rich channel first and degrading gracefully.
 
@@ -16,12 +16,12 @@ When an action arrives for a surface, delivery resolves strictly in this order:
 At surface creation, the agent backgrounds a waiter **in its own working session**:
 
 ```bash
-surface wait --surface deploy-panel --json &   # harness background task
+surface wait --id deploy-panel &   # harness background task; prints the action JSON on exit
 ```
 
 Click → `wait` exits with the action JSON → the harness notifies the model (Claude Code and Codex both surface background-process completion) → the agent handles it **in the session that has all the context** → re-arms the waiter. Zero extra usage; the user keeps talking to the same session.
 
-The open long-poll connection doubles as **presence**: while a waiter is connected, the card shows "● agent listening" and lower layers are suppressed.
+The open connection doubles as **presence**: `wait` connects to `/stream?wait_for=<id|*>`, which registers it in the waiter registry (`server/sse.ts`); while it lives, the card shows "● listening" (via `waiter_status` events and the `listening` card flag) and lower layers are suppressed.
 
 Honest caveats: sessions end, laptops sleep, harnesses cap background-task lifetimes, and re-arming is a SKILL.md discipline, not a guarantee. That is why this is a ladder and not a single mechanism.
 

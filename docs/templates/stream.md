@@ -1,7 +1,7 @@
 # `stream` — Append-Only Live Surfaces
 
-**Status:** Approved — not yet built (Phase 2)
-**Code (current):** none
+**Status:** Shipped (2026-06)
+**Code:** `templates/stream/`, `server/streams.ts`, chunk routes in `server/routes/artifacts.ts`, `bin/surface.ts` (`append`)
 
 A `stream` surface is a live scrollback: agents append lines or markdown blocks and every display renders them as they arrive. It captures the most common shape of agent output — a stream — which static HTML serves worst. Build logs, long research narration, overnight job progress: watchable from the phone, from bed.
 
@@ -22,8 +22,8 @@ surface append build-log "warning: 3 deprecated calls"
 
 - Each append becomes a **chunk** (`text` or `md`). Text chunks render monospace with basic ANSI color converted to HTML; `--md` chunks render as markdown (headers, code fences, links).
 - The viewer autoscrolls, pauses when the user scrolls up (with a "↓ live" resume pill), and shows a chunk timestamp gutter.
-- Storage: `surface_stream_chunks(artifact_id, seq, kind, content, created_at)`, capped as a ring buffer (default 2000 chunks per surface, configurable per surface) — old chunks drop, the surface never grows unbounded.
-- Transport: `stream_append` SSE event `{ id, seq, chunk }`; viewers joining late fetch the current buffer, then follow.
+- Storage: `surface_stream_chunks(artifact_id, seq, kind, content, created_at)`, capped as a ring buffer (default 2000 chunks per surface, configurable via `metadata.stream_cap`) — old chunks drop, the surface never grows unbounded.
+- Transport: `stream_append` SSE event `{ id, seq, chunk }`; viewers joining late fetch the current buffer (`GET /artifacts/:id/chunks`), then follow.
 - Streams compose with [state](../state/stateful-surfaces.md): the stream template reserves a `status` header band (`surface set build-log status "stage 2/5"`).
 
 ## Examples

@@ -1,7 +1,7 @@
 # Templates
 
-**Status:** Approved — not yet built (Phase 2)
-**Code (current):** none
+**Status:** Shipped (2026-06)
+**Code:** `server/templates.ts` (engine), template routes in `server/routes/artifacts.ts`, built-ins under `templates/` in the repo
 
 A **template** is a parameterized, reusable surface: real dynamic UI that an agent instantiates with one CLI line instead of regenerating 200 lines of HTML every time. Dynamic UI is Surface's moat — templates are how that moat becomes repeatable. The [`ask`](ask.md) template isn't a text dialog; it's a rendered context block, option cards, and pre-wired actions, for the cost of a flag.
 
@@ -31,7 +31,7 @@ release-card/
 }
 ```
 
-- **Slots:** `{{param}}` interpolates HTML-escaped; `{{{param}}}` is the opt-in raw form; `markdown`-typed params are rendered to HTML server-side.
+- **Slots:** `{{param}}` interpolates HTML-escaped; `{{{param}}}` is the opt-in raw form; `markdown`-typed params are rendered to HTML server-side. Param types: `string`, `number`, `boolean`, `markdown`, `url` (validated), `list`.
 - **Live data:** templates declare state vars and bind them in markup (`data-surface-bind`) — see [../state/stateful-surfaces.md](../state/stateful-surfaces.md).
 - **Actions:** emitted via the injected `Surface.action(name, data)` helper, no postMessage boilerplate.
 
@@ -52,7 +52,7 @@ surface create "Release 2.1" --template release-card --param version=2.1 --param
 EOF
 ```
 
-Interpolation happens server-side and produces a **normal artifact** — thumbnails, SSE, state, versions all work unchanged downstream. Re-running with the same `--id` updates params and re-renders. Sugar verbs (`surface ask`, `surface video`, `surface doc`, `surface append`) wrap common templates so the everyday cases are one short command.
+Interpolation happens server-side and produces a **normal artifact** — thumbnails, SSE, state, versions all work unchanged downstream. Re-running with the same `--id` updates params and re-renders; when the rendered output and title are unchanged it is an idempotent no-op (no new version), which is what lets `surface sync` run on every session start for free. Declared state defaults seed the surface's state on first instantiation. Sugar verbs (`surface ask`, `surface video`, `surface doc`, `surface append`) wrap common templates so the everyday cases are one short command. Instantiation is system-plane only (the engine reads template files from disk).
 
 ```bash
 surface template list             # name, source (project/user/built-in), description

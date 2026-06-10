@@ -1,7 +1,7 @@
 # Trust Model: System and Device Planes
 
-**Status:** Approved — not yet built (Phase 1). Session/pairing infrastructure it builds on is shipped.
-**Code (current):** `server/index.ts` (auth middleware), `server/auth.ts`
+**Status:** Shipped (2026-06)
+**Code:** `server/index.ts` (auth middleware), `server/auth.ts`, `server/routes/helpers.ts` (`requireSystem`)
 
 Surface is a private, single-user product. Its trust model splits into two planes with different physics, and every auth decision follows from taking that split seriously: the **agent plane** (local processes) and the **display plane** (remote browsers).
 
@@ -22,7 +22,7 @@ Phones, extra monitors, and tablets cross the network boundary. This is where re
 
 ## Roles and capability matrix
 
-The shipped `owner`/`client` role fields are vestigial (everything mints `owner`). They are replaced by `system` and `device`:
+The roles are `system` and `device` (the earlier `owner`/`client` names are gone):
 
 | Capability | `system` (loopback or system bearer) | `device` (paired session) |
 |---|---|---|
@@ -38,25 +38,24 @@ The shipped `owner`/`client` role fields are vestigial (everything mints `owner`
 
 The line is drawn at anything that touches the host filesystem, executes code, or mints credentials. A phone left in a cab can still browse and click the user's dashboard, but it can never register a binding that runs a shell command, pair additional devices, or pull files off the disk. Devices can only *fire* pre-registered bindings by clicking — never create them.
 
-## `SURFACE_TOKEN` retirement
+## `SURFACE_TOKEN` removal
 
-The static `SURFACE_TOKEN` env credential (unhashed, no expiry, no revocation) is retired in Phase 1:
+The static `SURFACE_TOKEN` env credential (unhashed, no expiry, no revocation) is gone:
 
 - Local agents never needed it — they have loopback.
 - Displays never use it — they pair.
-- The one legitimate remaining case, an agent on a *remote* machine (SSH dev box, container), mints a system bearer explicitly from loopback: `surface auth session create --role system --label devbox`.
+- The one legitimate remaining case, an agent on a *remote* machine (SSH dev box, container), mints a system bearer explicitly from loopback — `surface auth session issue --role system --label devbox` — and carries it as `SURFACE_SESSION`.
 
-Removal is immediate in Phase 1 (decided 2026-06): the static-token code path and the legacy `surface_token` cookie are deleted outright, with no deprecation release. The fresh-start schema reset (see [roadmap](../roadmap.md)) already breaks old configs, so there is nothing to keep compatible.
+Removal was immediate, with no deprecation cycle (decided 2026-06): the static-token code path and the legacy `surface_token` cookie were deleted outright. A still-set `SURFACE_TOKEN` is ignored; the server logs a warning at boot pointing at the session-bearer path (`server/index.ts`). The fresh-start schema reset (see [roadmap](../roadmap.md)) already broke old configs, so there was nothing to keep compatible.
 
 ## Loopback trust caveats (unchanged)
 
-- `SURFACE_TRUST_LOOPBACK=0` remains mandatory when fronting Surface with a local reverse proxy (Tailscale Serve, Caddy), otherwise every proxied request appears to come from 127.0.0.1. See `SECURITY.md`.
-- When `SURFACE_PUBLIC_URL` is set, startup should warn loudly if loopback trust is still on (approved: warn in Phase 1; flipping the default is a Phase 4 decision).
+- `SURFACE_TRUST_LOOPBACK=0` remains mandatory when fronting Surface with a local reverse proxy (Tailscale Serve, Caddy), otherwise every proxied request appears to come from 127.0.0.1. See `SECURITY.md`. (Surface does not currently detect or warn about the `SURFACE_PUBLIC_URL` + loopback-trust combination — the operator owns this configuration.)
 
-## Implementation notes (Phase 1)
+## Implementation notes
 
-- Migrate `auth_sessions.role` / `auth_pairing_tokens.role` values: `owner` → `system`, `client` → `device`. New pairing tokens default to `device`.
-- `req.auth.role ∈ {system, device}`; add `requireSystem` middleware applied to the restricted route set in the capability matrix (including `POST /surfaces/:id/exec`, which today has no role check beyond authentication).
+- `auth_sessions.role` / `auth_pairing_tokens.role` hold `system`/`device` natively in the fresh-start schema; pairing tokens default to `device` (`server/migrations.ts`, `server/auth.ts`).
+- `req.auth.role ∈ {system, device}`; the `requireSystem` check (`server/routes/helpers.ts`) gates the restricted route set in the capability matrix, including `POST /artifacts/:id/exec`.
 - `GET /api/auth/session` returns the resolved role so the PWA can hide system-only UI on devices.
 
 ## Related

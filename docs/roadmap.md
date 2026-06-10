@@ -1,5 +1,7 @@
 # Roadmap
 
+**Status: all four phases are implemented** (2026-06) — see [STATUS.md](../STATUS.md) for the summary. Kept for the record of what was decided and why.
+
 The approved build plan. Every feature here has a full spec in this docs tree — this file is the ordering, the scope boundaries, and the acceptance bar. Statuses: each phase ships independently and leaves the system working.
 
 ## Recently completed

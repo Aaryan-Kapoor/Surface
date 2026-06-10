@@ -1,7 +1,7 @@
 # Project Ownership & Agent Attribution
 
-**Status:** Approved — not yet built (Phase 1)
-**Code (current):** none — new columns/flags on existing create paths
+**Status:** Shipped (2026-06)
+**Code:** `bin/surface.ts` (`resolveProjectRoot`, `attributionMetadata`), `server/routes/artifacts.ts` (`--project`/`--agent` filters), `server/migrations.ts` (`artifacts.project_root`)
 
 Surfaces are owned by **the user's git projects**, not by agents. The project directory is the one identity that is unambiguous, durable, and free: it's where the agent was standing when it created the surface, and the project's own git history already records which agent changed what — better than Surface ever could. Agent identity in Surface is deliberately just a courtesy label.
 
@@ -14,13 +14,13 @@ Every agent on the machine runs as the same OS user. Tokens, env vars (`SURFACE_
 On every create path (`surface create`, `surface link`, `surface present`, template instantiation), the CLI resolves the project root and stamps it:
 
 - Resolution: `git rev-parse --show-toplevel` from the working directory; fallback to the working directory itself when not in a git repo.
-- Storage: new `artifacts.project_root TEXT` column (nullable — surfaces created outside any project context, e.g. by a daemon, have none).
-- Override: `--project <path>` for the rare case the CLI runs outside the project it's acting for.
+- Storage: the `artifacts.project_root TEXT` column (nullable — surfaces created outside any project context, e.g. by a daemon, have none), indexed for filtering.
+- Override: the HTTP API takes `project_root` directly in the body, for callers acting on behalf of a different project than their cwd.
 
 What it buys:
 
-- **Dashboard grouping** — the grid groups cards by project ("myapp", "dotfiles", ungrouped), which is the natural mental model once several projects each have several surfaces.
-- **Scoped listing** — `surface list --project .` shows only the current project's surfaces; SKILL.md tells agents to check this before creating duplicates.
+- **Card attribution** — cards carry their project (and agent label) so the grid can show `myapp · claude-code · 2h ago`.
+- **Scoped listing** — `surface list --project <root>` shows only that project's surfaces (`GET /artifacts?project=`); SKILL.md tells agents to check this before creating duplicates.
 - **`.surface/` reconciliation** — the project directory convention ([../state/project-directory.md](../state/project-directory.md)) keys off the same root.
 
 ## Agent attribution
@@ -32,8 +32,8 @@ surface create "Build status" --agent claude-code …
 surface link ./report.html --agent codex …
 ```
 
-- Storage: `metadata.agent` (string label). No schema migration; it rides the existing metadata JSON.
-- Display: cards show `myapp · claude-code · 2h ago`; `surface list --agent codex` filters.
+- Storage: `metadata.agent` (string label). No schema column; it rides the existing metadata JSON.
+- Display: cards show `myapp · claude-code · 2h ago`; `surface list --agent codex` filters (`GET /artifacts?agent=`).
 - Contract: SKILL.md instructs each harness to pass its own name. Nothing enforces honesty — see [trust-model.md](trust-model.md) for why that's acceptable.
 - Attribution also rides actions and state writes where useful (`--agent` on `surface set`, used by the [board template](../templates/board.md) to key sections).
 
@@ -41,7 +41,7 @@ surface link ./report.html --agent codex …
 
 - The earlier `SURFACE_AGENT` env-var idea: rejected (shared env across agents).
 - Per-agent sessions/tokens: rejected (no real isolation on a shared uid).
-- `artifact_versions.created_by` (never populated today): superseded by `metadata.agent`; dropped in the Phase 1 model collapse.
+- `artifact_versions.created_by` (never populated): superseded by `metadata.agent`; dropped in the fresh-start baseline.
 
 ## Related
 
