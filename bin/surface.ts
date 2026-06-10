@@ -29,6 +29,13 @@ Commands:
   set <id> <key> <value>     Set one state key (dotted paths ok, value parsed as JSON)
   patch <id> <json|->        Deep-merge a JSON patch into surface state
   state <id>                 Read surface state
+  ask <question>             Context-full question on every display (--wait blocks for the answer)
+  append <id> [text|-]       Append to a stream surface (pipe with -)
+  video <url>                Embed a YouTube/web video (one line)
+  doc <path>                 Render a repo markdown file, hot-reloading
+  template [list|show|create] Manage templates (create --from promotes a surface)
+  init                       Scaffold .surface/ + SURFACE.md in the current project
+  sync                       Reconcile .surface/ manifests with the running service
   versions <id>              List artifact versions
   rollback <id> <version>    Restore artifact version
   delete <id>                Delete artifact
@@ -59,7 +66,7 @@ Environment:
 const CMD_HELP: Record<string, string> = {
   list: "surface list [--project <root>] [--agent <label>] [--include-hidden]",
   read: "surface read <id>",
-  create: "surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--id <id>] [--agent <label>] [--metadata <json>]",
+  create: "surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--template <name> --param k=v ...] [--id <id>] [--agent <label>] [--metadata <json>]",
   update: "surface update <id> [--title <t>] [--mime <type>] [--file <path>|--content <s>|--content -] [--metadata <json>]",
   link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--agent <label>] [--metadata <json>] [--no-open]",
   touch: "surface touch <id>",
@@ -67,6 +74,20 @@ const CMD_HELP: Record<string, string> = {
   set: "surface set <id> <dotted.key> <value>   (value parsed as JSON, falls back to string; null deletes)",
   patch: "surface patch <id> <json|->",
   state: "surface state <id>",
+  ask: "surface ask <question> [--options a,b,c] [--freetext] [--context -|<md>] [--context-file <p>] [--wait] [--timeout <s>] [--on <device>] [--id <id>] [--agent <l>] [--title <t>]",
+  append: "surface append <id> [<text>|-] [--md]   (- pipes stdin line by line)",
+  video: "surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]",
+  doc: "surface doc <path> [--title <t>] [--toc] [--width narrow|default|wide] [--agent <l>] [--no-open]",
+  template: [
+    "surface template list [--json]",
+    "surface template show <name>",
+    "surface template create <name> --from <artifact-id> [--user]   (--user → ~/.surface/templates, else <project>/.surface/templates)",
+  ].join("\n"),
+  init: "surface init   (scaffolds .surface/{config.json,surfaces/,templates/} and SURFACE.md at the project root)",
+  sync: [
+    "surface sync                 reconcile every .surface/surfaces/*.json manifest (create missing, re-render drifted)",
+    "surface sync --export <id>   write a manifest for an existing surface into .surface/surfaces/",
+  ].join("\n"),
   versions: "surface versions <id>",
   rollback: "surface rollback <id> <version>",
   delete: "surface delete <id>",
@@ -110,29 +131,44 @@ const DEMO_TITLES: Record<string, string> = {
 interface ParsedArgs {
   positional: string[];
   flags: Record<string, string | boolean>;
+  multi: Record<string, string[]>;
 }
 
 // Flags that never take a value. Anything not listed here that's followed by a
 // non-`--` token consumes that token as its value. Adding a flag here prevents
 // it from silently swallowing the next positional argument.
-const BOOLEAN_FLAGS = new Set(["help", "json", "no-ack", "no-open", "no-qr", "include-hidden"]);
+const BOOLEAN_FLAGS = new Set([
+  "help", "json", "no-ack", "no-open", "no-qr", "include-hidden",
+  "freetext", "wait", "md", "toc", "autoplay", "loop", "user",
+]);
+
+// Flags that may repeat (--param a=1 --param b=2); collected in order.
+const MULTI_FLAGS = new Set(["param"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
   const flags: Record<string, string | boolean> = {};
+  const multi: Record<string, string[]> = {};
+  const record = (name: string, value: string | boolean) => {
+    if (MULTI_FLAGS.has(name) && typeof value === "string") {
+      (multi[name] = multi[name] || []).push(value);
+    } else {
+      flags[name] = value;
+    }
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg.startsWith("--")) {
       const name = arg.slice(2);
       const eq = name.indexOf("=");
       if (eq !== -1) {
-        flags[name.slice(0, eq)] = name.slice(eq + 1);
+        record(name.slice(0, eq), name.slice(eq + 1));
       } else if (BOOLEAN_FLAGS.has(name)) {
         flags[name] = true;
       } else {
         const next = argv[i + 1];
         if (next !== undefined && !next.startsWith("--")) {
-          flags[name] = next;
+          record(name, next);
           i++;
         } else {
           flags[name] = true;
@@ -142,7 +178,28 @@ function parseArgs(argv: string[]): ParsedArgs {
       positional.push(arg);
     }
   }
-  return { positional, flags };
+  return { positional, flags, multi };
+}
+
+// --param k=v pairs → params object; a value of "-" reads stdin (one max).
+async function collectParams(multi: Record<string, string[]>): Promise<Record<string, unknown> | undefined> {
+  const pairs = multi.param || [];
+  if (!pairs.length) return undefined;
+  const params: Record<string, unknown> = {};
+  let stdinUsed = false;
+  for (const pair of pairs) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) usage(`--param expects key=value (got "${pair}")`);
+    const key = pair.slice(0, eq);
+    let value: unknown = pair.slice(eq + 1);
+    if (value === "-") {
+      if (stdinUsed) usage("only one --param may read stdin");
+      stdinUsed = true;
+      value = await readStdin();
+    }
+    params[key] = value;
+  }
+  return params;
 }
 
 function parseMetadataField(raw: unknown): Record<string, unknown> | null {
@@ -281,6 +338,143 @@ function usage(message: string): never {
   process.exit(2);
 }
 
+// Block until a matching action arrives (the layer-1 live waiter of the
+// delivery ladder). Resolves {action} on a match, {timedOut: true} when
+// timeoutSec elapses first. Ack is implicit on delivery unless disabled.
+async function waitForAction(opts: {
+  surfaceId?: string;
+  wantAction?: string;
+  wantEvent?: string;
+  timeoutSec?: number;
+  autoAck?: boolean;
+}): Promise<{ action?: any; timedOut?: boolean }> {
+  const wantEvent = opts.wantEvent || "surface_action";
+  const autoAck = opts.autoAck !== false;
+
+  const normalizeData = (d: unknown) => {
+    if (typeof d === "string") {
+      try { return JSON.parse(d); } catch { return d; }
+    }
+    return d;
+  };
+
+  const isMatch = (a: any): boolean => {
+    if (!a || typeof a !== "object") return false;
+    if (opts.surfaceId && a.surface_id !== opts.surfaceId) return false;
+    if (opts.wantAction && a.action !== opts.wantAction) return false;
+    return true;
+  };
+
+  const finalize = async (action: any) => {
+    if (autoAck && action.id && wantEvent === "surface_action") {
+      try { await call("POST", `/actions/${encodeURIComponent(action.id)}/ack`); } catch {}
+    }
+    return {
+      id: action.id,
+      surface_id: action.surface_id,
+      surface_title: action.surface_title,
+      action: action.action,
+      data: normalizeData(action.data),
+      created_at: action.created_at,
+    };
+  };
+
+  // Oldest-pending-first: drain the inbox before listening live, so an action
+  // that arrived while no waiter was connected is never skipped.
+  const pollPending = async (): Promise<any | null> => {
+    if (wantEvent !== "surface_action") return null;
+    try {
+      const path = opts.surfaceId ? `/artifacts/${encodeURIComponent(opts.surfaceId)}/actions` : `/actions`;
+      const pending = (await call("GET", path)) as any[];
+      for (const a of pending) {
+        if (isMatch(a)) return finalize(a);
+      }
+    } catch {}
+    return null;
+  };
+
+  const work = (async () => {
+    const pending = await pollPending();
+    if (pending) return pending;
+    let backoff = 1000;
+    while (true) {
+      // Always listen on the global stream — per-surface streams don't carry
+      // surface_action events. Filtering happens in isMatch().
+      const url = `${BASE}/stream`;
+      const headers: Record<string, string> = { Accept: "text/event-stream" };
+      if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
+      let res: Response;
+      try {
+        res = await fetch(url, { headers });
+      } catch {
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 30000);
+        continue;
+      }
+      if (!res.ok || !res.body) {
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 30000);
+        continue;
+      }
+      backoff = 1000;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let evt = "message";
+      let lines: string[] = [];
+      let disconnected = false;
+      while (!disconnected) {
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await reader.read();
+        } catch {
+          disconnected = true;
+          break;
+        }
+        if (chunk.done) {
+          disconnected = true;
+          break;
+        }
+        buf += decoder.decode(chunk.value, { stream: true });
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl).replace(/\r$/, "");
+          buf = buf.slice(nl + 1);
+          if (line === "") {
+            if (lines.length > 0 && evt === wantEvent) {
+              let parsed: any;
+              try { parsed = JSON.parse(lines.join("\n")); } catch { parsed = lines.join("\n"); }
+              if (isMatch(parsed)) return finalize(parsed);
+            }
+            evt = "message";
+            lines = [];
+          } else if (line.startsWith(":")) {
+            // SSE comment / heartbeat
+          } else if (line.startsWith("event:")) {
+            evt = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            lines.push(line.slice(5).trim());
+          }
+        }
+      }
+      // Reconnect: re-poll pending actions to catch anything during the gap.
+      const missed = await pollPending();
+      if (missed) return missed;
+    }
+  })();
+
+  if (opts.timeoutSec && opts.timeoutSec > 0) {
+    let timer: NodeJS.Timeout;
+    const timeoutP = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), opts.timeoutSec! * 1000);
+    });
+    const raced = await Promise.race([work.then((action) => ({ action })), timeoutP]);
+    clearTimeout(timer!);
+    return raced as { action?: any; timedOut?: boolean };
+  }
+  return { action: await work };
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
@@ -288,7 +482,7 @@ async function main() {
     console.log(HELP);
     return;
   }
-  const { positional, flags } = parseArgs(argv.slice(1));
+  const { positional, flags, multi } = parseArgs(argv.slice(1));
   if (flags.help) {
     console.log(CMD_HELP[cmd] || `Unknown command: ${cmd}`);
     return;
@@ -315,14 +509,237 @@ async function main() {
     case "create": {
       const title = positional[0];
       if (!title) usage("usage: " + CMD_HELP.create);
-      const content = await readContent(flags);
       const body: Record<string, unknown> = { title, project_root: resolveProjectRoot() };
       if (typeof flags.id === "string") body.id = flags.id;
-      if (typeof flags.mime === "string") body.mime = flags.mime;
-      if (content !== undefined) body.content = content;
+      if (typeof flags.template === "string") {
+        body.template = flags.template;
+        const params = await collectParams(multi);
+        if (params) body.params = params;
+      } else {
+        const content = await readContent(flags);
+        if (typeof flags.mime === "string") body.mime = flags.mime;
+        if (content !== undefined) body.content = content;
+      }
       const metadata = attributionMetadata(flags);
       if (metadata) body.metadata = metadata;
       out(await call("POST", "/artifacts", body));
+      return;
+    }
+
+    case "ask": {
+      const question = positional[0];
+      if (!question) usage("usage: " + CMD_HELP.ask);
+      const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 0;
+      let contextMd = "";
+      if (flags.context === "-") contextMd = await readStdin();
+      else if (typeof flags.context === "string") contextMd = flags.context;
+      else if (typeof flags["context-file"] === "string") contextMd = fs.readFileSync(path.resolve(flags["context-file"]), "utf8");
+
+      const params: Record<string, unknown> = { question };
+      if (contextMd) params.context_md = contextMd;
+      if (typeof flags.options === "string") params.options = flags.options;
+      if (flags.freetext === true) params.freetext = true;
+      if (timeoutSec > 0) params.expires_at = new Date(Date.now() + timeoutSec * 1000).toISOString();
+
+      const body: Record<string, unknown> = {
+        template: "ask",
+        params,
+        title: typeof flags.title === "string" ? flags.title : question,
+        project_root: resolveProjectRoot(),
+      };
+      if (typeof flags.id === "string") body.id = flags.id;
+      const metadata = attributionMetadata(flags);
+      if (metadata) body.metadata = metadata;
+
+      const created = await call("POST", "/artifacts", body);
+      const surfaceId = created.artifact.id;
+
+      if (typeof flags.on === "string") {
+        await call("POST", "/display/navigate", { surface_id: surfaceId, device: flags.on });
+      }
+
+      if (flags.wait !== true) {
+        out(created);
+        return;
+      }
+
+      const result = await waitForAction({ surfaceId, wantAction: "answer", timeoutSec });
+      if (result.timedOut) {
+        // Expire the card so stale questions can't be answered later.
+        try { await call("PATCH", `/artifacts/${encodeURIComponent(surfaceId)}/state`, { status: "expired" }); } catch {}
+        console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec, surface_id: surfaceId }));
+        process.exit(3);
+      }
+      // The server stamps answered_at/device into state.answer when it flips
+      // the card — prefer that record over the bare action payload.
+      let answer: any = result.action?.data ?? {};
+      try {
+        const state = await call("GET", `/artifacts/${encodeURIComponent(surfaceId)}/state`);
+        if (state?.state?.answer) answer = state.state.answer;
+      } catch {}
+      console.log(JSON.stringify({
+        choice: answer.choice ?? null,
+        text: answer.text ?? null,
+        answered_at: answer.answered_at ?? result.action?.created_at ?? null,
+        device: answer.device ?? null,
+        surface_id: surfaceId,
+      }, null, 2));
+      process.exit(0);
+    }
+
+    case "append": {
+      const id = positional[0];
+      if (!id) usage("usage: " + CMD_HELP.append);
+      const kind = flags.md === true ? "md" : "text";
+      const inline = positional.slice(1).join(" ");
+
+      if (inline && inline !== "-") {
+        out(await call("POST", `/artifacts/${encodeURIComponent(id)}/append`, {
+          chunks: [{ kind, content: inline }],
+        }));
+        return;
+      }
+
+      // Pipe mode: stream stdin line by line, batching so a chatty build log
+      // doesn't become one HTTP request per line.
+      let batch: Array<{ kind: string; content: string }> = [];
+      let flushing = Promise.resolve();
+      const flush = () => {
+        if (!batch.length) return flushing;
+        const chunks = batch;
+        batch = [];
+        flushing = flushing.then(() =>
+          call("POST", `/artifacts/${encodeURIComponent(id)}/append`, { chunks }).then(() => {}, () => {}),
+        );
+        return flushing;
+      };
+      let timer: NodeJS.Timeout | null = null;
+      const schedule = () => {
+        if (timer) return;
+        timer = setTimeout(() => { timer = null; flush(); }, 300);
+      };
+
+      await new Promise<void>((resolve) => {
+        let buf = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", (data: string) => {
+          buf += data;
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            batch.push({ kind, content: buf.slice(0, nl) });
+            buf = buf.slice(nl + 1);
+            if (batch.length >= 50) flush();
+          }
+          schedule();
+        });
+        process.stdin.on("end", () => {
+          if (buf) batch.push({ kind, content: buf });
+          resolve();
+        });
+      });
+      if (timer) clearTimeout(timer);
+      await flush();
+      await flushing;
+      return;
+    }
+
+    case "video": {
+      const url = positional[0];
+      if (!url) usage("usage: " + CMD_HELP.video);
+      if (!/^https?:\/\//.test(url)) {
+        usage("video expects an http(s) URL — for local video files use: surface present <path>");
+      }
+      const params: Record<string, unknown> = { url };
+      if (typeof flags.start === "string") params.start = Number(flags.start);
+      if (flags.autoplay === true) params.autoplay = true;
+      if (flags.loop === true) params.loop = true;
+      if (typeof flags.title === "string") params.title = flags.title;
+      const body: Record<string, unknown> = {
+        template: "video",
+        params,
+        title: typeof flags.title === "string" ? flags.title : url,
+        project_root: resolveProjectRoot(),
+      };
+      if (typeof flags.id === "string") body.id = flags.id;
+      const metadata = attributionMetadata(flags);
+      if (metadata) body.metadata = metadata;
+      out(await call("POST", "/artifacts", body));
+      return;
+    }
+
+    case "doc": {
+      const docPath = positional[0];
+      if (!docPath) usage("usage: " + CMD_HELP.doc);
+      const abs = path.resolve(docPath);
+      const params: Record<string, unknown> = {};
+      if (flags.toc === true) params.toc = true;
+      if (typeof flags.width === "string") params.width = flags.width;
+      const body: Record<string, unknown> = {
+        path: abs,
+        title: typeof flags.title === "string" ? flags.title : path.basename(abs),
+        template: "doc",
+        params,
+        project_root: resolveProjectRoot(),
+      };
+      const metadata = attributionMetadata(flags);
+      if (metadata) body.metadata = metadata;
+      if (flags["no-open"] === true) body.open = false;
+      out(await call("POST", "/artifacts/link", body));
+      return;
+    }
+
+    case "template": {
+      const sub = positional[0];
+      const projectRoot = resolveProjectRoot();
+      if (sub === "list" || sub === undefined) {
+        const templates: any[] = await call("GET", `/api/templates?project=${encodeURIComponent(projectRoot)}`);
+        if (flags.json) { out(templates); return; }
+        const w = Math.max(4, ...templates.map((t) => t.name.length)) + 2;
+        console.log(`${"NAME".padEnd(w)}${"SOURCE".padEnd(10)}DESCRIPTION`);
+        for (const t of templates) console.log(`${t.name.padEnd(w)}${t.source.padEnd(10)}${t.description}`);
+        return;
+      }
+      if (sub === "show") {
+        const name = positional[1];
+        if (!name) usage("usage: " + CMD_HELP.template);
+        out(await call("GET", `/api/templates/${encodeURIComponent(name)}?project=${encodeURIComponent(projectRoot)}`));
+        return;
+      }
+      if (sub === "create") {
+        // Promote an existing surface into a template scaffold. Written by the
+        // CLI (never the service) so the repo's .surface/ stays agent-edited.
+        const name = positional[1];
+        const from = typeof flags.from === "string" ? flags.from : "";
+        if (!name || !from) usage("usage: " + CMD_HELP.template);
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) usage("template names are [A-Za-z0-9._-]");
+        const artifact = await call("GET", `/artifacts/${encodeURIComponent(from)}`);
+        const htmlFile = (artifact.files || []).find((f: any) => f.mime === "text/html" || f.path.endsWith(".html"));
+        if (!htmlFile) fail(new Error(`Artifact ${from} has no HTML file to promote`));
+        const destBase = flags.user === true
+          ? path.join(process.env.HOME || "~", ".surface", "templates")
+          : path.join(projectRoot, ".surface", "templates");
+        const dest = path.join(destBase, name);
+        if (fs.existsSync(dest)) fail(new Error(`Template directory already exists: ${dest}`));
+        const htmlRes = await fetch(`${BASE}/artifacts/${encodeURIComponent(from)}/files/${htmlFile.path}`, {
+          headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+        });
+        const html = await htmlRes.text();
+        fs.mkdirSync(dest, { recursive: true });
+        fs.writeFileSync(path.join(dest, "index.html"), html);
+        fs.writeFileSync(path.join(dest, "template.json"), JSON.stringify({
+          name,
+          description: `Promoted from "${artifact.artifact?.title || from}" — edit me`,
+          params: {},
+          state: {},
+          actions: [],
+        }, null, 2) + "\n");
+        out({
+          created: dest,
+          next: "Edit template.json (declare params/state/actions) and replace hard-coded values in index.html with {{param}} slots.",
+        });
+        return;
+      }
+      usage("usage: " + CMD_HELP.template);
       return;
     }
 
@@ -576,132 +993,13 @@ async function main() {
       const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 0;
       const autoAck = flags["no-ack"] !== true;
 
-      const normalizeData = (d: unknown) => {
-        if (typeof d === "string") {
-          try { return JSON.parse(d); } catch { return d; }
-        }
-        return d;
-      };
-
-      const isMatch = (a: any): boolean => {
-        if (!a || typeof a !== "object") return false;
-        if (surfaceId && a.surface_id !== surfaceId) return false;
-        if (wantAction && a.action !== wantAction) return false;
-        return true;
-      };
-
-      const finalize = async (action: any): Promise<never> => {
-        const result = {
-          id: action.id,
-          surface_id: action.surface_id,
-          surface_title: action.surface_title,
-          action: action.action,
-          data: normalizeData(action.data),
-          created_at: action.created_at,
-        };
-        if (autoAck && action.id && wantEvent === "surface_action") {
-          try { await call("POST", `/actions/${encodeURIComponent(action.id)}/ack`); } catch {}
-        }
-        console.log(JSON.stringify(result, null, 2));
-        process.exit(0);
-      };
-
-      const pollPending = async () => {
-        if (wantEvent !== "surface_action") return;
-        try {
-          const path = surfaceId ? `/artifacts/${encodeURIComponent(surfaceId)}/actions` : `/actions`;
-          const pending = (await call("GET", path)) as any[];
-          for (const a of pending) {
-            if (isMatch(a)) await finalize(a);
-          }
-        } catch {}
-      };
-
-      const work = (async () => {
-        await pollPending();
-        let backoff = 1000;
-        while (true) {
-          // Always listen on the global stream — per-surface stream doesn't carry
-          // surface_action events. Filtering by surface_id happens in isMatch().
-          const url = `${BASE}/stream`;
-          const headers: Record<string, string> = { Accept: "text/event-stream" };
-          if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
-          let res: Response;
-          try {
-            res = await fetch(url, { headers });
-          } catch {
-            await new Promise((r) => setTimeout(r, backoff));
-            backoff = Math.min(backoff * 2, 30000);
-            continue;
-          }
-          if (!res.ok || !res.body) {
-            await new Promise((r) => setTimeout(r, backoff));
-            backoff = Math.min(backoff * 2, 30000);
-            continue;
-          }
-          backoff = 1000;
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buf = "";
-          let evt = "message";
-          let lines: string[] = [];
-          let disconnected = false;
-          while (!disconnected) {
-            let chunk: ReadableStreamReadResult<Uint8Array>;
-            try {
-              chunk = await reader.read();
-            } catch {
-              disconnected = true;
-              break;
-            }
-            if (chunk.done) {
-              disconnected = true;
-              break;
-            }
-            buf += decoder.decode(chunk.value, { stream: true });
-            let nl: number;
-            while ((nl = buf.indexOf("\n")) !== -1) {
-              const line = buf.slice(0, nl).replace(/\r$/, "");
-              buf = buf.slice(nl + 1);
-              if (line === "") {
-                if (lines.length > 0 && evt === wantEvent) {
-                  let parsed: any;
-                  try { parsed = JSON.parse(lines.join("\n")); } catch { parsed = lines.join("\n"); }
-                  if (isMatch(parsed)) await finalize(parsed);
-                }
-                evt = "message";
-                lines = [];
-              } else if (line.startsWith(":")) {
-                // SSE comment / heartbeat
-              } else if (line.startsWith("event:")) {
-                evt = line.slice(6).trim();
-              } else if (line.startsWith("data:")) {
-                lines.push(line.slice(5).trim());
-              }
-            }
-          }
-          // Reconnect: re-poll pending actions to catch anything during the gap.
-          await pollPending();
-        }
-      })();
-
-      if (timeoutSec > 0) {
-        const timeoutP = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("__TIMEOUT__")), timeoutSec * 1000),
-        );
-        try {
-          await Promise.race([work, timeoutP]);
-        } catch (err: any) {
-          if (err?.message === "__TIMEOUT__") {
-            console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
-            process.exit(3);
-          }
-          throw err;
-        }
-      } else {
-        await work;
+      const result = await waitForAction({ surfaceId, wantAction, wantEvent, timeoutSec, autoAck });
+      if (result.timedOut) {
+        console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
+        process.exit(3);
       }
-      return;
+      console.log(JSON.stringify(result.action, null, 2));
+      process.exit(0);
     }
 
     case "pair": {
@@ -798,6 +1096,129 @@ async function main() {
       for (const r of rows) {
         console.log(`${r.label.padEnd(w)}${r.seen.padEnd(12)}${r.viewing.padEnd(v)}${r.ip}`);
       }
+      return;
+    }
+
+    case "init": {
+      const root = resolveProjectRoot();
+      const surfaceDir = path.join(root, ".surface");
+      const created: string[] = [];
+      const mkdir = (p: string) => {
+        if (!fs.existsSync(p)) { fs.mkdirSync(p, { recursive: true }); created.push(path.relative(root, p) + "/"); }
+      };
+      mkdir(surfaceDir);
+      mkdir(path.join(surfaceDir, "surfaces"));
+      mkdir(path.join(surfaceDir, "templates"));
+      const configPath = path.join(surfaceDir, "config.json");
+      if (!fs.existsSync(configPath)) {
+        // bindings.enabled: null = the wake-binding consent question hasn't
+        // been asked yet (ask once per project, record the answer here).
+        fs.writeFileSync(configPath, JSON.stringify({ bindings: { enabled: null } }, null, 2) + "\n");
+        created.push(".surface/config.json");
+      }
+      const surfaceMdPath = path.join(root, "SURFACE.md");
+      if (!fs.existsSync(surfaceMdPath)) {
+        fs.writeFileSync(surfaceMdPath, [
+          "# SURFACE.md",
+          "",
+          "What this project shows on the user's Surface display, and how agents should treat it.",
+          "Agents: read this at session start, alongside draining `surface actions`. Keep it current",
+          "the way you keep CLAUDE.md current.",
+          "",
+          "## Surfaces",
+          "",
+          "| id | what it is | update when |",
+          "|---|---|---|",
+          "| _(none yet — `surface sync --export <id>` adds manifests under `.surface/surfaces/`)_ | | |",
+          "",
+          "## State variables",
+          "",
+          "_(document which `surface set` keys matter and when to update them)_",
+          "",
+          "## Conventions",
+          "",
+          "- Definitions live in `.surface/` (committed); live values live in Surface's own DB — never write runtime state into this repo.",
+          "- `.surface/config.json → bindings.enabled` records whether the user wants clicks to wake offline agents (costs a headless session per wake). Ask once, record the answer, don't re-ask.",
+          "",
+        ].join("\n"));
+        created.push("SURFACE.md");
+      }
+      out({ project: root, created: created.length ? created : "(everything already existed)" });
+      return;
+    }
+
+    case "sync": {
+      const root = resolveProjectRoot();
+      const surfacesDir = path.join(root, ".surface", "surfaces");
+
+      if (typeof flags.export === "string") {
+        const id = flags.export;
+        const data = await call("GET", `/artifacts/${encodeURIComponent(id)}`);
+        let templateParams: Record<string, unknown> = {};
+        try { templateParams = JSON.parse(data.artifact.metadata)?.template_params || {}; } catch {}
+        const manifest: Record<string, unknown> = {
+          id: data.artifact.id,
+          title: data.artifact.title,
+        };
+        if (data.artifact.template) {
+          manifest.template = data.artifact.template;
+          manifest.params = templateParams;
+        }
+        manifest.state = { schema: {}, defaults: {} };
+        manifest.bindings = [];
+        fs.mkdirSync(surfacesDir, { recursive: true });
+        const dest = path.join(surfacesDir, `${data.artifact.id}.json`);
+        fs.writeFileSync(dest, JSON.stringify(manifest, null, 2) + "\n");
+        out({ exported: path.relative(root, dest) });
+        return;
+      }
+
+      if (!fs.existsSync(surfacesDir)) {
+        fail(new Error(`No .surface/surfaces/ in ${root} — run surface init first`));
+      }
+      const results: Array<Record<string, unknown>> = [];
+      for (const entry of fs.readdirSync(surfacesDir).filter((f) => f.endsWith(".json")).sort()) {
+        const manifestPath = path.join(surfacesDir, entry);
+        let manifest: any;
+        try {
+          manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        } catch (err: any) {
+          results.push({ manifest: entry, error: `invalid JSON: ${err.message}` });
+          continue;
+        }
+        const id = manifest.id || entry.replace(/\.json$/, "");
+        if (!manifest.template) {
+          results.push({ id, skipped: "manifest has no template (only template-based surfaces sync)" });
+          continue;
+        }
+        try {
+          // Create-or-re-render: the server treats POST with an existing id as
+          // a param update. Live state values are never touched — only empty
+          // state receives manifest defaults.
+          const res = await call("POST", "/artifacts", {
+            id,
+            title: manifest.title || id,
+            template: manifest.template,
+            params: manifest.params || {},
+            project_root: root,
+            metadata: typeof flags.agent === "string" ? { agent: flags.agent } : undefined,
+          });
+          const defaults = manifest.state?.defaults;
+          if (defaults && typeof defaults === "object" && Object.keys(defaults).length) {
+            const state = await call("GET", `/artifacts/${encodeURIComponent(id)}/state`);
+            if (state.state_version === 0) {
+              await call("PATCH", `/artifacts/${encodeURIComponent(id)}/state`, defaults);
+            }
+          }
+          results.push({ id, synced: true, version: res.version?.version });
+          if (Array.isArray(manifest.bindings) && manifest.bindings.length) {
+            results.push({ id, note: "bindings in manifest are registered by surface bind (delivery ladder)" });
+          }
+        } catch (err: any) {
+          results.push({ id, error: err.message });
+        }
+      }
+      out({ project: root, results });
       return;
     }
 

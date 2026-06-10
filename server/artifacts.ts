@@ -377,6 +377,7 @@ export function deleteArtifact(db: Database.Database, id: string): boolean {
   db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
   db.prepare(`DELETE FROM surface_state WHERE artifact_id = ?`).run(id);
   db.prepare(`DELETE FROM surface_bindings WHERE surface_id = ?`).run(id);
+  db.prepare(`DELETE FROM surface_stream_chunks WHERE artifact_id = ?`).run(id);
   return result.changes > 0;
 }
 
@@ -433,6 +434,7 @@ export function linkArtifact(
     entry?: string;
     title: string;
     project_root?: string;
+    template?: string;
     metadata?: Record<string, unknown>;
   }
 ) {
@@ -531,7 +533,7 @@ export function linkArtifact(
     db.prepare(
       `INSERT INTO artifacts (id, title, kind, mime, source_type, template, project_root, workspace_path, metadata, current_version_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(artifactId, params.title, kind, mime, "linked", null, params.project_root || null, workspaceRoot, metadataJson, versionId);
+    ).run(artifactId, params.title, kind, mime, "linked", params.template || null, params.project_root || null, workspaceRoot, metadataJson, versionId);
 
     db.prepare(
       `INSERT INTO artifact_versions (id, artifact_id, parent_version_id, version, reason, manifest_json, content_hash)

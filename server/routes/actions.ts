@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { ackAction, createAction, getDb, getPendingActions } from "../db.js";
 import { getArtifact } from "../artifacts.js";
+import { patchState } from "../state.js";
 import { broadcastGlobal, broadcastToSurface } from "../sse.js";
-import { requireSystem } from "./helpers.js";
+import { deviceNameOf, requireSystem } from "./helpers.js";
 
 export const actionsRouter = Router();
 
@@ -59,7 +60,7 @@ async function fanOutWebhook(payload: {
 }
 
 // Display posts a user action (iframe postMessage → PWA → here).
-actionsRouter.post("/artifacts/:id/actions", (req, res) => {
+actionsRouter.post("/artifacts/:id/actions", (req: any, res) => {
   const artifact = getArtifact(getDb(), req.params.id);
   if (!artifact) {
     res.status(404).json({ error: "Artifact not found" });
@@ -71,6 +72,21 @@ actionsRouter.post("/artifacts/:id/actions", (req, res) => {
     return;
   }
   const act = createAction({ surface_id: req.params.id, action, data });
+
+  // An ask surface flips to answered server-side the moment the answer action
+  // lands, so the card can never be answered twice — independent of whether a
+  // waiter, binding, or nothing at all is listening (docs/templates/ask.md).
+  if (artifact.template === "ask" && action === "answer") {
+    const answer = {
+      ...(typeof data === "object" && data !== null ? data : {}),
+      answered_at: new Date().toISOString(),
+      device: deviceNameOf(req),
+    };
+    const result = patchState(getDb(), req.params.id, { status: "answered", answer });
+    const event = { id: req.params.id, patch: { status: "answered", answer }, state_version: result.state_version };
+    broadcastGlobal("state_patch", event);
+    broadcastToSurface(req.params.id, "state_patch", event);
+  }
   fanOutWebhook({
     surface_id: req.params.id,
     surface_title: artifact.title,

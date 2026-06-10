@@ -217,6 +217,86 @@ async function main() {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
 
+  // ── Template engine (project-local template) ──
+
+  const tplRoot = fs.mkdtempSync(path.join(os.tmpdir(), "surface-tpl-test-"));
+  const tplId = `tpl-test-${suffix}`;
+  try {
+    const tplDir = path.join(tplRoot, ".surface", "templates", "test-card");
+    fs.mkdirSync(tplDir, { recursive: true });
+    fs.writeFileSync(path.join(tplDir, "template.json"), JSON.stringify({
+      name: "test-card",
+      description: "engine test card",
+      params: {
+        name: { type: "string", required: true },
+        notes: { type: "markdown", default: "" },
+      },
+      state: { stage: { type: "string", default: "init" } },
+      actions: ["poke"],
+    }));
+    fs.writeFileSync(path.join(tplDir, "index.html"),
+      "<html><head></head><body><h1>{{name}}</h1><div id=\"notes\">{{{notes}}}</div></body></html>");
+
+    const listed = await api("GET", `/api/templates?project=${encodeURIComponent(tplRoot)}`);
+    assert(listed.some((t: any) => t.name === "test-card" && t.source === "project"), "Project template not listed");
+
+    const inst = await api("POST", "/artifacts", {
+      id: tplId,
+      title: "Engine Test",
+      template: "test-card",
+      params: { name: "<X&Y>", notes: "# Hello" },
+      project_root: tplRoot,
+    });
+    assert(inst.artifact.template === "test-card", "Instantiated artifact missing template name");
+
+    const tplHtml = await api("GET", `/artifacts/${tplId}/files/index.html`);
+    assert(tplHtml.includes("&lt;X&amp;Y&gt;"), "{{param}} was not HTML-escaped");
+    assert(tplHtml.includes("<h1 id=\"hello\">Hello</h1>"), "markdown param was not rendered server-side");
+    assert(tplHtml.includes("window.__TEMPLATE_PARAMS"), "params script not injected");
+
+    const tplState = await api("GET", `/artifacts/${tplId}/state`);
+    assert(tplState.state.stage === "init", "template state default not applied");
+
+    // Re-running with the same id re-renders with new params.
+    const rerun = await api("POST", "/artifacts", {
+      id: tplId,
+      title: "Engine Test v2",
+      template: "test-card",
+      params: { name: "Second" },
+      project_root: tplRoot,
+    });
+    assert(rerun.version.version === 2, "template re-run should create version 2");
+    const tplHtml2 = await api("GET", `/artifacts/${tplId}/files/index.html`);
+    assert(tplHtml2.includes("<h1>Second</h1>"), "re-render did not apply new params");
+
+    const unknownTpl = await raw("POST", "/artifacts", { title: "x", template: "no-such-template" });
+    assert(unknownTpl.status === 400, `Unknown template should 400 (got ${unknownTpl.status})`);
+  } finally {
+    await optionalDelete(`/artifacts/${tplId}`);
+    fs.rmSync(tplRoot, { recursive: true, force: true });
+  }
+
+  // ── Stream chunks ──
+
+  const streamId = `stream-test-${suffix}`;
+  const streamArtifact = await api("POST", "/artifacts", {
+    id: streamId,
+    title: "Stream Test",
+    mime: "text/html",
+    content: "<p>log</p>",
+  });
+  assert(streamArtifact.artifact.id === streamId, "stream artifact create failed");
+  const ap1 = await api("POST", `/artifacts/${streamId}/append`, { content: "line one" });
+  assert(ap1.appended === 1 && ap1.last_seq === 1, "first append wrong seq");
+  const ap2 = await api("POST", `/artifacts/${streamId}/append`, {
+    chunks: [{ kind: "text", content: "line two" }, { kind: "md", content: "### done" }],
+  });
+  assert(ap2.appended === 2 && ap2.last_seq === 3, "batch append wrong seq");
+  const chunkDoc = await api("GET", `/artifacts/${streamId}/chunks`);
+  assert(chunkDoc.chunks.length === 3, "chunk buffer should hold 3");
+  assert(chunkDoc.chunks[2].kind === "md" && chunkDoc.chunks[2].content === "### done", "md chunk mangled");
+  await optionalDelete(`/artifacts/${streamId}`);
+
   await optionalDelete(`/artifacts/${htmlId}`);
   await optionalDelete(`/artifacts/${mdId}`);
 

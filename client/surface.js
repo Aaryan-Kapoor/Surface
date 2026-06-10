@@ -24,6 +24,7 @@
   var state = {};
   var version = 0;
   var listeners = [];
+  var eventListeners = {}; // event name -> [cb]; shares the runtime's SSE connection
 
   function get(obj, path) {
     var parts = String(path).split(".");
@@ -85,8 +86,21 @@
       .catch(function () {});
   }
 
+  var KNOWN_EVENTS = ["state_patch", "stream_append", "surface_updated", "agent_reply", "surface_exec"];
+
   function connect() {
     var sse = new EventSource("/artifacts/" + encodeURIComponent(artifactId) + "/stream");
+    KNOWN_EVENTS.forEach(function (name) {
+      sse.addEventListener(name, function (e) {
+        var cbs = eventListeners[name];
+        if (!cbs || !cbs.length) return;
+        var data;
+        try { data = JSON.parse(e.data); } catch (err) { data = e.data; }
+        for (var i = 0; i < cbs.length; i++) {
+          try { cbs[i](data); } catch (err) { console.error("[surface.js] onEvent handler", err); }
+        }
+      });
+    });
     sse.addEventListener("state_patch", function (e) {
       var data;
       try { data = JSON.parse(e.data); } catch (err) { return; }
@@ -137,6 +151,16 @@
       var i = listeners.indexOf(cb);
       if (i !== -1) listeners.splice(i, 1);
     }; },
+    // Subscribe to this surface's SSE events (stream_append, surface_updated…)
+    // over the runtime's existing connection.
+    onEvent: function (name, cb) {
+      (eventListeners[name] = eventListeners[name] || []).push(cb);
+      return function () {
+        var arr = eventListeners[name] || [];
+        var i = arr.indexOf(cb);
+        if (i !== -1) arr.splice(i, 1);
+      };
+    },
     action: action,
   };
 

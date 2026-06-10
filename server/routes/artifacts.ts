@@ -24,7 +24,9 @@ import {
 import { addSurfaceClient, broadcastGlobal, broadcastToSurface } from "../sse.js";
 import { enqueueThumb, hasThumb, getThumbPath } from "../thumbs.js";
 import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
-import { getState, patchState } from "../state.js";
+import { getState, patchState, setStateIfEmpty } from "../state.js";
+import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
+import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
 import { requireSystem, targetOf } from "./helpers.js";
 
 export const artifactsRouter = Router();
@@ -74,7 +76,7 @@ artifactsRouter.post("/artifacts/present-file", (req: any, res) => {
 
 artifactsRouter.post("/artifacts/link", (req: any, res) => {
   if (!requireSystem(req, res)) return; // serves files straight off the disk
-  const { path: linkPath, entry, title, metadata, open, project_root } = req.body;
+  const { path: linkPath, entry, title, metadata, open, project_root, template, params } = req.body;
   if (!linkPath) {
     res.status(400).json({ error: "path is required" });
     return;
@@ -84,7 +86,11 @@ artifactsRouter.post("/artifacts/link", (req: any, res) => {
     return;
   }
   try {
-    const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata, project_root });
+    if (template) resolveTemplate(template, project_root); // fail fast on unknown templates
+    const mergedMetadata = template
+      ? { ...(metadata || {}), template_params: params || {} }
+      : metadata;
+    const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata: mergedMetadata, project_root, template });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
@@ -113,8 +119,80 @@ artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
   res.json({ touched: true });
 });
 
-artifactsRouter.post("/artifacts", (req, res) => {
-  const { id, title, kind, mime, source_type, metadata, files, content, path: filePath, project_root } = req.body;
+// ── Templates ──
+
+artifactsRouter.get("/api/templates", (req, res) => {
+  const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
+  res.json(listTemplates(project));
+});
+
+artifactsRouter.get("/api/templates/:name", (req, res) => {
+  const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
+  try {
+    const tpl = resolveTemplate(req.params.name, project);
+    res.json({ name: tpl.name, source: tpl.source, dir: tpl.dir, contract: tpl.contract });
+  } catch (err: any) {
+    res.status(404).json({ error: err.message });
+  }
+});
+
+// Instantiate a template into normal artifact files. Re-running with the same
+// id updates params and re-renders (docs/templates/overview.md).
+function instantiateTemplate(req: any, res: any): void {
+  const { id, title, metadata, project_root, template, params } = req.body;
+  try {
+    const tpl = resolveTemplate(template, project_root);
+    const rendered = renderTemplate(tpl, params || {}, { title: title || "" });
+    const inputFiles = [
+      { path: "index.html", content: rendered.html, mime: "text/html" },
+      ...templateAssetFiles(tpl),
+    ];
+    const mergedMetadata = { ...(metadata || {}), template_params: rendered.params };
+    const existing = id ? getArtifact(getDb(), id) : undefined;
+    const db = getDb();
+    let result;
+    if (existing) {
+      result = updateArtifact(db, id, {
+        title: title ?? existing.title,
+        metadata: mergedMetadata,
+        files: inputFiles,
+        reason: "template_rerender",
+      })!;
+      broadcastGlobal("surface_updated", cardPayload(id));
+      broadcastToSurface(id, "surface_updated", { id, reload: true, updated_at: result.artifact.updated_at });
+    } else {
+      result = createArtifact(db, {
+        id,
+        title: title || tpl.name,
+        kind: "html",
+        mime: "text/html",
+        source_type: "generated",
+        template: tpl.name,
+        project_root,
+        metadata: mergedMetadata,
+        files: inputFiles,
+        reason: "template_instantiate",
+      });
+      if (Object.keys(rendered.stateDefaults).length) {
+        setStateIfEmpty(db, result.artifact.id, rendered.stateDefaults);
+      }
+      broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    }
+    enqueueThumb(result.artifact.id);
+    res.status(existing ? 200 : 201).json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+}
+
+artifactsRouter.post("/artifacts", (req: any, res) => {
+  const { id, title, kind, mime, source_type, metadata, files, content, path: filePath, template } = req.body;
+  if (template) {
+    // Template instantiation renders server-side template files from disk.
+    if (!requireSystem(req, res)) return;
+    instantiateTemplate(req, res);
+    return;
+  }
   if (!title) {
     res.status(400).json({ error: "title is required" });
     return;
@@ -135,7 +213,7 @@ artifactsRouter.post("/artifacts", (req, res) => {
       kind,
       mime,
       source_type,
-      project_root,
+      project_root: req.body.project_root,
       metadata,
       files: inputFiles,
       reason: "artifact_create",
@@ -146,6 +224,47 @@ artifactsRouter.post("/artifacts", (req, res) => {
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// ── Stream chunks (docs/templates/stream.md) ──
+
+artifactsRouter.get("/artifacts/:id/chunks", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  res.json({ chunks: getChunks(getDb(), req.params.id) });
+});
+
+artifactsRouter.post("/artifacts/:id/append", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  const artifact = getArtifact(getDb(), req.params.id);
+  if (!artifact) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  const body = req.body || {};
+  const chunks: Array<{ kind?: string; content: string }> = Array.isArray(body.chunks)
+    ? body.chunks
+    : body.content !== undefined
+      ? [{ kind: body.kind, content: body.content }]
+      : [];
+  if (!chunks.length) {
+    res.status(400).json({ error: "content or chunks[] is required" });
+    return;
+  }
+  let cap = DEFAULT_STREAM_CAP;
+  try {
+    const meta = JSON.parse(artifact.metadata);
+    if (Number.isFinite(meta?.stream_cap) && meta.stream_cap > 0) cap = Number(meta.stream_cap);
+  } catch {}
+  const inserted = appendChunks(getDb(), req.params.id, chunks, cap);
+  for (const chunk of inserted) {
+    const event = { id: req.params.id, seq: chunk.seq, chunk: { kind: chunk.kind, content: chunk.content, created_at: chunk.created_at } };
+    broadcastGlobal("stream_append", event);
+    broadcastToSurface(req.params.id, "stream_append", event);
+  }
+  res.status(201).json({ appended: inserted.length, last_seq: inserted[inserted.length - 1]?.seq });
 });
 
 artifactsRouter.get("/artifacts/:id", (req, res) => {
@@ -266,12 +385,53 @@ artifactsRouter.get("/artifacts/:id/state", (req, res) => {
 artifactsRouter.patch("/artifacts/:id/state", (req: any, res) => {
   if (!requireSystem(req, res)) return;
   if (!getArtifact(getDb(), req.params.id)) {
-    res.status(404).json({ error: "Artifact not found" });
-    return;
+    // The default global board materializes on first write
+    // (docs/templates/board.md): `surface set board <agent> …` just works.
+    if (req.params.id === "board") {
+      try {
+        const tpl = resolveTemplate("board", req.body?.__project_root);
+        const rendered = renderTemplate(tpl, {});
+        createArtifact(getDb(), {
+          id: "board",
+          title: "Agent Board",
+          kind: "html",
+          mime: "text/html",
+          source_type: "generated",
+          template: "board",
+          metadata: { template_params: rendered.params },
+          files: [
+            { path: "index.html", content: rendered.html, mime: "text/html" },
+            ...templateAssetFiles(tpl),
+          ],
+          reason: "board_first_write",
+        });
+        broadcastGlobal("surface_created", cardPayload("board"));
+        enqueueThumb("board");
+      } catch (err: any) {
+        res.status(400).json({ error: `Could not create the board: ${err.message}` });
+        return;
+      }
+    } else {
+      res.status(404).json({ error: "Artifact not found" });
+      return;
+    }
   }
   try {
-    const result = patchState(getDb(), req.params.id, req.body);
-    const event = { id: req.params.id, patch: req.body, state_version: result.state_version };
+    let patch = req.body;
+    // Board sections get a server-stamped updated_at so staleness dimming
+    // doesn't depend on agents remembering to send timestamps.
+    const artifact = getArtifact(getDb(), req.params.id);
+    if (artifact?.template === "board" && patch && typeof patch === "object") {
+      const stamped: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(patch as Record<string, unknown>)) {
+        stamped[key] = value && typeof value === "object" && !Array.isArray(value)
+          ? { ...(value as object), updated_at: new Date().toISOString() }
+          : value;
+      }
+      patch = stamped;
+    }
+    const result = patchState(getDb(), req.params.id, patch);
+    const event = { id: req.params.id, patch, state_version: result.state_version };
     broadcastGlobal("state_patch", event);
     broadcastToSurface(req.params.id, "state_patch", event);
     res.json(result);
@@ -307,6 +467,30 @@ artifactsRouter.get("/artifacts/:id/view", (req, res) => {
   if (preferred.mime === "text/html") {
     res.redirect(fileUrl);
     return;
+  }
+
+  // A templated artifact whose entry isn't HTML (e.g. `surface doc` wrapping a
+  // linked markdown file) renders its template on the fly: the template gets
+  // content_url and fetches the live bytes itself, so touch-reload keeps
+  // working without any stored render.
+  if (result.artifact.template) {
+    try {
+      const tpl = resolveTemplate(result.artifact.template, result.artifact.project_root || undefined);
+      let params: Record<string, unknown> = {};
+      try { params = JSON.parse(result.artifact.metadata)?.template_params || {}; } catch {}
+      const rendered = renderTemplate(tpl, params, {
+        title: result.artifact.title,
+        content_url: fileUrl,
+        file_path: preferred.path,
+        preview: isPreview,
+      });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.send(injectSurfaceRuntime(Buffer.from(rendered.html, "utf8"), result.artifact.id));
+      return;
+    } catch (err: any) {
+      console.error(`[templates] on-the-fly render failed for ${result.artifact.id}:`, err.message);
+      // fall through to the generic shell
+    }
   }
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");

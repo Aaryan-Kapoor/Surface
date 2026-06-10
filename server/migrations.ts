@@ -89,6 +89,16 @@ const migrations: Migration[] = [
           FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS surface_stream_chunks (
+          artifact_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'text',
+          content TEXT NOT NULL,
+          created_at TEXT DEFAULT (datetime('now')),
+          PRIMARY KEY (artifact_id, seq),
+          FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS surface_bindings (
           id TEXT PRIMARY KEY,
           surface_id TEXT NOT NULL,
