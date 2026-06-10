@@ -1351,9 +1351,12 @@ function startRename(card, id) {
 // ── Surface View ──
 
 async function renderSurface(id) {
-  if (globalSSE) { globalSSE.close(); globalSSE = null; }
+  if (surfaceSSE) { surfaceSSE.close(); surfaceSSE = null; }
   currentSurfaceId = id;
   resumeTheme();
+  if (!globalSSE || globalSSE.readyState === EventSource.CLOSED) {
+    connectGlobalSSE();
+  }
 
   const res = await fetch("/surfaces/" + id);
   if (!res.ok) { navigate("/"); return; }
