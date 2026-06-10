@@ -4,7 +4,6 @@ let globalSSE = null;
 let surfaceSSE = null;
 let currentSurfaceId = null;
 let displayConfig = {};
-let features = { marketplace: false };
 
 // ── postMessage bridge (iframe → server) ──
 
@@ -669,7 +668,6 @@ function navigate(path) {
 function getRoute() {
   const hash = window.location.hash.slice(1) || "/";
   if (hash === "/") return { view: "grid" };
-  if (hash === "/explore") return { view: "explore" };
   const match = hash.match(/^\/surface\/(.+)$/);
   if (match) return { view: "surface", id: match[1] };
   return { view: "grid" };
@@ -1036,9 +1034,6 @@ function renderGrid() {
   const title = displayConfig.title || "Surface";
   const header = document.createElement("div");
   header.className = "grid-header";
-  const exploreBtn = features.marketplace
-    ? `<button class="explore-btn" onclick="navigate('/explore')">Explore</button>`
-    : "";
   const count = surfaces.length;
   const countLabel = count === 0 ? "" : `${String(count).padStart(2, "0")} ${count === 1 ? "surface" : "surfaces"}`;
   header.innerHTML = `
@@ -1050,7 +1045,6 @@ function renderGrid() {
       ${count > 0 ? `<span class="grid-meta-count">${escapeHtml(countLabel)}</span>` : ""}
       <span class="grid-meta-live">station</span>
     </div>
-    ${exploreBtn}
   `;
   gridView.appendChild(header);
 
@@ -1617,158 +1611,9 @@ function updateGridMeta() {
   if (!metaEl) {
     metaEl = document.createElement("div");
     metaEl.className = "grid-meta";
-    const exploreBtn = header.querySelector(".explore-btn");
-    if (exploreBtn) header.insertBefore(metaEl, exploreBtn);
-    else header.appendChild(metaEl);
+    header.appendChild(metaEl);
   }
   metaEl.textContent = label;
-}
-
-// ── Explore View (Marketplace) ──
-
-async function renderExplore() {
-  if (surfaceSSE) { surfaceSSE.close(); surfaceSSE = null; }
-  if (globalSSE) { globalSSE.close(); globalSSE = null; }
-  currentSurfaceId = null;
-  suspendTheme();
-
-  const container = document.createElement("div");
-  container.appendChild(createStarfield());
-  container.appendChild(createNebulae());
-  container.appendChild(createGrain());
-
-  const view = document.createElement("div");
-  view.className = "explore-view";
-
-  // Header
-  const header = document.createElement("div");
-  header.className = "explore-header";
-  header.innerHTML = `
-    <button class="back-btn" onclick="navigate('/')" aria-label="Back">←</button>
-    <div class="grid-title-block" style="flex:1">
-      <div class="grid-title">Explore</div>
-      <div class="grid-subtitle">themes, renderers, surfaces</div>
-    </div>
-  `;
-  view.appendChild(header);
-
-  // Category pills
-  const cats = document.createElement("div");
-  cats.className = "explore-cats";
-  const categories = [
-    { label: "All", filter: "" },
-    { label: "Surfaces", filter: "type=surface" },
-    { label: "Themes", filter: "type=theme" },
-    { label: "Renderers", filter: "type=renderer" },
-    { label: "Overlays", filter: "type=overlay" },
-  ];
-  categories.forEach((c, i) => {
-    const pill = document.createElement("button");
-    pill.className = "explore-pill" + (i === 0 ? " active" : "");
-    pill.textContent = c.label;
-    pill.onclick = () => {
-      cats.querySelectorAll(".explore-pill").forEach(p => p.classList.remove("active"));
-      pill.classList.add("active");
-      loadMarketplace(c.filter, view.querySelector(".explore-grid"));
-    };
-    cats.appendChild(pill);
-  });
-  view.appendChild(cats);
-
-  // Grid
-  const grid = document.createElement("div");
-  grid.className = "explore-grid";
-  view.appendChild(grid);
-
-  container.appendChild(view);
-  app.innerHTML = "";
-  app.appendChild(container);
-
-  applyTheme(displayConfig);
-  await loadMarketplace("", grid);
-}
-
-async function loadMarketplace(filter, grid) {
-  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-ghost);padding:40px;font-size:13px;letter-spacing:2px">Loading...</div>';
-  const res = await fetch("/marketplace" + (filter ? "?" + filter : ""));
-  const items = await res.json();
-  grid.innerHTML = "";
-
-  if (items.length === 0) {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-ghost);padding:40px">Nothing here yet</div>';
-    return;
-  }
-
-  items.forEach((item, i) => {
-    const card = document.createElement("div");
-    card.className = "explore-card";
-    card.style.animationDelay = (i * 0.06) + "s";
-    bindCardTilt(card);
-
-    // Preview
-    const preview = document.createElement("div");
-    preview.className = "card-preview";
-    if (item.type === "surface") {
-      const iframe = document.createElement("iframe");
-      iframe.sandbox = "allow-scripts";
-      iframe.src = "/marketplace/" + item.id + "/preview";
-      iframe.tabIndex = -1;
-      iframe.loading = "lazy";
-      preview.appendChild(iframe);
-      const overlay = document.createElement("div");
-      overlay.className = "card-preview-overlay";
-      preview.appendChild(overlay);
-    } else {
-      const iconEl = document.createElement("div");
-      iconEl.className = "card-preview-icon";
-      iconEl.textContent = item.icon || "\u25C9";
-      preview.appendChild(iconEl);
-    }
-    card.appendChild(preview);
-
-    // Body
-    const body = document.createElement("div");
-    body.className = "card-body";
-
-    const typeBadge = {surface:"",theme:"Theme",renderer:"Renderer",overlay:"Overlay"}[item.type] || "";
-
-    body.innerHTML = `
-      ${item.icon ? '<span class="card-icon">' + item.icon + '</span>' : ''}
-      <div class="card-title">${escapeHtml(item.title)}</div>
-      <div class="card-description">${escapeHtml(item.description)}</div>
-      ${typeBadge ? '<div class="explore-badge">' + typeBadge + '</div>' : ''}
-    `;
-
-    const installBtn = document.createElement("button");
-    installBtn.className = "install-btn";
-    installBtn.textContent = item.type === "theme" ? "Apply" : item.type === "renderer" ? "Apply" : item.type === "overlay" ? "Apply" : "Install";
-    installBtn.onclick = async (e) => {
-      e.stopPropagation();
-      installBtn.disabled = true;
-      installBtn.textContent = "...";
-      const res = await fetch("/marketplace/" + item.id + "/install", { method: "POST" });
-      const data = await res.json();
-      if (data.action === "exists") {
-        installBtn.textContent = "Installed";
-        installBtn.classList.add("installed");
-      } else if (data.action === "installed") {
-        installBtn.textContent = "Installed ✓";
-        installBtn.classList.add("installed");
-      } else if (data.action === "applied") {
-        installBtn.textContent = "Applied ✓";
-        installBtn.classList.add("installed");
-        // Refresh config for themes/renderers
-        const cfg = await fetch("/display/config").then(r => r.json());
-        applyTheme(cfg);
-        if (data.type === "renderer") {
-          setTimeout(() => navigate("/"), 500);
-        }
-      }
-    };
-    body.appendChild(installBtn);
-    card.appendChild(body);
-    grid.appendChild(card);
-  });
 }
 
 // ── Main Render ──
@@ -1777,11 +1622,6 @@ async function render() {
   const route = getRoute();
   if (route.view === "surface") {
     await renderSurface(route.id);
-  } else if (route.view === "explore" && features.marketplace) {
-    await renderExplore();
-  } else if (route.view === "explore") {
-    navigate("/");
-    return;
   } else {
     const res = await fetch("/surfaces");
     surfaces = await res.json();
@@ -1797,12 +1637,9 @@ async function render() {
 // ── Init ──
 
 function startApp() {
-  return Promise.all([
-    fetch("/display/config").then((r) => r.json()).catch(() => ({})),
-    fetch("/display/features").then((r) => r.json()).catch(() => ({ marketplace: false })),
-  ])
-    .then(([config, feats]) => {
-      features = { marketplace: false, ...feats };
+  return fetch("/display/config")
+    .then((r) => r.json())
+    .then((config) => {
       applyTheme(config);
       return render();
     })

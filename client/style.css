@@ -35,7 +35,7 @@ button, input, select, textarea {
 #app > div { height: 100%; display: flex; flex-direction: column; }
 
 .starfield, .aurora, .star, .star-layer, .nebula, .grain, .comet,
-.card-gleam, .card-preview-overlay, .empty-glyph {
+.card-gleam, .empty-glyph {
   display: none !important;
 }
 
@@ -924,110 +924,6 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   color: var(--fg-faint);
 }
 
-/* ── Explore ── */
-
-.explore-view {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 64px 80px 96px;
-  scrollbar-width: none;
-}
-
-.explore-view::-webkit-scrollbar { display: none; }
-
-.explore-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 32px;
-  max-width: 1200px;
-}
-
-.explore-cats {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 32px;
-  flex-wrap: wrap;
-}
-
-.explore-pill {
-  background: transparent;
-  border: 1px solid var(--hairline);
-  color: var(--fg-muted);
-  padding: 6px 12px;
-  border-radius: 0;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 400;
-  cursor: pointer;
-  transition: color .15s linear, border-color .15s linear;
-}
-
-.explore-pill:hover { color: #ffffff; border-color: var(--hairline-strong); }
-.explore-pill.active { color: #ffffff; border-color: #ffffff; }
-
-.explore-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1px;
-  max-width: 1200px;
-  background: var(--hairline);
-  border: 1px solid var(--hairline);
-}
-
-.explore-card {
-  background: #000000;
-  border: none;
-  border-radius: 0;
-  color: #ffffff;
-  transition: background-color .15s linear;
-}
-
-.explore-card:hover { background: rgba(255, 255, 255, 0.04); }
-.explore-card .card-preview { border-radius: 0; }
-
-.explore-btn {
-  background: transparent;
-  border: 1px solid var(--hairline-strong);
-  color: #ffffff;
-  padding: 7px 14px;
-  border-radius: 0;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.explore-btn:hover { background: #ffffff; color: #000000; border-color: #ffffff; }
-
-.explore-badge {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--fg-muted);
-  margin-top: 6px;
-}
-
-.install-btn {
-  width: 100%;
-  margin-top: 12px;
-  background: transparent;
-  border: 1px solid var(--hairline-strong);
-  color: #ffffff;
-  padding: 10px;
-  border-radius: 0;
-  font-family: var(--font);
-  font-size: 12px;
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.install-btn:hover { background: #ffffff; color: #000000; border-color: #ffffff; }
-.install-btn:disabled { cursor: default; opacity: 0.4; }
-.install-btn.installed { background: rgba(255, 255, 255, 0.06); }
-
 /* ── Home widget ── */
 
 .home-widget {
@@ -1064,8 +960,8 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 }
 
 @media (max-width: 640px) {
-  .grid-view, .explore-view { padding: 36px 20px 48px; }
-  .grid, .explore-grid { grid-template-columns: 1fr; }
+  .grid-view { padding: 36px 20px 48px; }
+  .grid { grid-template-columns: 1fr; }
   .empty-state { padding: 36px 24px; }
   .empty-prompt { font-size: 40px; }
   .empty-suggestions { font-size: 14px; }
