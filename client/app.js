@@ -1051,7 +1051,7 @@ function renderGrid() {
     </div>
     <div class="grid-meta" id="grid-meta">
       ${count > 0 ? `<span class="grid-meta-count">${escapeHtml(countLabel)}</span>` : ""}
-      <span class="grid-meta-live">station</span>
+      <span class="grid-meta-live"><span class="live-dot"></span></span>
     </div>
   `;
   gridView.appendChild(header);
@@ -1150,7 +1150,10 @@ function createGridToolbar() {
   bar.className = "grid-toolbar";
   bar.innerHTML = `
     <div class="grid-toolbar-left">
-      <input type="text" class="grid-search" placeholder="Search…" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off">
+      <span class="grid-search-wrap">
+        <input type="text" class="grid-search" placeholder="Search…" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off">
+        <button type="button" class="grid-kbd" title="Find a surface (⌘K)" aria-label="Find a surface">⌘K</button>
+      </span>
       ${FILTER_GROUPS.map((f) => `
         <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${f.id}">${escapeHtml(f.label)}</button>
       `).join("")}
@@ -1164,6 +1167,7 @@ function createGridToolbar() {
   `;
   const search = bar.querySelector(".grid-search");
   search.addEventListener("input", () => { gridQuery = search.value; paintGrid(); });
+  bar.querySelector(".grid-kbd").addEventListener("click", () => openSurfaceFinder());
   bar.querySelectorAll(".grid-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       gridFilter = btn.dataset.filter;
@@ -1299,6 +1303,8 @@ function createCard(s, index) {
   `;
   card.appendChild(body);
 
+  bindCardTilt(card);
+
   return card;
 }
 
@@ -1325,7 +1331,7 @@ function updateCardBadges(card, s) {
     if (!pill) {
       pill = document.createElement("div");
       pill.className = "card-listening";
-      pill.textContent = "● listening";
+      pill.textContent = "listening";
       disc.appendChild(pill);
     }
   } else if (pill) {
@@ -1585,10 +1591,13 @@ function connectGlobalSSE() {
         if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
         const subEl = card.querySelector(".card-sub");
         if (subEl) {
-          const mime = data.artifact_mime || surfaces[idx].artifact_mime || "";
+          const merged = surfaces[idx];
+          const mime = merged.artifact_mime || (merged.artifact && merged.artifact.mime) || "";
           const parts = [];
           if (mime) parts.push(labelForMime(mime));
-          const t = timeAgo(data.updated_at);
+          if (merged.agent) parts.push(merged.agent);
+          else if (merged.project_root) parts.push(merged.project_root.split("/").pop());
+          const t = timeAgo(merged.updated_at);
           if (t) parts.push(t);
           subEl.textContent = parts.join(" · ");
         }
@@ -1697,23 +1706,27 @@ function connectGlobalSSE() {
 }
 
 // Update the surface-count badge in the grid header without
-// re-rendering the whole grid (used after SSE create/delete).
+// re-rendering the whole grid (used after SSE create/delete). Only the
+// count span is touched — the live-connection indicator (and its
+// `.online` class, toggled by SSE state) lives in the same element and
+// must survive these updates.
 function updateGridMeta() {
   const header = document.querySelector(".grid-header");
   if (!header) return;
-  let metaEl = header.querySelector(".grid-meta");
+  const metaEl = header.querySelector(".grid-meta");
+  if (!metaEl) return;
   const n = surfaces.length;
-  const label = n === 0 ? "" : `${String(n).padStart(2, "0")} ${n === 1 ? "surface" : "surfaces"}`;
+  let countEl = metaEl.querySelector(".grid-meta-count");
   if (n === 0) {
-    if (metaEl) metaEl.remove();
+    if (countEl) countEl.remove();
     return;
   }
-  if (!metaEl) {
-    metaEl = document.createElement("div");
-    metaEl.className = "grid-meta";
-    header.appendChild(metaEl);
+  if (!countEl) {
+    countEl = document.createElement("span");
+    countEl.className = "grid-meta-count";
+    metaEl.prepend(countEl);
   }
-  metaEl.textContent = label;
+  countEl.textContent = `${String(n).padStart(2, "0")} ${n === 1 ? "surface" : "surfaces"}`;
 }
 
 // ── Main Render ──

@@ -244,15 +244,15 @@ export function renderArtifactShell(params: {
 </html>`;
 }
 
-function paletteForMime(mime: string) {
-  if (mime === "text/html") return { accent: "#ff5c3a", bg: "#fff5f1", text: "#1a1a1a", label: "HTML" };
-  if (mime.startsWith("video/")) return { accent: "#3b5bd9", bg: "#eef2fb", text: "#0f1c47", label: "VIDEO" };
-  if (mime.startsWith("audio/")) return { accent: "#0aaf52", bg: "#eefbf3", text: "#0a3b1f", label: "AUDIO" };
-  if (mime === "application/pdf") return { accent: "#c81e1e", bg: "#fdeeee", text: "#3b0a0a", label: "PDF" };
-  if (mime === "text/markdown") return { accent: "#4a4a4a", bg: "#f4f4f4", text: "#111", label: "MD" };
-  if (mime.startsWith("image/")) return { accent: "#6d28d9", bg: "#f3eefb", text: "#1e0a47", label: "IMAGE" };
-  if (mime.startsWith("text/")) return { accent: "#444", bg: "#f4f4f4", text: "#111", label: "TEXT" };
-  return { accent: "#666", bg: "#f4f4f4", text: "#111", label: "FILE" };
+function thumbLabelForMime(mime: string): string {
+  if (mime === "text/html") return "HTML";
+  if (mime.startsWith("video/")) return "VIDEO";
+  if (mime.startsWith("audio/")) return "AUDIO";
+  if (mime === "application/pdf") return "PDF";
+  if (mime === "text/markdown") return "MD";
+  if (mime.startsWith("image/")) return "IMAGE";
+  if (mime.startsWith("text/")) return "TEXT";
+  return "FILE";
 }
 
 function wrapForThumb(text: string, max: number): string[] {
@@ -278,18 +278,25 @@ function wrapForThumb(text: string, max: number): string[] {
   return lines.slice(0, 2);
 }
 
+// Matches the PWA's monochrome theme: black void, hairline ring, mono label.
 export function renderThumbPlaceholder(params: { title: string; mime: string }): string {
-  const palette = paletteForMime(params.mime);
+  const label = escapeHtml(thumbLabelForMime(params.mime));
   const lines = wrapForThumb(params.title, 18).map(escapeHtml);
-  const label = escapeHtml(palette.label);
-  const titleY = lines.length === 1 ? 360 : 340;
+  const titleY = lines.length === 1 ? 366 : 346;
   const titleLines = lines.map((line, i) =>
-    `<text x="300" y="${titleY + i * 48}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif" font-size="38" font-weight="500" fill="${palette.text}" letter-spacing="-0.5">${line}</text>`
+    `<text x="300" y="${titleY + i * 48}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif" font-size="36" font-weight="500" fill="#ffffff" fill-opacity="0.92" letter-spacing="-0.5">${line}</text>`
   ).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
-    <rect width="600" height="600" fill="${palette.bg}"/>
-    <circle cx="300" cy="210" r="56" fill="${palette.accent}"/>
-    <text x="300" y="222" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif" font-size="22" font-weight="600" fill="#fff" letter-spacing="2">${label}</text>
+    <defs>
+      <radialGradient id="halo" cx="32%" cy="-6%" r="130%">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10"/>
+        <stop offset="45%" stop-color="#ffffff" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+    <rect width="600" height="600" fill="#0a0a0a"/>
+    <rect width="600" height="600" fill="url(#halo)"/>
+    <circle cx="300" cy="218" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1.5"/>
+    <text x="300" y="224" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" font-weight="500" fill="#ffffff" fill-opacity="0.65" letter-spacing="4">${label}</text>
     ${titleLines}
   </svg>`;
 }
