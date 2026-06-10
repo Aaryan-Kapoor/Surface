@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { initDb, getDb } from "./db.js";
+import { initDb, getDb, cleanupActions } from "./db.js";
 import { router } from "./routes/index.js";
 import { listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
@@ -42,6 +42,18 @@ const TRUST_LOOPBACK = !["0", "false", "no"].includes(
 const PUBLIC_BASE_URL = process.env.SURFACE_PUBLIC_URL?.replace(/\/$/, "");
 
 initDb();
+
+// Inbox TTL sweep: at boot and hourly.
+const sweep = () => {
+  try {
+    const { handled, pending } = cleanupActions();
+    if (handled || pending) console.log(`[actions] TTL sweep removed ${handled} handled, ${pending} expired pending`);
+  } catch (err) {
+    console.error("[actions] TTL sweep failed:", err);
+  }
+};
+sweep();
+setInterval(sweep, 60 * 60 * 1000).unref();
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));

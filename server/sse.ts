@@ -10,6 +10,10 @@ type SSEClient = {
   id: string;
   res: Response;
   target: string;
+  // Layer-1 waiter presence (docs/interaction/delivery-ladder.md): a `surface
+  // wait` connection registers which surface it is waiting on ("*" = any).
+  // While one is connected, bindings for that surface are suppressed.
+  waiterFor?: string | null;
 };
 
 const globalClients: SSEClient[] = [];
@@ -17,7 +21,11 @@ const surfaceClients: Map<string, SSEClient[]> = new Map();
 
 let clientCounter = 0;
 
-export function addGlobalClient(res: Response, target: string = LOCAL_TARGET): string {
+export function addGlobalClient(
+  res: Response,
+  target: string = LOCAL_TARGET,
+  opts: { waiterFor?: string | null; onClose?: () => void } = {},
+): string {
   const id = String(++clientCounter);
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -25,12 +33,22 @@ export function addGlobalClient(res: Response, target: string = LOCAL_TARGET): s
     Connection: "keep-alive",
   });
   res.write(":\n\n"); // heartbeat
-  globalClients.push({ id, res, target });
+  globalClients.push({ id, res, target, waiterFor: opts.waiterFor ?? null });
   res.on("close", () => {
     const idx = globalClients.findIndex((c) => c.id === id);
     if (idx !== -1) globalClients.splice(idx, 1);
+    opts.onClose?.();
   });
   return id;
+}
+
+// A live waiter for this surface (or a catch-all waiter) suppresses bindings.
+export function hasWaiter(surfaceId: string): boolean {
+  return globalClients.some((c) => c.waiterFor === surfaceId || c.waiterFor === "*");
+}
+
+export function waitedSurfaces(): Set<string> {
+  return new Set(globalClients.filter((c) => c.waiterFor).map((c) => c.waiterFor as string));
 }
 
 export function addSurfaceClient(surfaceId: string, res: Response, target: string = LOCAL_TARGET): string {

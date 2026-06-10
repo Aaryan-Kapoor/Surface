@@ -36,6 +36,9 @@ Commands:
   template [list|show|create] Manage templates (create --from promotes a surface)
   init                       Scaffold .surface/ + SURFACE.md in the current project
   sync                       Reconcile .surface/ manifests with the running service
+  bind <id>                  Register a command/webhook to fire on actions (wake-me binding)
+  bindings [<id>]            List bindings (status, last run)
+  unbind <binding-id>        Remove a binding
   versions <id>              List artifact versions
   rollback <id> <version>    Restore artifact version
   delete <id>                Delete artifact
@@ -83,6 +86,9 @@ const CMD_HELP: Record<string, string> = {
     "surface template show <name>",
     "surface template create <name> --from <artifact-id> [--user]   (--user → ~/.surface/templates, else <project>/.surface/templates)",
   ].join("\n"),
+  bind: "surface bind <id> [--action <name|a|b|*>] (--run '<command>' | --webhook <url>) [--cwd <dir>] [--timeout <s>]   (command is argv-tokenized, never shelled; the action batch arrives on stdin as JSON)",
+  bindings: "surface bindings [<id>] [--json]",
+  unbind: "surface unbind <binding-id>",
   init: "surface init   (scaffolds .surface/{config.json,surfaces/,templates/} and SURFACE.md at the project root)",
   sync: [
     "surface sync                 reconcile every .surface/surfaces/*.json manifest (create missing, re-render drifted)",
@@ -399,8 +405,10 @@ async function waitForAction(opts: {
     let backoff = 1000;
     while (true) {
       // Always listen on the global stream — per-surface streams don't carry
-      // surface_action events. Filtering happens in isMatch().
-      const url = `${BASE}/stream`;
+      // surface_action events. Filtering happens in isMatch(). wait_for
+      // registers this connection as a layer-1 waiter so bindings stay
+      // suppressed while we're alive.
+      const url = `${BASE}/stream?wait_for=${encodeURIComponent(opts.surfaceId || "*")}`;
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
       let res: Response;
@@ -1096,6 +1104,38 @@ async function main() {
       for (const r of rows) {
         console.log(`${r.label.padEnd(w)}${r.seen.padEnd(12)}${r.viewing.padEnd(v)}${r.ip}`);
       }
+      return;
+    }
+
+    case "bind": {
+      const id = positional[0];
+      if (!id) usage("usage: " + CMD_HELP.bind);
+      const body: Record<string, unknown> = {};
+      if (typeof flags.action === "string") body.action_pattern = flags.action;
+      if (typeof flags.run === "string") body.run = flags.run;
+      if (typeof flags.webhook === "string") body.webhook_url = flags.webhook;
+      if (typeof flags.cwd === "string") body.cwd = path.resolve(flags.cwd);
+      if (typeof flags.timeout === "string") body.timeout_seconds = Number(flags.timeout);
+      out(await call("POST", `/artifacts/${encodeURIComponent(id)}/bindings`, body));
+      return;
+    }
+
+    case "bindings": {
+      const id = positional[0];
+      const rows: any[] = await call("GET", id ? `/artifacts/${encodeURIComponent(id)}/bindings` : "/bindings");
+      if (flags.json || rows.length === 0) { out(rows); return; }
+      for (const b of rows) {
+        const target = b.kind === "command" ? b.run : b.webhook_url;
+        const status = b.last_status ? `${b.last_status}${b.last_error ? ` (${b.last_error})` : ""} at ${b.last_run_at}` : "never run";
+        console.log(`${b.id}  ${b.surface_id}  on:${b.action_pattern}  ${b.enabled ? "" : "[disabled] "}${b.kind}: ${target}\n  last: ${status}`);
+      }
+      return;
+    }
+
+    case "unbind": {
+      const id = positional[0];
+      if (!id) usage("usage: " + CMD_HELP.unbind);
+      out(await call("DELETE", `/bindings/${encodeURIComponent(id)}`));
       return;
     }
 

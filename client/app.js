@@ -1244,6 +1244,7 @@ function createCard(s, index) {
   }
 
   card.appendChild(disc);
+  updateCardBadges(card, s);
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
@@ -1288,6 +1289,55 @@ function createCard(s, index) {
   card.appendChild(body);
 
   return card;
+}
+
+// Delivery-ladder card states: pending-action badge, "agent listening" pill,
+// and the ⟳ handling pill while a binding runs.
+function updateCardBadges(card, s) {
+  const disc = card.querySelector(".card-disc");
+  if (!disc) return;
+  const n = s.pending_actions || 0;
+  let badge = disc.querySelector(".card-badge");
+  if (n > 0) {
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.className = "card-badge";
+      badge.title = "unanswered actions";
+      disc.appendChild(badge);
+    }
+    badge.textContent = n > 9 ? "9+" : String(n);
+  } else if (badge) {
+    badge.remove();
+  }
+  let pill = disc.querySelector(".card-listening");
+  if (s.listening && !disc.querySelector(".card-handling")) {
+    if (!pill) {
+      pill = document.createElement("div");
+      pill.className = "card-listening";
+      pill.textContent = "● listening";
+      disc.appendChild(pill);
+    }
+  } else if (pill) {
+    pill.remove();
+  }
+}
+
+function setCardHandling(surfaceId, running) {
+  const disc = document.querySelector(`.surface-card[data-id="${surfaceId}"] .card-disc`);
+  if (!disc) return;
+  let pill = disc.querySelector(".card-handling");
+  if (running) {
+    const listening = disc.querySelector(".card-listening");
+    if (listening) listening.remove();
+    if (!pill) {
+      pill = document.createElement("div");
+      pill.className = "card-handling";
+      pill.textContent = "handling…";
+      disc.appendChild(pill);
+    }
+  } else if (pill) {
+    pill.remove();
+  }
 }
 
 const ICON_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
@@ -1513,6 +1563,7 @@ function connectGlobalSSE() {
       surfaces[idx] = { ...surfaces[idx], ...data };
       const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
       if (card) {
+        updateCardBadges(card, surfaces[idx]);
         const titleEl = card.querySelector(".card-title");
         if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
         const subEl = card.querySelector(".card-sub");
@@ -1556,6 +1607,41 @@ function connectGlobalSSE() {
         }
       });
     }
+  });
+
+  // ── Delivery-ladder card states ──
+
+  globalSSE.addEventListener("surface_action", (e) => {
+    const d = JSON.parse(e.data);
+    const idx = surfaces.findIndex((s) => s.id === d.surface_id);
+    if (idx === -1) return;
+    surfaces[idx].pending_actions = (surfaces[idx].pending_actions || 0) + 1;
+    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    if (card) updateCardBadges(card, surfaces[idx]);
+  });
+
+  globalSSE.addEventListener("actions_acked", (e) => {
+    const d = JSON.parse(e.data);
+    const idx = surfaces.findIndex((s) => s.id === d.surface_id);
+    if (idx === -1) return;
+    surfaces[idx].pending_actions = d.pending_actions || 0;
+    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    if (card) updateCardBadges(card, surfaces[idx]);
+  });
+
+  globalSSE.addEventListener("waiter_status", (e) => {
+    const d = JSON.parse(e.data);
+    if (!d.surface_id || d.surface_id === "*") return;
+    const idx = surfaces.findIndex((s) => s.id === d.surface_id);
+    if (idx !== -1) surfaces[idx].listening = d.listening;
+    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    if (card) updateCardBadges(card, surfaces[idx] || { listening: d.listening });
+  });
+
+  globalSSE.addEventListener("binding_status", (e) => {
+    const d = JSON.parse(e.data);
+    if (!d.surface_id) return;
+    setCardHandling(d.surface_id, d.status === "running");
   });
 
   globalSSE.addEventListener("thumb_ready", (e) => {

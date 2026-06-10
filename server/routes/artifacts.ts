@@ -22,7 +22,7 @@ import {
   touchArtifact,
   updateArtifact,
 } from "../artifacts.js";
-import { addSurfaceClient, broadcastGlobal, broadcastToSurface } from "../sse.js";
+import { addSurfaceClient, broadcastGlobal, broadcastToSurface, hasWaiter } from "../sse.js";
 import { enqueueThumb, hasThumb, getThumbPath } from "../thumbs.js";
 import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
 import { getState, patchState, setStateIfEmpty } from "../state.js";
@@ -49,12 +49,16 @@ artifactsRouter.get("/artifacts/:id/stream", (req: any, res) => {
   addSurfaceClient(req.params.id, res, targetOf(req));
 });
 
-// Card list — the one fetch the dashboard grid needs.
+// Card list — the one fetch the dashboard grid needs. `listening` reflects a
+// connected layer-1 waiter (in-memory, so it's annotated here, not in SQL).
 artifactsRouter.get("/artifacts", (req, res) => {
   const includeHidden = req.query.include_hidden === "1" || req.query.include_hidden === "true";
   const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
   const agent = typeof req.query.agent === "string" && req.query.agent ? req.query.agent : undefined;
-  res.json(listArtifactCards(getDb(), { includeHidden, project, agent }));
+  res.json(listArtifactCards(getDb(), { includeHidden, project, agent }).map((card) => ({
+    ...card,
+    listening: hasWaiter(card.id),
+  })));
 });
 
 artifactsRouter.post("/artifacts/present-file", (req: any, res) => {

@@ -1,8 +1,9 @@
 import { Router } from "express";
-import { ackAction, createAction, getDb, getPendingActions } from "../db.js";
+import { ackAction, createAction, getAction, getDb, getPendingActions } from "../db.js";
 import { getArtifact } from "../artifacts.js";
 import { patchState } from "../state.js";
 import { broadcastGlobal, broadcastToSurface } from "../sse.js";
+import { createBinding, deleteBinding, dispatchAction, listBindings, setBindingEnabled } from "../bindings.js";
 import { deviceNameOf, requireSystem } from "./helpers.js";
 
 export const actionsRouter = Router();
@@ -102,7 +103,67 @@ actionsRouter.post("/artifacts/:id/actions", (req: any, res) => {
     data: act.data,
     created_at: act.created_at,
   });
+
+  // Delivery ladder layer 2: when no live waiter is connected, fire the
+  // surface's bindings (single-flight, coalesced; see server/bindings.ts).
+  dispatchAction(req.params.id, act.action);
+
   res.status(201).json(act);
+});
+
+// ── Bindings (layer 2 registration — system plane only) ──
+
+actionsRouter.post("/artifacts/:id/bindings", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  try {
+    const binding = createBinding(getDb(), {
+      surface_id: req.params.id,
+      action_pattern: typeof req.body?.action_pattern === "string" ? req.body.action_pattern : undefined,
+      run: typeof req.body?.run === "string" ? req.body.run : undefined,
+      webhook_url: typeof req.body?.webhook_url === "string" ? req.body.webhook_url : undefined,
+      cwd: typeof req.body?.cwd === "string" ? req.body.cwd : undefined,
+      timeout_seconds: Number.isFinite(req.body?.timeout_seconds) ? Number(req.body.timeout_seconds) : undefined,
+    });
+    res.status(201).json(binding);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+actionsRouter.get("/artifacts/:id/bindings", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  res.json(listBindings(getDb(), req.params.id));
+});
+
+actionsRouter.get("/bindings", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  res.json(listBindings(getDb()));
+});
+
+actionsRouter.delete("/bindings/:id", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  if (!deleteBinding(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Binding not found" });
+    return;
+  }
+  res.json({ deleted: true });
+});
+
+actionsRouter.patch("/bindings/:id", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  if (typeof req.body?.enabled !== "boolean") {
+    res.status(400).json({ error: "enabled (boolean) is required" });
+    return;
+  }
+  if (!setBindingEnabled(getDb(), req.params.id, req.body.enabled)) {
+    res.status(404).json({ error: "Binding not found" });
+    return;
+  }
+  res.json({ updated: true });
 });
 
 // Agent reads pending actions — the inbox belongs to the agent plane; a device
@@ -120,10 +181,17 @@ actionsRouter.get("/artifacts/:id/actions", (req: any, res) => {
 // Agent acknowledges an action
 actionsRouter.post("/actions/:id/ack", (req: any, res) => {
   if (!requireSystem(req, res)) return;
+  const row = getAction(req.params.id);
   const acked = ackAction(req.params.id);
   if (!acked) {
     res.status(404).json({ error: "Action not found" });
     return;
+  }
+  if (row) {
+    broadcastGlobal("actions_acked", {
+      surface_id: row.surface_id,
+      pending_actions: getPendingActions(row.surface_id).length,
+    });
   }
   res.json({ acknowledged: true });
 });

@@ -37,6 +37,12 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+let tmpRoot2Cache: string | null = null;
+function tmpRoot2(): string {
+  if (!tmpRoot2Cache) tmpRoot2Cache = fs.mkdtempSync(path.join(os.tmpdir(), "surface-doc-test-"));
+  return tmpRoot2Cache;
+}
+
 async function main() {
   try {
     await api("GET", "/artifacts");
@@ -275,6 +281,66 @@ async function main() {
     await optionalDelete(`/artifacts/${tplId}`);
     fs.rmSync(tplRoot, { recursive: true, force: true });
   }
+
+  // ── Built-in templates ──
+
+  const askId = `ask-test-${suffix}`;
+  const ask = await api("POST", "/artifacts", {
+    id: askId,
+    title: "Ship it?",
+    template: "ask",
+    params: { question: "Ship v2.1 to prod?", options: "ship,hold", context_md: "### Changes\n- one\n- two" },
+  });
+  assert(ask.artifact.template === "ask", "ask instantiation failed");
+  const askState0 = await api("GET", `/artifacts/${askId}/state`);
+  assert(askState0.state.status === "open", "ask should start open");
+  const askHtml = await api("GET", `/artifacts/${askId}/files/index.html`);
+  assert(askHtml.includes("Ship v2.1 to prod?"), "ask question missing from render");
+  assert(askHtml.includes("Changes"), "ask context_md missing from render");
+
+  // Answering flips the card server-side.
+  await api("POST", `/artifacts/${askId}/actions`, { action: "answer", data: { choice: "ship", text: null } });
+  const askState1 = await api("GET", `/artifacts/${askId}/state`);
+  assert(askState1.state.status === "answered", "ask did not flip to answered");
+  assert(askState1.state.answer.choice === "ship", "ask answer not recorded");
+  assert(typeof askState1.state.answer.answered_at === "string", "answer missing answered_at");
+  await optionalDelete(`/artifacts/${askId}`);
+
+  // The global board materializes on first write, with stamped sections.
+  await optionalDelete(`/artifacts/board`);
+  const boardPatch = await api("PATCH", "/artifacts/board/state", {
+    "test-agent": { status: "running the suite", project: "surface" },
+  });
+  assert(boardPatch.state["test-agent"].status === "running the suite", "board section not written");
+  assert(typeof boardPatch.state["test-agent"].updated_at === "string", "board section missing server stamp");
+  const boardArtifact = await api("GET", "/artifacts/board");
+  assert(boardArtifact.artifact.template === "board", "board artifact not created from template");
+  await optionalDelete(`/artifacts/board`);
+
+  // video + doc instantiate
+  const videoId = `video-test-${suffix}`;
+  const video = await api("POST", "/artifacts", {
+    id: videoId,
+    title: "Video",
+    template: "video",
+    params: { url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", start: 90 },
+  });
+  assert(video.artifact.template === "video", "video instantiation failed");
+  await optionalDelete(`/artifacts/${videoId}`);
+
+  const docFile = path.join(tmpRoot2(), "guide.md");
+  fs.writeFileSync(docFile, "# Guide\n\nHello **doc**.");
+  const doc = await api("POST", "/artifacts/link", {
+    path: docFile,
+    title: "Guide",
+    template: "doc",
+    params: { toc: true },
+  });
+  const docView = await api("GET", `/artifacts/${doc.artifact.id}/view`);
+  assert(docView.includes("__TEMPLATE_PARAMS"), "doc view did not render its template");
+  assert(docView.includes("content_url"), "doc template missing content_url param");
+  assert(docView.includes("/surface.js"), "doc on-the-fly render missing surface.js injection");
+  await optionalDelete(`/artifacts/${doc.artifact.id}`);
 
   // ── Stream chunks ──
 

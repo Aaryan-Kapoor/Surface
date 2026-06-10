@@ -2,7 +2,7 @@ import { Router } from "express";
 import { getDb, getDisplayConfig, setDisplayConfig, resetDisplayConfig } from "../db.js";
 import { listArtifactCards } from "../artifacts.js";
 import { listSessions } from "../auth.js";
-import { addGlobalClient, broadcastGlobal, LOCAL_TARGET } from "../sse.js";
+import { addGlobalClient, broadcastGlobal, hasWaiter, LOCAL_TARGET } from "../sse.js";
 import { listPresence, reportPresence } from "../presence.js";
 import { deviceNameOf, targetOf } from "./helpers.js";
 
@@ -10,8 +10,23 @@ export const displayRouter = Router();
 
 // Global SSE stream — connections are tagged with their delivery target so
 // directed events (--on <device>) reach only the intended screen.
+//
+// ?wait_for=<surface-id|*> registers the connection as a layer-1 waiter
+// (system plane only): while it lives, bindings for that surface are
+// suppressed and the card shows "agent listening".
 displayRouter.get("/stream", (req: any, res) => {
-  addGlobalClient(res, targetOf(req));
+  const waitFor = typeof req.query.wait_for === "string" && req.query.wait_for && req.auth?.role === "system"
+    ? req.query.wait_for
+    : null;
+  addGlobalClient(res, targetOf(req), {
+    waiterFor: waitFor,
+    onClose: waitFor
+      ? () => broadcastGlobal("waiter_status", { surface_id: waitFor, listening: hasWaiter(waitFor) })
+      : undefined,
+  });
+  if (waitFor) {
+    broadcastGlobal("waiter_status", { surface_id: waitFor, listening: true });
+  }
 });
 
 // Get display theme config

@@ -67,6 +67,10 @@ export function createAction(params: {
   return db.prepare(`SELECT * FROM surface_actions WHERE id = ?`).get(id) as SurfaceAction;
 }
 
+export function getAction(id: string): SurfaceAction | undefined {
+  return db.prepare(`SELECT * FROM surface_actions WHERE id = ?`).get(id) as SurfaceAction | undefined;
+}
+
 export function getPendingActions(surfaceId?: string): SurfaceAction[] {
   if (surfaceId) {
     return db
@@ -83,6 +87,19 @@ export function ackAction(id: string): boolean {
     `UPDATE surface_actions SET status = 'handled', handled_at = datetime('now') WHERE id = ? AND status = 'pending'`
   ).run(id);
   return result.changes > 0;
+}
+
+// Inbox TTL (docs/interaction/actions-inbox.md): handled actions are kept 7
+// days for inspection; pending ones expire after 30 — by then "nothing is
+// ever lost" has lost to "nobody is coming".
+export function cleanupActions(): { handled: number; pending: number } {
+  const handled = db.prepare(
+    `DELETE FROM surface_actions WHERE status = 'handled' AND handled_at < datetime('now', '-7 days')`
+  ).run().changes;
+  const pending = db.prepare(
+    `DELETE FROM surface_actions WHERE status = 'pending' AND created_at < datetime('now', '-30 days')`
+  ).run().changes;
+  return { handled, pending };
 }
 
 // ── Display Config ──
