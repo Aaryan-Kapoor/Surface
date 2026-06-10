@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { getDb } from "../db.js";
@@ -152,6 +153,14 @@ function instantiateTemplate(req: any, res: any): void {
     const db = getDb();
     let result;
     if (existing) {
+      // Idempotent re-render: identical output and title creates no version,
+      // so `surface sync` can run on every session start for free.
+      const currentEntry = getArtifactFile(db, id, "index.html");
+      const renderedSha = crypto.createHash("sha256").update(rendered.html).digest("hex");
+      if (currentEntry?.sha256 === renderedSha && (title ?? existing.title) === existing.title) {
+        res.json({ ...readArtifact(db, id)!, unchanged: true });
+        return;
+      }
       result = updateArtifact(db, id, {
         title: title ?? existing.title,
         metadata: mergedMetadata,
