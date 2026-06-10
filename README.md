@@ -48,87 +48,81 @@ Tell your agent: *"Read INSTALL_FOR_AGENTS.md and follow it."* Any agent that ca
 
 ```bash
 surface list                              # what's already on the display
+surface ask "Ship to prod?" --options ship,hold --wait   # question on every screen; blocks for the answer
 surface link $(pwd)/demo.html --title D   # register a file in your project (live)
 surface touch <id>                        # broadcast reload after editing
-surface create "Hello" --mime text/html --content -   # ad-hoc HTML from stdin
+surface doc ./README.md --toc             # rendered repo markdown, hot-reloading
+surface video https://youtu.be/abc123     # YouTube/web embed, one line
+surface create "Build" --id build --template stream      # live log surface…
+make 2>&1 | surface append build -        # …pipe a process into it
+surface set build progress 0.42           # live state — bound elements re-render
 surface present ./report.pdf              # one-shot file snapshot
-surface open <id>                         # force the display to show it
+surface open <id> --on phone              # show it (everywhere, or one device)
 surface notify "deploy finished" --style success
-surface theme '{"colors":{"accent":"#ff0080"}}'
 surface wait --id <id> --action submit    # block until user clicks; exit 0 with action JSON
-surface stream                            # tail SSE events as JSONL
-surface pair --base-url http://host:3000  # print a one-time pairing URL + QR
+surface bind <id> --action approve --run 'claude -p --resume <session> "…"'   # clicks wake you when offline
+surface devices                           # paired screens, live state, what each is viewing
+surface pair --name kitchen-tablet        # one-time pairing URL + QR for a new display
 ```
 
 Full command reference: `surface --help` and `surface <cmd> --help`. Intent mapping: [`SKILL.md`](SKILL.md).
+
+## Templates: dynamic UI in one line
+
+Agent-generated UI doesn't mean agents writing 200 lines of HTML. Templates are parameterized, reusable surfaces — `ask`, `stream`, `video`, `board` (the multi-agent status dashboard), `doc` ship built-in; agents promote their own one-off surfaces into templates with `surface template create <name> --from <id>`. Projects override user templates override built-ins. See [`docs/templates/overview.md`](docs/templates/overview.md).
+
+Every surface also carries a live JSON state doc (`surface set/patch`) and the injected `surface.js` runtime (`data-surface-bind`, `Surface.action()`) — updating a progress bar is one shell line, not an HTML rewrite.
 
 ## Direct HTTP
 
 The CLI is a thin wrapper over an HTTP API on `127.0.0.1:3000`. Same primitives, accessible from anything that can `fetch`:
 
 ```
-POST   /artifacts             Create workspace artifact
+GET    /artifacts             Full card list (one fetch renders a dashboard)
+POST   /artifacts             Create workspace artifact (or {template, params})
 POST   /artifacts/link        Register linked artifact (file lives in caller's repo)
 POST   /artifacts/:id/touch   Broadcast reload for linked artifact
 POST   /artifacts/present-file  One-shot file presentation
-GET    /artifacts             List artifacts
-GET    /artifacts/:id         Read artifact
-PUT    /artifacts/:id         New version (workspace artifacts only)
-DELETE /artifacts/:id         Delete artifact
-GET    /artifacts/:id/versions / view / files/* / manifest
-POST   /artifacts/:id/rollback   Workspace artifacts only
-GET    /surfaces              List display cards
-POST   /surfaces/:id/exec     Run JS in surface iframe
-POST   /surfaces/:id/actions  Surface posts a user action
-POST   /surfaces/:id/reply    Agent sends a toast
-GET    /actions               List pending actions
-POST   /actions/:id/ack       Acknowledge an action
-GET    /stream                Global SSE
-GET    /surfaces/:id/stream   Per-surface SSE
-GET    /display/status / config
-PUT    /display/config        Set theme / renderer / overlay
-POST   /display/reset / navigate / notify
+GET    /artifacts/:id         Read artifact   ·  PUT new version  ·  DELETE
+GET    /artifacts/:id/versions / view / files/* / manifest / state / chunks
+PATCH  /artifacts/:id/state   Deep-merge state; broadcasts state_patch
+POST   /artifacts/:id/append  Append stream chunks
+POST   /artifacts/:id/actions Display posts a user action
+POST   /artifacts/:id/reply   Agent sends a toast
+POST   /artifacts/:id/exec    Run JS in the surface iframe (system plane)
+POST   /artifacts/:id/bindings  Register a wake-me binding (system plane)
+GET    /actions               Pending inbox · POST /actions/:id/ack
+GET    /stream                Global SSE (?wait_for=<id> registers a waiter)
+GET    /artifacts/:id/stream  Per-surface SSE
+GET    /display/status /config /slots · PUT /display/config
+POST   /display/reset /navigate /notify   (navigate/notify accept {device})
+GET    /api/auth/devices      Paired displays · POST /api/auth/devices/revoke
 ```
 
 `PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for linked artifacts — edit the file on disk and `POST /artifacts/:id/touch` instead.
+
+## Reacting to clicks: the delivery ladder
+
+A click is never lost ([`docs/interaction/delivery-ladder.md`](docs/interaction/delivery-ladder.md)):
+
+1. **Live waiter** — a backgrounded `surface wait` exits with the action JSON and the harness wakes the agent *in the session that has the context*.
+2. **Binding** — no waiter connected? Surface spawns the registered command (`claude -p --resume …`, `codex exec`, a webhook into a daemon) with the pending-action batch on stdin. Argv-safe, single-flight, coalesced.
+3. **Inbox** — otherwise the action stays pending, badges the card, and is drained at the next session start (`surface actions`).
+
+Surfaces emit actions with the injected runtime — `Surface.action("approve", {env: "prod"})` — no postMessage boilerplate.
 
 ## Display Control
 
 Agents own the display:
 
 - **Theming** — colors, fonts, backgrounds, starfield/nebula effects, raw CSS injection.
-- **Custom renderer** — replace the homescreen with your own HTML/CSS/JS (`window.__surfaces`, `navigate(id)` injected).
-- **Overlays** — persistent HTML across all views.
-- **Home widgets** — iframe above the card grid.
+- **Slots are artifacts** — the custom homescreen renderer, home widget, and persistent overlay are ordinary artifacts marked with `metadata.display_role` (`surface slot renderer <id>`): versioned, linkable, rollback-able.
+- **Per-device targeting** — `surface open/notify --on <device>` moves one named screen; `surface devices` shows the fleet.
 - **Live JS execution** — `surface exec <id> --js '...'` runs code inside a surface iframe without creating a new version.
 
-## Webhook Fan-Out (optional)
+## Auth: two planes
 
-Most agents don't need this. Use `surface wait` (blocking, in a background subprocess) or `surface stream` (long-poll SSE) to react to clicks directly. The webhook is only useful when a separate long-running gateway process wants Surface to POST to it.
-
-Surface can forward user actions to an external agent gateway:
-
-```
-SURFACE_WEBHOOK_URL=http://127.0.0.1:18789
-SURFACE_WEBHOOK_TOKEN=your-hooks-token
-# SURFACE_WEBHOOK_PATH=/hooks/agent   (default)
-```
-
-Payload is structured JSON: `{ type: "surface_action", surface_id, surface_title, action, data, created_at }`. `OPENCLAW_GATEWAY_URL` / `OPENCLAW_HOOKS_TOKEN` are accepted as legacy aliases.
-
-## Two-Way Communication
-
-Surfaces can talk back. Inside your surface HTML:
-
-```javascript
-parent.postMessage({
-  type: 'surface_action',
-  action: 'button_clicked',
-  data: { button: 'submit', value: 42 }
-}, '*');
-```
-
-Agents read via `surface actions [<id>]` or push via `surface stream`. Respond with `surface reply <id> <text>`, an artifact update, or `surface exec`.
+Loopback is the agent plane (`system` role — same machine, same uid, full power). Remote displays pair via one-time tokens into named, revocable `device` sessions that can view, click, and control the display but never touch the filesystem, execute code, or mint credentials. Remote *agents* carry a system bearer minted with `surface auth session issue --role system`. See [`docs/auth/trust-model.md`](docs/auth/trust-model.md).
 
 ## Architecture
 

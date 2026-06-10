@@ -1288,6 +1288,9 @@ function createCard(s, index) {
   body.className = "card-body";
   const subParts = [];
   if (mime) subParts.push(labelForMime(mime));
+  // Attribution: who made it / which project owns it.
+  if (s.agent) subParts.push(s.agent);
+  else if (s.project_root) subParts.push(s.project_root.split("/").pop());
   const t = timeAgo(s.updated_at);
   if (t) subParts.push(t);
   body.innerHTML = `
