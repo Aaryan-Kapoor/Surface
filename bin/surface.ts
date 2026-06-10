@@ -1,4 +1,5 @@
 #!/usr/bin/env -S npx tsx
+import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -15,7 +16,7 @@ Usage:
   surface <command> [args] [options]
 
 Commands:
-  list                       List surface cards
+  list                       List surface cards (--project <root> --agent <label> filters)
   read <id>                  Read artifact (metadata + version + files)
   create <title>             Create workspace artifact
   update <id>                Update workspace artifact (new version)
@@ -48,13 +49,13 @@ Environment:
 `;
 
 const CMD_HELP: Record<string, string> = {
-  list: "surface list",
+  list: "surface list [--project <root>] [--agent <label>] [--include-hidden]",
   read: "surface read <id>",
-  create: "surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--id <id>] [--metadata <json>]",
+  create: "surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--id <id>] [--agent <label>] [--metadata <json>]",
   update: "surface update <id> [--title <t>] [--mime <type>] [--file <path>|--content <s>|--content -] [--metadata <json>]",
-  link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--metadata <json>] [--no-open]",
+  link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--agent <label>] [--metadata <json>] [--no-open]",
   touch: "surface touch <id>",
-  present: "surface present <abs-path> [--title <t>] [--metadata <json>]",
+  present: "surface present <abs-path> [--title <t>] [--agent <label>] [--metadata <json>]",
   versions: "surface versions <id>",
   rollback: "surface rollback <id> <version>",
   delete: "surface delete <id>",
@@ -102,7 +103,7 @@ interface ParsedArgs {
 // Flags that never take a value. Anything not listed here that's followed by a
 // non-`--` token consumes that token as its value. Adding a flag here prevents
 // it from silently swallowing the next positional argument.
-const BOOLEAN_FLAGS = new Set(["help", "json", "no-ack", "no-open", "no-qr"]);
+const BOOLEAN_FLAGS = new Set(["help", "json", "no-ack", "no-open", "no-qr", "include-hidden"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -176,6 +177,28 @@ function parseMetadata(flags: Record<string, string | boolean>): Record<string, 
   } catch {
     usage("--metadata must be valid JSON");
   }
+}
+
+// Surfaces are owned by projects, not agents: every create/link/present stamps
+// the git root of the caller's working directory (falling back to the cwd
+// itself outside a repo). The agent label is self-reported attribution that
+// rides in metadata.agent — a name tag, not a passport.
+function resolveProjectRoot(): string {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString().trim();
+    if (out) return out;
+  } catch {}
+  return process.cwd();
+}
+
+function attributionMetadata(flags: Record<string, string | boolean>): Record<string, unknown> | undefined {
+  const metadata = parseMetadata(flags);
+  if (typeof flags.agent === "string" && flags.agent) {
+    return { ...(metadata || {}), agent: flags.agent };
+  }
+  return metadata;
 }
 
 async function call(method: string, pathname: string, body?: unknown): Promise<any> {
@@ -260,9 +283,15 @@ async function main() {
   }
 
   switch (cmd) {
-    case "list":
-      out(await call("GET", "/surfaces"));
+    case "list": {
+      const params = new URLSearchParams();
+      if (flags["include-hidden"] === true) params.set("include_hidden", "1");
+      if (typeof flags.project === "string") params.set("project", flags.project);
+      if (typeof flags.agent === "string") params.set("agent", flags.agent);
+      const qs = params.toString();
+      out(await call("GET", `/artifacts${qs ? `?${qs}` : ""}`));
       return;
+    }
 
     case "read": {
       const id = positional[0];
@@ -275,11 +304,11 @@ async function main() {
       const title = positional[0];
       if (!title) usage("usage: " + CMD_HELP.create);
       const content = await readContent(flags);
-      const body: Record<string, unknown> = { title };
+      const body: Record<string, unknown> = { title, project_root: resolveProjectRoot() };
       if (typeof flags.id === "string") body.id = flags.id;
       if (typeof flags.mime === "string") body.mime = flags.mime;
       if (content !== undefined) body.content = content;
-      const metadata = parseMetadata(flags);
+      const metadata = attributionMetadata(flags);
       if (metadata) body.metadata = metadata;
       out(await call("POST", "/artifacts", body));
       return;
@@ -306,9 +335,10 @@ async function main() {
       const body: Record<string, unknown> = {
         path: abs,
         title: typeof flags.title === "string" ? flags.title : path.basename(abs),
+        project_root: resolveProjectRoot(),
       };
       if (typeof flags.entry === "string") body.entry = flags.entry;
-      const metadata = parseMetadata(flags);
+      const metadata = attributionMetadata(flags);
       if (metadata) body.metadata = metadata;
       if (flags["no-open"] === true) body.open = false;
       out(await call("POST", "/artifacts/link", body));
@@ -325,9 +355,9 @@ async function main() {
     case "present": {
       const presentPath = positional[0];
       if (!presentPath) usage("usage: " + CMD_HELP.present);
-      const body: Record<string, unknown> = { path: path.resolve(presentPath) };
+      const body: Record<string, unknown> = { path: path.resolve(presentPath), project_root: resolveProjectRoot() };
       if (typeof flags.title === "string") body.title = flags.title;
-      const metadata = parseMetadata(flags);
+      const metadata = attributionMetadata(flags);
       if (metadata) body.metadata = metadata;
       out(await call("POST", "/artifacts/present-file", body));
       return;
@@ -362,7 +392,7 @@ async function main() {
       const files = fs.readdirSync(demosDir).filter((f) => f.endsWith(".html")).sort();
       // Include hidden rows so a previous `clear-demos` archive can be revived
       // by flipping the hidden flag back off, rather than creating duplicates.
-      const existing: any[] = await call("GET", "/surfaces?include_hidden=1");
+      const existing: any[] = await call("GET", "/artifacts?include_hidden=1");
       const byPath = new Map<string, any>();
       for (const s of existing) {
         const meta = parseMetadataField(s.metadata);
@@ -403,7 +433,7 @@ async function main() {
       // Soft-hide rather than delete: flip metadata.hidden = true on every
       // demo-tagged surface. Artifact rows stay intact so `seed-demos` can
       // revive them later instead of re-linking from disk.
-      const existing: any[] = await call("GET", "/surfaces?include_hidden=1");
+      const existing: any[] = await call("GET", "/artifacts?include_hidden=1");
       const hidden: string[] = [];
       const alreadyHidden: string[] = [];
       for (const s of existing) {
@@ -432,13 +462,13 @@ async function main() {
       else if (typeof flags.js === "string") js = flags.js;
       else if (typeof flags.file === "string") js = fs.readFileSync(path.resolve(flags.file), "utf8");
       if (!js) usage("--js or --file required");
-      out(await call("POST", `/surfaces/${encodeURIComponent(id)}/exec`, { js }));
+      out(await call("POST", `/artifacts/${encodeURIComponent(id)}/exec`, { js }));
       return;
     }
 
     case "actions": {
       const id = positional[0];
-      const p = id ? `/surfaces/${encodeURIComponent(id)}/actions` : `/actions`;
+      const p = id ? `/artifacts/${encodeURIComponent(id)}/actions` : `/actions`;
       out(await call("GET", p));
       return;
     }
@@ -454,7 +484,7 @@ async function main() {
       const id = positional[0];
       const text = positional.slice(1).join(" ");
       if (!id || !text) usage("usage: " + CMD_HELP.reply);
-      out(await call("POST", `/surfaces/${encodeURIComponent(id)}/reply`, { text }));
+      out(await call("POST", `/artifacts/${encodeURIComponent(id)}/reply`, { text }));
       return;
     }
 
@@ -533,7 +563,7 @@ async function main() {
       const pollPending = async () => {
         if (wantEvent !== "surface_action") return;
         try {
-          const path = surfaceId ? `/surfaces/${encodeURIComponent(surfaceId)}/actions` : `/actions`;
+          const path = surfaceId ? `/artifacts/${encodeURIComponent(surfaceId)}/actions` : `/actions`;
           const pending = (await call("GET", path)) as any[];
           for (const a of pending) {
             if (isMatch(a)) await finalize(a);
@@ -646,7 +676,7 @@ async function main() {
 
     case "stream": {
       const id = typeof flags.id === "string" ? flags.id : undefined;
-      const url = id ? `${BASE}/surfaces/${encodeURIComponent(id)}/stream` : `${BASE}/stream`;
+      const url = id ? `${BASE}/artifacts/${encodeURIComponent(id)}/stream` : `${BASE}/stream`;
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
       const res = await fetch(url, { headers });

@@ -1,40 +1,34 @@
 import type Database from "better-sqlite3";
 
+// Fresh-start baseline (2026-06): one migration creates the entire artifact-first
+// model, including the Phase 2/3 tables (surface_state, surface_bindings) so no
+// inter-phase migrations are needed. Pre-baseline databases are not migrated —
+// initDb archives them to db.sqlite.bak and starts clean (see server/db.ts).
+//
+// Migrations remain append-only: future schema changes add v11+ entries that
+// ALTER this baseline; do not edit v10.
+export const BASELINE_VERSION = 10;
+
 interface Migration {
   version: number;
   description: string;
   up: (db: Database.Database) => void;
 }
 
-// Migrations are append-only. Each one bumps PRAGMA user_version.
-//
-// Convention: v1 is the full baseline schema (idempotent CREATE IF NOT EXISTS,
-// safe to re-run on installs that already have it). v2+ should be additive
-// ALTERs / new tables, not edits to v1. If a future change is destructive
-// (column drop, type change), write it as a new migration that ALTERs the
-// existing schema — do NOT edit v1.
 const migrations: Migration[] = [
   {
-    version: 1,
-    description: "baseline schema",
+    version: BASELINE_VERSION,
+    description: "fresh artifact-first baseline",
     up: (db) => {
       db.exec(`
-        CREATE TABLE IF NOT EXISTS surfaces (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          html TEXT NOT NULL,
-          metadata TEXT DEFAULT '{}',
-          created_at TEXT DEFAULT (datetime('now')),
-          updated_at TEXT DEFAULT (datetime('now'))
-        );
-
         CREATE TABLE IF NOT EXISTS artifacts (
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           kind TEXT NOT NULL,
           mime TEXT,
-          renderer TEXT,
           source_type TEXT NOT NULL,
+          template TEXT,
+          project_root TEXT,
           current_version_id TEXT,
           workspace_path TEXT,
           metadata TEXT DEFAULT '{}',
@@ -43,13 +37,15 @@ const migrations: Migration[] = [
           updated_at TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE INDEX IF NOT EXISTS idx_artifacts_project ON artifacts(project_root);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_updated ON artifacts(updated_at);
+
         CREATE TABLE IF NOT EXISTS artifact_versions (
           id TEXT PRIMARY KEY,
           artifact_id TEXT NOT NULL,
           parent_version_id TEXT,
           version INTEGER NOT NULL,
           reason TEXT,
-          created_by TEXT,
           manifest_json TEXT NOT NULL,
           content_hash TEXT,
           created_at TEXT DEFAULT (datetime('now')),
@@ -72,59 +68,57 @@ const migrations: Migration[] = [
           FOREIGN KEY (artifact_version_id) REFERENCES artifact_versions(id) ON DELETE CASCADE
         );
 
-        CREATE TABLE IF NOT EXISTS surface_views (
-          id TEXT PRIMARY KEY,
-          artifact_id TEXT NOT NULL,
-          title TEXT NOT NULL,
-          thumbnail_path TEXT,
-          metadata TEXT DEFAULT '{}',
-          pinned INTEGER DEFAULT 0,
-          created_at TEXT DEFAULT (datetime('now')),
-          updated_at TEXT DEFAULT (datetime('now')),
-          FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
-        );
-
-        CREATE TABLE IF NOT EXISTS sandbox_sessions (
-          id TEXT PRIMARY KEY,
-          artifact_id TEXT NOT NULL,
-          version_id TEXT NOT NULL,
-          provider TEXT NOT NULL,
-          status TEXT NOT NULL,
-          preview_url TEXT,
-          port INTEGER,
-          metadata TEXT DEFAULT '{}',
-          created_at TEXT DEFAULT (datetime('now')),
-          last_used_at TEXT DEFAULT (datetime('now')),
-          FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE,
-          FOREIGN KEY (version_id) REFERENCES artifact_versions(id) ON DELETE CASCADE
-        );
-
         CREATE TABLE IF NOT EXISTS surface_actions (
           id TEXT PRIMARY KEY,
           surface_id TEXT NOT NULL,
           action TEXT NOT NULL,
           data TEXT DEFAULT '{}',
-          status TEXT DEFAULT 'pending',
-          created_at TEXT DEFAULT (datetime('now'))
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT DEFAULT (datetime('now')),
+          handled_at TEXT
         );
+
+        CREATE INDEX IF NOT EXISTS idx_surface_actions_pending
+        ON surface_actions(surface_id, status, created_at);
+
+        CREATE TABLE IF NOT EXISTS surface_state (
+          surface_id TEXT PRIMARY KEY,
+          state TEXT NOT NULL DEFAULT '{}',
+          updated_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (surface_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS surface_bindings (
+          id TEXT PRIMARY KEY,
+          surface_id TEXT NOT NULL,
+          action_pattern TEXT NOT NULL DEFAULT '*',
+          kind TEXT NOT NULL,
+          run TEXT,
+          webhook_url TEXT,
+          cwd TEXT,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          timeout_seconds INTEGER NOT NULL DEFAULT 600,
+          last_run_at TEXT,
+          last_status TEXT,
+          last_error TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (surface_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_surface_bindings_surface
+        ON surface_bindings(surface_id, enabled);
 
         CREATE TABLE IF NOT EXISTS display_config (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         );
-      `);
-    },
-  },
-  {
-    version: 2,
-    description: "auth pairing tokens + sessions",
-    up: (db) => {
-      db.exec(`
+
         CREATE TABLE IF NOT EXISTS auth_pairing_tokens (
           id TEXT PRIMARY KEY,
           token_hash TEXT NOT NULL UNIQUE,
           label TEXT,
-          role TEXT NOT NULL DEFAULT 'owner',
+          role TEXT NOT NULL DEFAULT 'device',
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           expires_at TEXT NOT NULL,
           consumed_at TEXT,
@@ -137,7 +131,7 @@ const migrations: Migration[] = [
         CREATE TABLE IF NOT EXISTS auth_sessions (
           id TEXT PRIMARY KEY,
           token_hash TEXT NOT NULL UNIQUE,
-          role TEXT NOT NULL DEFAULT 'owner',
+          role TEXT NOT NULL DEFAULT 'device',
           label TEXT,
           client_ip TEXT,
           user_agent TEXT,
@@ -166,25 +160,13 @@ export function runMigrations(db: Database.Database): void {
   }
 }
 
-// One-time idempotent fix for installs that predate the migration framework
-// and may still have a FOREIGN KEY on surface_actions.surface_id pointing at
-// the legacy `surfaces` table (which is now read-only fallback only).
-export function dropLegacySurfaceActionsForeignKey(db: Database.Database): void {
-  const fks = db.prepare(`PRAGMA foreign_key_list(surface_actions)`).all() as Array<{ table: string }>;
-  if (!fks.some((k) => k.table === "surfaces")) return;
-  console.log(`[migrations] stripping legacy FK on surface_actions.surface_id`);
-  db.exec(`
-    ALTER TABLE surface_actions RENAME TO surface_actions_old;
-    CREATE TABLE surface_actions (
-      id TEXT PRIMARY KEY,
-      surface_id TEXT NOT NULL,
-      action TEXT NOT NULL,
-      data TEXT DEFAULT '{}',
-      status TEXT DEFAULT 'pending',
-      created_at TEXT DEFAULT (datetime('now'))
-    );
-    INSERT INTO surface_actions (id, surface_id, action, data, status, created_at)
-      SELECT id, surface_id, action, data, status, created_at FROM surface_actions_old;
-    DROP TABLE surface_actions_old;
-  `);
+// A database is pre-baseline when it has tables but a user_version below the
+// baseline. Such files are archived, never migrated.
+export function isPreBaseline(db: Database.Database): boolean {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version >= BASELINE_VERSION) return false;
+  const row = db
+    .prepare(`SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`)
+    .get() as { n: number };
+  return row.n > 0;
 }

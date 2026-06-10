@@ -1,52 +1,45 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
-import { deleteArtifact } from "./artifacts.js";
 import { bootstrapDataDir, getDbPath } from "./paths.js";
-import { dropLegacySurfaceActionsForeignKey, runMigrations } from "./migrations.js";
+import { isPreBaseline, runMigrations } from "./migrations.js";
 
 let db: Database.Database;
 
-// The legacy `surfaces` table is now read-only fallback. `getSurface` and
-// `deleteSurface` below are still used to migrate / clean up rows created
-// before the artifact model existed.
-export interface Surface {
-  id: string;
-  title: string;
-  html: string;
-  metadata: string;
-  created_at: string;
-  updated_at: string;
+// Fresh-start policy (decided 2026-06): a pre-baseline database is archived to
+// db.sqlite.bak (plus -wal/-shm), never row-migrated. Agents re-link or
+// re-create their surfaces against the clean schema.
+function archivePreBaselineDb(): void {
+  const dbPath = getDbPath();
+  let suffix = "";
+  let n = 0;
+  while (fs.existsSync(`${dbPath}.bak${suffix}`)) {
+    n++;
+    suffix = `.${n}`;
+  }
+  console.log(`[surface] pre-baseline database found; archiving to ${dbPath}.bak${suffix}`);
+  fs.renameSync(dbPath, `${dbPath}.bak${suffix}`);
+  for (const ext of ["-wal", "-shm"]) {
+    if (fs.existsSync(dbPath + ext)) fs.renameSync(dbPath + ext, `${dbPath}.bak${suffix}${ext}`);
+  }
 }
 
 export function initDb(): void {
   bootstrapDataDir();
   db = new Database(getDbPath());
+  if (isPreBaseline(db)) {
+    db.close();
+    archivePreBaselineDb();
+    db = new Database(getDbPath());
+  }
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   runMigrations(db);
-  dropLegacySurfaceActionsForeignKey(db);
 }
 
 export function getDb(): Database.Database {
   if (!db) throw new Error("Database has not been initialized");
   return db;
-}
-
-export function getSurface(id: string): Surface | undefined {
-  return db.prepare(`SELECT * FROM surfaces WHERE id = ?`).get(id) as
-    | Surface
-    | undefined;
-}
-
-export function deleteSurface(id: string): boolean {
-  const result = db.prepare(`DELETE FROM surfaces WHERE id = ?`).run(id);
-  if (result.changes > 0) {
-    deleteArtifact(db, id);
-    // Belt-and-suspenders: deleteArtifact also clears actions, but if the
-    // legacy surface never had a mirror artifact, clear actions here too.
-    db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
-  }
-  return result.changes > 0;
 }
 
 // ── Actions (surface → agent) ──
@@ -58,6 +51,7 @@ export interface SurfaceAction {
   data: string;
   status: string;
   created_at: string;
+  handled_at: string | null;
 }
 
 export function createAction(params: {
@@ -86,7 +80,7 @@ export function getPendingActions(surfaceId?: string): SurfaceAction[] {
 
 export function ackAction(id: string): boolean {
   const result = db.prepare(
-    `UPDATE surface_actions SET status = 'handled' WHERE id = ?`
+    `UPDATE surface_actions SET status = 'handled', handled_at = datetime('now') WHERE id = ? AND status = 'pending'`
   ).run(id);
   return result.changes > 0;
 }

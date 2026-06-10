@@ -57,8 +57,6 @@ async function fanOutWebhook(payload: {
 }
 import {
   getDb,
-  getSurface,
-  deleteSurface,
   createAction,
   getPendingActions,
   ackAction,
@@ -71,19 +69,17 @@ import {
   deleteArtifact,
   getArtifact,
   getArtifactFile,
-  getArtifactFiles,
-  getCurrentArtifactVersion,
   inferMime,
   isLinkedArtifact,
   linkArtifact,
   listArtifactCards,
-  listArtifacts,
-  listArtifactVersions,
   normalizeArtifactPath,
   presentFile,
   readArtifact,
   readArtifactFileContent,
   setCurrentArtifactVersion,
+  listArtifactVersions,
+  getCurrentArtifactVersion,
   touchArtifact,
   updateArtifact,
 } from "./artifacts.js";
@@ -113,8 +109,8 @@ export const router = Router();
 
 // ── Auth (pairing tokens + sessions) ──
 // The global session middleware in index.ts has already resolved req.auth for
-// every request that reaches here (loopback, cookie, bearer, or static token).
-// Owner-only management endpoints re-check that role explicitly.
+// every request that reaches here (loopback, cookie, or bearer). Owner-only
+// management endpoints re-check that role explicitly.
 
 function requireOwner(req: any, res: any): boolean {
   if (req.auth && req.auth.role === "owner") return true;
@@ -184,7 +180,7 @@ router.get("/api/auth/session", (req: any, res) => {
       return;
     }
   }
-  // Loopback / static-token callers are authenticated but have no session row.
+  // Loopback callers are authenticated but have no session row.
   res.json({ authenticated: true, role: auth.role, via: auth.via });
 });
 
@@ -294,166 +290,32 @@ router.get("/stream", (req, res) => {
 });
 
 // Per-surface SSE stream
-router.get("/surfaces/:id/stream", (req, res) => {
-  const artifact = getArtifact(getDb(), req.params.id);
-  const surface = artifact ? undefined : getSurface(req.params.id);
-  if (!artifact && !surface) {
-    res.status(404).json({ error: "Surface not found" });
+router.get("/artifacts/:id/stream", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
     return;
   }
   addSurfaceClient(req.params.id, res);
 });
 
-// List surfaces
-router.get("/surfaces", (req, res) => {
-  const includeHidden = req.query.include_hidden === "1" || req.query.include_hidden === "true";
-  res.json(listArtifactCards(getDb(), { includeHidden }));
-});
-
-// Serve surface HTML as a standalone page (used by iframe src= instead of srcdoc)
-router.get("/surfaces/:id/html", (req, res) => {
-  const artifact = getArtifact(getDb(), req.params.id);
-  const version = artifact ? getCurrentArtifactVersion(getDb(), artifact.id) : undefined;
-  const files = version ? getArtifactFiles(getDb(), version.id) : [];
-  const htmlFile = files.find((file) => file.mime === "text/html" || file.path.endsWith(".html"));
-  if (artifact && htmlFile) {
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(readArtifactFileContent(htmlFile));
-    return;
-  }
-
-  const surface = getSurface(req.params.id);
-  if (surface) {
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(surface.html);
-    return;
-  }
-
-  res.status(404).send("Surface not found");
-});
-
-// Get surface
-router.get("/surfaces/:id", (req, res) => {
-  const artifactInfo = readArtifact(getDb(), req.params.id);
-  if (artifactInfo) {
-    res.json(surfaceResponseFromArtifact(artifactInfo));
-    return;
-  }
-
-  const surface = getSurface(req.params.id);
-  if (!surface) {
-    res.status(404).json({ error: "Surface not found" });
-    return;
-  }
-  res.json({
-    ...surface,
-    preview_url: `/surfaces/${surface.id}/html`,
-    view_url: `/surfaces/${surface.id}/html`,
-  });
-});
-
-// Create a displayable HTML artifact through the legacy surface route.
-router.post("/surfaces", (req, res) => {
-  const { id, title, html, metadata } = req.body;
-  if (!title || !html) {
-    res.status(400).json({ error: "title and html are required" });
-    return;
-  }
-  try {
-    const result = createArtifact(getDb(), {
-      id,
-      title,
-      kind: "html",
-      mime: "text/html",
-      source_type: "generated",
-      metadata,
-      files: [{ path: "index.html", content: html, mime: "text/html" }],
-      reason: "surface_create_compat",
-    });
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
-    res.status(201).json(surfaceResponseFromArtifact(result));
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Update the artifact behind a surface. Legacy surface rows are only read as a migration fallback.
-router.put("/surfaces/:id", (req, res) => {
-  const { title, html, metadata } = req.body;
-  const existingArtifact = readArtifact(getDb(), req.params.id);
-  const legacySurface = existingArtifact ? undefined : getSurface(req.params.id);
-  if (!existingArtifact && !legacySurface) {
-    res.status(404).json({ error: "Surface not found" });
-    return;
-  }
-  try {
-    const result = existingArtifact
-      ? updateArtifact(getDb(), req.params.id, {
-          title,
-          kind: html !== undefined ? "html" : undefined,
-          mime: html !== undefined ? "text/html" : undefined,
-          source_type: html !== undefined ? "generated" : undefined,
-          metadata,
-          files: html !== undefined ? [{ path: "index.html", content: html, mime: "text/html" }] : undefined,
-          reason: "surface_update_compat",
-        })
-      : createArtifact(getDb(), {
-          id: req.params.id,
-          title: title ?? legacySurface!.title,
-          kind: "html",
-          mime: "text/html",
-          source_type: "generated",
-          metadata: metadata ?? parseMetadataObject(legacySurface!.metadata),
-          files: [{ path: "index.html", content: html ?? legacySurface!.html, mime: "text/html" }],
-          reason: "surface_update_compat",
-        });
-    if (!result) {
-      res.status(404).json({ error: "Surface not found" });
-      return;
-    }
-    broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
-    broadcastToSurface(req.params.id, "surface_updated", {
-      id: result.artifact.id,
-      title: result.artifact.title,
-      metadata: result.artifact.metadata,
-      updated_at: result.artifact.updated_at,
-      version_id: result.version?.id,
-      reload: true,
-    });
-    enqueueThumb(result.artifact.id);
-    res.json(surfaceResponseFromArtifact(result));
-  } catch (err: any) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// Delete surface
-router.delete("/surfaces/:id", (req, res) => {
-  const artifactDeleted = deleteArtifact(getDb(), req.params.id);
-  const legacyDeleted = artifactDeleted ? false : deleteSurface(req.params.id);
-  if (!artifactDeleted && !legacyDeleted) {
-    res.status(404).json({ error: "Surface not found" });
-    return;
-  }
-  try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
-  broadcastGlobal("surface_deleted", { id: req.params.id });
-  res.json({ deleted: true });
-});
-
 // ─── Artifacts ───
 
-router.get("/artifacts", (_req, res) => {
-  res.json(listArtifacts(getDb()));
+// Card list — the one fetch the dashboard grid needs.
+router.get("/artifacts", (req, res) => {
+  const includeHidden = req.query.include_hidden === "1" || req.query.include_hidden === "true";
+  const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
+  const agent = typeof req.query.agent === "string" && req.query.agent ? req.query.agent : undefined;
+  res.json(listArtifactCards(getDb(), { includeHidden, project, agent }));
 });
 
 router.post("/artifacts/present-file", (req, res) => {
-  const { path: filePath, title, metadata, copy, open } = req.body;
+  const { path: filePath, title, metadata, copy, open, project_root } = req.body;
   if (!filePath) {
     res.status(400).json({ error: "path is required" });
     return;
   }
   try {
-    const result = presentFile(getDb(), { filePath, title, metadata, copy, open });
+    const result = presentFile(getDb(), { filePath, title, metadata, copy, open, project_root });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
@@ -464,7 +326,7 @@ router.post("/artifacts/present-file", (req, res) => {
 });
 
 router.post("/artifacts/link", (req, res) => {
-  const { path: linkPath, entry, title, metadata, open } = req.body;
+  const { path: linkPath, entry, title, metadata, open, project_root } = req.body;
   if (!linkPath) {
     res.status(400).json({ error: "path is required" });
     return;
@@ -474,7 +336,7 @@ router.post("/artifacts/link", (req, res) => {
     return;
   }
   try {
-    const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata });
+    const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata, project_root });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
@@ -504,7 +366,7 @@ router.post("/artifacts/:id/touch", (req, res) => {
 });
 
 router.post("/artifacts", (req, res) => {
-  const { id, title, kind, mime, renderer, source_type, metadata, files, content, path: filePath } = req.body;
+  const { id, title, kind, mime, source_type, metadata, files, content, path: filePath, project_root } = req.body;
   if (!title) {
     res.status(400).json({ error: "title is required" });
     return;
@@ -524,8 +386,8 @@ router.post("/artifacts", (req, res) => {
       title,
       kind,
       mime,
-      renderer,
       source_type,
+      project_root,
       metadata,
       files: inputFiles,
       reason: "artifact_create",
@@ -544,7 +406,11 @@ router.get("/artifacts/:id", (req, res) => {
     res.status(404).json({ error: "Artifact not found" });
     return;
   }
-  res.json(result);
+  res.json({
+    ...result,
+    preview_url: `/artifacts/${result.artifact.id}/view?preview=1`,
+    view_url: `/artifacts/${result.artifact.id}/view`,
+  });
 });
 
 router.get("/artifacts/:id/versions", (req, res) => {
@@ -585,7 +451,7 @@ router.post("/artifacts/:id/rollback", (req, res) => {
 });
 
 router.put("/artifacts/:id", (req, res) => {
-  const { title, kind, mime, renderer, source_type, metadata, files, content, path: filePath, reason } = req.body;
+  const { title, kind, mime, metadata, files, content, path: filePath, reason } = req.body;
   const inputFiles = Array.isArray(files)
     ? files
     : content !== undefined
@@ -603,8 +469,6 @@ router.put("/artifacts/:id", (req, res) => {
       title,
       kind,
       mime,
-      renderer,
-      source_type,
       metadata,
       files: inputFiles,
       reason: reason || "artifact_update",
@@ -794,12 +658,11 @@ router.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
 
 // ── Actions (surface → agent) ──
 
-// Surface posts an action (called by iframe via parent postMessage → PWA → here)
-router.post("/surfaces/:id/actions", (req, res) => {
-  const artifactInfo = readArtifact(getDb(), req.params.id);
-  const surface = artifactInfo ? undefined : getSurface(req.params.id);
-  if (!artifactInfo && !surface) {
-    res.status(404).json({ error: "Surface not found" });
+// Display posts a user action (iframe postMessage → PWA → here).
+router.post("/artifacts/:id/actions", (req, res) => {
+  const artifact = getArtifact(getDb(), req.params.id);
+  if (!artifact) {
+    res.status(404).json({ error: "Artifact not found" });
     return;
   }
   const { action, data } = req.body;
@@ -808,10 +671,9 @@ router.post("/surfaces/:id/actions", (req, res) => {
     return;
   }
   const act = createAction({ surface_id: req.params.id, action, data });
-  const title = surface?.title || artifactInfo!.artifact.title;
   fanOutWebhook({
     surface_id: req.params.id,
-    surface_title: title,
+    surface_title: artifact.title,
     action: act.action,
     data: data ?? {},
     created_at: act.created_at,
@@ -819,7 +681,7 @@ router.post("/surfaces/:id/actions", (req, res) => {
   broadcastGlobal("surface_action", {
     id: act.id,
     surface_id: req.params.id,
-    surface_title: title,
+    surface_title: artifact.title,
     action: act.action,
     data: act.data,
     created_at: act.created_at,
@@ -829,13 +691,11 @@ router.post("/surfaces/:id/actions", (req, res) => {
 
 // Agent reads pending actions
 router.get("/actions", (_req, res) => {
-  const actions = getPendingActions();
-  res.json(actions);
+  res.json(getPendingActions());
 });
 
-router.get("/surfaces/:id/actions", (req, res) => {
-  const actions = getPendingActions(req.params.id);
-  res.json(actions);
+router.get("/artifacts/:id/actions", (req, res) => {
+  res.json(getPendingActions(req.params.id));
 });
 
 // Agent acknowledges an action
@@ -849,11 +709,9 @@ router.post("/actions/:id/ack", (req, res) => {
 });
 
 // Agent replies to a surface (shown as toast in the PWA)
-router.post("/surfaces/:id/reply", (req, res) => {
-  const surface = getSurface(req.params.id);
-  const artifact = surface ? undefined : getArtifact(getDb(), req.params.id);
-  if (!surface && !artifact) {
-    res.status(404).json({ error: "Surface not found" });
+router.post("/artifacts/:id/reply", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
     return;
   }
   const { text } = req.body;
@@ -864,6 +722,21 @@ router.post("/surfaces/:id/reply", (req, res) => {
   broadcastToSurface(req.params.id, "agent_reply", { text });
   broadcastGlobal("agent_reply", { surface_id: req.params.id, text });
   res.json({ sent: true });
+});
+
+// Execute JS in a surface iframe
+router.post("/artifacts/:id/exec", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  const { js } = req.body;
+  if (!js) {
+    res.status(400).json({ error: "js is required" });
+    return;
+  }
+  broadcastToSurface(req.params.id, "surface_exec", { js });
+  res.json({ executed: true });
 });
 
 // ── Display Control ──
@@ -930,23 +803,6 @@ router.post("/display/notify", (req, res) => {
   res.json({ sent: true });
 });
 
-// Execute JS in a surface iframe
-router.post("/surfaces/:id/exec", (req, res) => {
-  const artifact = getArtifact(getDb(), req.params.id);
-  const surface = artifact ? undefined : getSurface(req.params.id);
-  if (!artifact && !surface) {
-    res.status(404).json({ error: "Surface not found" });
-    return;
-  }
-  const { js } = req.body;
-  if (!js) {
-    res.status(400).json({ error: "js is required" });
-    return;
-  }
-  broadcastToSurface(req.params.id, "surface_exec", { js });
-  res.json({ executed: true });
-});
-
 // ── Display home widget / overlay HTML ──
 
 router.get("/display/renderer/html", (_req, res) => {
@@ -955,23 +811,23 @@ router.get("/display/renderer/html", (_req, res) => {
   const surfaces = listArtifactCards(getDb());
   const inject = `<script>
 // ── Surface Renderer API ──
-// Surfaces array: [{id, title, metadata (JSON string), created_at, updated_at}, ...]
+// Surfaces array: full card payloads [{id, title, metadata (JSON string), created_at, updated_at, ...}, ...]
 window.__surfaces = ${JSON.stringify(surfaces)};
 
 // Navigation — call these to switch views
 window.navigate = (id) => parent.postMessage({type:'surface_navigate',surface_id:id},'*');
 window.navigateHome = () => parent.postMessage({type:'surface_navigate'},'*');
 
-// Fetch full surface data (includes html field)
-window.getSurface = (id) => fetch('/surfaces/'+id).then(r=>r.json());
+// Fetch full artifact data ({artifact, version, files, view_url})
+window.getSurface = (id) => fetch('/artifacts/'+id).then(r=>r.json());
 
 // Parse metadata helper — metadata is a JSON string with {icon, description, ...}
 window.parseMeta = (s) => { try { return typeof s.metadata === 'string' ? JSON.parse(s.metadata) : (s.metadata||{}); } catch { return {}; } };
 
-// Live preview iframe URL — use as <iframe src="/surfaces/{id}/html"></iframe>
+// Live preview iframe URL — use as <iframe src="/artifacts/{id}/view"></iframe>
 window.previewUrl = (id) => {
   const surface = window.__surfaces.find(s => s.id === id);
-  return surface && surface.preview_url ? surface.preview_url : '/surfaces/'+id+'/html';
+  return surface && surface.preview_url ? surface.preview_url : '/artifacts/'+id+'/view';
 };
 
 // SSE live updates — call to get notified of surface changes
@@ -979,7 +835,8 @@ window.onSurfaceChange = (handlers) => {
   const sse = new EventSource('/stream');
   if (handlers.created) sse.addEventListener('surface_created', (e) => {
     const d = JSON.parse(e.data);
-    fetch('/surfaces/'+d.id).then(r=>r.json()).then(s => { window.__surfaces.unshift(s); handlers.created(s); });
+    window.__surfaces.unshift(d);
+    handlers.created(d);
   });
   if (handlers.updated) sse.addEventListener('surface_updated', (e) => {
     const d = JSON.parse(e.data);
@@ -1232,33 +1089,6 @@ function cardPayload(id: string) {
   // remove the card from view client-side (the default list filters them out).
   const card = listArtifactCards(getDb(), { includeHidden: true }).find((item) => item.id === id);
   return card || { id };
-}
-
-function surfaceResponseFromArtifact(result: NonNullable<ReturnType<typeof readArtifact>>) {
-  const htmlFile = result.files.find((file) => file.mime === "text/html" || file.path.endsWith(".html"));
-  const html = htmlFile ? readArtifactFileContent(htmlFile).toString("utf8") : "";
-  return {
-    id: result.artifact.id,
-    title: result.artifact.title,
-    html,
-    metadata: result.artifact.metadata,
-    created_at: result.artifact.created_at,
-    updated_at: result.artifact.updated_at,
-    artifact: result.artifact,
-    version: result.version,
-    files: result.files,
-    preview_url: `/artifacts/${result.artifact.id}/view?preview=1`,
-    view_url: `/artifacts/${result.artifact.id}/view`,
-  };
-}
-
-function parseMetadataObject(value: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
 }
 
 function defaultPathForMime(mime?: string): string {

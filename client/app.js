@@ -25,7 +25,7 @@ window.addEventListener("message", (e) => {
   const surfaceId = currentSurfaceId;
   if (!surfaceId) return;
 
-  fetch(`/surfaces/${surfaceId}/actions`, {
+  fetch(`/artifacts/${surfaceId}/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1352,14 +1352,15 @@ async function renderSurface(id) {
     connectGlobalSSE();
   }
 
-  const res = await fetch("/surfaces/" + id);
+  const res = await fetch("/artifacts/" + id);
   if (!res.ok) { navigate("/"); return; }
-  const surface = await res.json();
+  const data = await res.json();
+  const artifact = data.artifact || {};
 
   const view = document.createElement("div");
   view.className = "surface-view";
 
-  const mime = surface.artifact_mime || (surface.artifact && surface.artifact.mime) || "";
+  const mime = artifact.mime || "";
   const mimeLabel = mime ? labelForMime(mime) : "";
 
   const nav = document.createElement("div");
@@ -1367,11 +1368,11 @@ async function renderSurface(id) {
   nav.innerHTML = `
     <button class="back-btn" onclick="location.hash='/'" aria-label="Back">←</button>
     <div class="surface-nav-titlewrap">
-      <div class="surface-nav-title">${escapeHtml(surface.title)}</div>
+      <div class="surface-nav-title">${escapeHtml(artifact.title)}</div>
       <div class="surface-nav-meta">
         ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span>` : ""}
         ${mimeLabel ? `<span class="surface-nav-meta-dot"></span>` : ""}
-        <span>${escapeHtml(timeAgo(surface.updated_at))}</span>
+        <span>${escapeHtml(timeAgo(artifact.updated_at))}</span>
         <span class="surface-nav-meta-dot"></span>
         <span class="surface-nav-live">live</span>
       </div>
@@ -1381,14 +1382,14 @@ async function renderSurface(id) {
 
   const iframe = document.createElement("iframe");
   iframe.className = "surface-frame";
-  iframe.src = surface.view_url || (surface.artifact ? `/artifacts/${surface.artifact.id}/view` : `/surfaces/${surface.id}/html`);
+  iframe.src = data.view_url || `/artifacts/${id}/view`;
   view.appendChild(iframe);
 
   app.innerHTML = "";
   app.appendChild(view);
 
   // SSE for live updates
-  surfaceSSE = new EventSource("/surfaces/" + id + "/stream");
+  surfaceSSE = new EventSource("/artifacts/" + id + "/stream");
   surfaceSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
     if (data.html || data.reload || data.version_id) {
@@ -1448,28 +1449,29 @@ function connectGlobalSSE() {
   }, 200);
 
   globalSSE.addEventListener("surface_created", (e) => {
-    const data = JSON.parse(e.data);
+    // The event payload IS the full card — no follow-up fetch needed.
+    const full = JSON.parse(e.data);
     pulseSpace({ comet: true });
-    fetch("/surfaces/" + data.id).then(r => r.json()).then(full => {
-      surfaces.unshift(full);
-      const grid = document.getElementById("surface-grid");
-      if (grid) {
-        const card = createCard(full, 0);
-        grid.prepend(card);
-        const empty = document.querySelector(".empty-state");
-        if (empty) {
-          if (emptySuggestionT) { clearInterval(emptySuggestionT); emptySuggestionT = null; }
-          empty.remove();
-        }
-        // First card → enable the rail.
-        const gv = document.querySelector(".grid-view");
-        if (gv) gv.classList.add("has-cards");
-        // Update the count meta in the header.
-        updateGridMeta();
-      } else {
-        render();
+    const meta = parseMetadata(full.metadata);
+    if (meta && meta.hidden === true) return;
+    surfaces.unshift(full);
+    const grid = document.getElementById("surface-grid");
+    if (grid) {
+      const card = createCard(full, 0);
+      grid.prepend(card);
+      const empty = document.querySelector(".empty-state");
+      if (empty) {
+        if (emptySuggestionT) { clearInterval(emptySuggestionT); emptySuggestionT = null; }
+        empty.remove();
       }
-    });
+      // First card → enable the rail.
+      const gv = document.querySelector(".grid-view");
+      if (gv) gv.classList.add("has-cards");
+      // Update the count meta in the header.
+      updateGridMeta();
+    } else {
+      render();
+    }
   });
 
   globalSSE.addEventListener("surface_updated", (e) => {
@@ -1496,18 +1498,15 @@ function connectGlobalSSE() {
       return;
     }
     // Un-hide path: surface_updated arrives for a row we don't have in view.
-    // Re-fetch and treat it like a fresh creation so the card reappears.
+    // The payload is the full card — treat it like a fresh creation.
     if (idx === -1) {
-      fetch("/surfaces/" + data.id).then((r) => r.ok ? r.json() : null).then((full) => {
-        if (!full) return;
-        surfaces.unshift(full);
-        if (document.querySelector(".empty-state")) { render(); return; }
-        const grid = document.getElementById("surface-grid");
-        if (grid && !grid.querySelector(`.surface-card[data-id="${full.id}"]`)) {
-          grid.prepend(createCard(full, 0));
-          updateGridMeta();
-        }
-      });
+      surfaces.unshift(data);
+      if (document.querySelector(".empty-state")) { render(); return; }
+      const grid = document.getElementById("surface-grid");
+      if (grid && !grid.querySelector(`.surface-card[data-id="${data.id}"]`)) {
+        grid.prepend(createCard(data, 0));
+        updateGridMeta();
+      }
       return;
     }
     if (idx !== -1) {
@@ -1623,12 +1622,9 @@ async function render() {
   if (route.view === "surface") {
     await renderSurface(route.id);
   } else {
-    const res = await fetch("/surfaces");
+    // One fetch: the card list carries everything the grid renders.
+    const res = await fetch("/artifacts");
     surfaces = await res.json();
-    const full = await Promise.all(
-      surfaces.map((s) => fetch("/surfaces/" + s.id).then((r) => r.json()))
-    );
-    surfaces = full;
     renderGrid();
   }
   reportPresence();

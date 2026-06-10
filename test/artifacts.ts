@@ -39,7 +39,7 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function main() {
   try {
-    await api("GET", "/surfaces");
+    await api("GET", "/artifacts");
   } catch {
     console.error("Surface server not running. Start it with: npm run dev");
     process.exit(1);
@@ -48,7 +48,6 @@ async function main() {
   const suffix = Date.now().toString(36);
   const htmlId = `artifact-test-html-${suffix}`;
   const mdId = `artifact-test-md-${suffix}`;
-  const surfaceId = `artifact-test-surface-${suffix}`;
 
   // ── Workspace artifacts ──
 
@@ -57,10 +56,12 @@ async function main() {
     title: "Artifact Test HTML",
     mime: "text/html",
     content: "<!doctype html><html><body>hello</body></html>",
-    metadata: { icon: "HTML", description: "artifact HTTP test" },
+    project_root: "/tmp/fake-project",
+    metadata: { icon: "HTML", description: "artifact HTTP test", agent: "test-agent" },
   });
   assert(html.artifact.id === htmlId, "HTML artifact ID mismatch");
   assert(html.version.version === 1, "HTML artifact should start at version 1");
+  assert(html.artifact.project_root === "/tmp/fake-project", "project_root not stamped on create");
 
   const md = await api("POST", "/artifacts", {
     id: mdId,
@@ -89,29 +90,35 @@ async function main() {
   const fileText = await api("GET", `/artifacts/${mdId}/files/notes.md`);
   assert(fileText.includes("First"), "Artifact file route did not reflect rolled back version");
 
-  const surface = await api("POST", "/surfaces", {
-    id: surfaceId,
-    title: "Artifact Test Legacy Surface",
-    html: "<!doctype html><html><body>legacy</body></html>",
-    metadata: { icon: "HTML" },
-  });
-  assert(surface.id === surfaceId, "Legacy surface create failed");
-
-  const mirrored = await api("GET", `/artifacts/${surfaceId}`);
-  assert(mirrored.artifact.kind === "html", "Legacy surface did not mirror into an HTML artifact");
-
-  const cards = await api("GET", "/surfaces");
+  const cards = await api("GET", "/artifacts");
   assert(cards.some((card: any) => card.id === htmlId && card.preview_url), "HTML artifact missing from surface cards");
   assert(cards.some((card: any) => card.id === mdId && card.artifact_mime === "text/markdown"), "Markdown artifact missing from surface cards");
+  const htmlCard = cards.find((card: any) => card.id === htmlId);
+  assert(htmlCard.project_root === "/tmp/fake-project", "Card missing project_root");
+  assert(htmlCard.agent === "test-agent", "Card missing agent extracted from metadata");
+  assert(typeof htmlCard.pending_actions === "number", "Card missing pending_actions count");
+
+  const filtered = await api("GET", `/artifacts?project=${encodeURIComponent("/tmp/fake-project")}`);
+  assert(filtered.some((card: any) => card.id === htmlId), "project filter dropped the artifact");
+  assert(!filtered.some((card: any) => card.id === mdId), "project filter leaked other projects");
 
   const view = await api("GET", `/artifacts/${mdId}/view`);
   assert(view.includes("Artifact Test Markdown"), "Artifact view shell missing title");
 
-  const action = await api("POST", `/surfaces/${mdId}/actions`, {
+  const action = await api("POST", `/artifacts/${mdId}/actions`, {
     action: "artifact_test_action",
     data: { ok: true },
   });
   assert(action.action === "artifact_test_action", "Artifact action failed");
+
+  const pendingForSurface = await api("GET", `/artifacts/${mdId}/actions`);
+  assert(pendingForSurface.some((a: any) => a.id === action.id), "Pending action not listed");
+  const acked = await api("POST", `/actions/${action.id}/ack`);
+  assert(acked.acknowledged === true, "Action ack failed");
+
+  // Legacy surface routes are gone.
+  const legacyList = await raw("GET", "/surfaces");
+  assert(legacyList.status === 404, `GET /surfaces should 404 (got ${legacyList.status})`);
 
   // ── Linked artifacts ──
 
@@ -192,7 +199,6 @@ async function main() {
 
   await optionalDelete(`/artifacts/${htmlId}`);
   await optionalDelete(`/artifacts/${mdId}`);
-  await optionalDelete(`/surfaces/${surfaceId}`);
 
   console.log("Artifact HTTP tests passed");
 }

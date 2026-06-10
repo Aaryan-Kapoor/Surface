@@ -14,8 +14,9 @@ export interface Artifact {
   title: string;
   kind: ArtifactKind;
   mime: string | null;
-  renderer: string | null;
   source_type: ArtifactSourceType;
+  template: string | null;
+  project_root: string | null;
   current_version_id: string | null;
   workspace_path: string | null;
   metadata: string;
@@ -30,7 +31,6 @@ export interface ArtifactVersion {
   parent_version_id: string | null;
   version: number;
   reason: string | null;
-  created_by: string | null;
   manifest_json: string;
   content_hash: string | null;
   created_at: string;
@@ -48,17 +48,23 @@ export interface ArtifactFile {
   created_at: string;
 }
 
+// Full card payload — everything the dashboard grid needs in one row, so the
+// list endpoint is a single fetch (no per-card follow-ups).
 export interface SurfaceCard {
   id: string;
   title: string;
   metadata: string;
+  project_root: string | null;
+  agent: string | null;
+  template: string | null;
   created_at: string;
   updated_at: string;
-  artifact_id?: string;
-  artifact_kind?: string;
-  artifact_mime?: string | null;
-  current_version_id?: string | null;
-  first_file_path?: string | null;
+  artifact_id: string;
+  artifact_kind: string;
+  artifact_mime: string | null;
+  current_version_id: string | null;
+  first_file_path: string | null;
+  pending_actions: number;
   preview_url?: string;
   view_url?: string;
 }
@@ -99,8 +105,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".mmd": "application/vnd.mermaid",
 };
 
-// Schema lives in server/migrations.ts (migration v1, baseline). New schema
-// changes append a v2+ migration there.
+// Schema lives in server/migrations.ts (baseline). New schema changes append a
+// post-baseline migration there.
 
 export function inferMime(filePath: string, fallback = "application/octet-stream"): string {
   return MIME_BY_EXT[path.extname(filePath).toLowerCase()] || fallback;
@@ -156,7 +162,6 @@ export function setCurrentArtifactVersion(
       : getArtifactVersion(db, String(version));
   if (!versionRow || versionRow.artifact_id !== artifactId) return undefined;
   db.prepare(`UPDATE artifacts SET current_version_id = ?, updated_at = datetime('now') WHERE id = ?`).run(versionRow.id, artifactId);
-  db.prepare(`UPDATE surface_views SET updated_at = datetime('now') WHERE artifact_id = ?`).run(artifactId);
   return readArtifact(db, artifactId);
 }
 
@@ -186,15 +191,31 @@ export function getArtifactFile(db: Database.Database, artifactId: string, fileP
     .get(artifactId, normalized) as ArtifactFile | undefined;
 }
 
-export function listArtifactCards(db: Database.Database, opts?: { includeHidden?: boolean }): SurfaceCard[] {
-  const artifactRows = db
+export function listArtifactCards(
+  db: Database.Database,
+  opts?: { includeHidden?: boolean; project?: string; agent?: string }
+): SurfaceCard[] {
+  const where: string[] = ["a.deleted_at IS NULL"];
+  const params: unknown[] = [];
+  if (opts?.project) {
+    where.push("a.project_root = ?");
+    params.push(opts.project);
+  }
+  if (opts?.agent) {
+    where.push("json_extract(a.metadata, '$.agent') = ?");
+    params.push(opts.agent);
+  }
+  const rows = db
     .prepare(
       `SELECT
-        sv.id,
-        sv.title,
-        sv.metadata,
-        sv.created_at,
-        sv.updated_at,
+        a.id,
+        a.title,
+        a.metadata,
+        a.project_root,
+        json_extract(a.metadata, '$.agent') AS agent,
+        a.template,
+        a.created_at,
+        a.updated_at,
         a.id AS artifact_id,
         a.kind AS artifact_kind,
         a.mime AS artifact_mime,
@@ -205,27 +226,22 @@ export function listArtifactCards(db: Database.Database, opts?: { includeHidden?
           WHERE af.artifact_version_id = a.current_version_id
           ORDER BY CASE WHEN af.path = 'index.html' THEN 0 ELSE 1 END, af.path
           LIMIT 1
-        ) AS first_file_path
-       FROM surface_views sv
-       JOIN artifacts a ON a.id = sv.artifact_id
-       WHERE a.deleted_at IS NULL
-       ORDER BY sv.updated_at DESC`
+        ) AS first_file_path,
+        (
+          SELECT count(*)
+          FROM surface_actions sa
+          WHERE sa.surface_id = a.id AND sa.status = 'pending'
+        ) AS pending_actions
+       FROM artifacts a
+       WHERE ${where.join(" AND ")}
+       ORDER BY a.updated_at DESC`
     )
-    .all() as SurfaceCard[];
+    .all(...params) as SurfaceCard[];
 
-  const legacyRows = db
-    .prepare(
-      `SELECT id, title, metadata, created_at, updated_at
-       FROM surfaces
-       WHERE id NOT IN (SELECT id FROM surface_views)
-       ORDER BY updated_at DESC`
-    )
-    .all() as SurfaceCard[];
-
-  const all = [...artifactRows, ...legacyRows].map((row) => ({
+  const all = rows.map((row) => ({
     ...row,
-    preview_url: row.artifact_id ? `/artifacts/${row.artifact_id}/view?preview=1` : `/surfaces/${row.id}/html`,
-    view_url: row.artifact_id ? `/artifacts/${row.artifact_id}/view` : `/surfaces/${row.id}/html`,
+    preview_url: `/artifacts/${row.id}/view?preview=1`,
+    view_url: `/artifacts/${row.id}/view`,
   }));
   if (opts?.includeHidden) return all;
   return all.filter((row) => {
@@ -257,13 +273,12 @@ export function createArtifact(
     title: string;
     kind?: ArtifactKind;
     mime?: string;
-    renderer?: string;
     source_type?: ArtifactSourceType;
+    template?: string;
+    project_root?: string;
     metadata?: Record<string, unknown>;
     files: ArtifactInputFile[];
     reason?: string;
-    created_by?: string;
-    create_surface_view?: boolean;
   }
 ) {
   if (!params.title) throw new Error("title is required");
@@ -290,30 +305,24 @@ export function createArtifact(
       db.prepare(`DELETE FROM artifacts WHERE id = ?`).run(id);
     }
     db.prepare(
-      `INSERT INTO artifacts (id, title, kind, mime, renderer, source_type, workspace_path, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO artifacts (id, title, kind, mime, source_type, template, project_root, workspace_path, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       params.title,
       kind,
       mime,
-      params.renderer || null,
       params.source_type || "generated",
+      params.template || null,
+      params.project_root || null,
       artifactWorkspace,
       metadata
     );
     const version = createArtifactVersion(db, id, params.files, {
       reason: params.reason,
-      created_by: params.created_by,
       parent_version_id: null,
     });
     db.prepare(`UPDATE artifacts SET current_version_id = ?, updated_at = datetime('now') WHERE id = ?`).run(version.id, id);
-    if (params.create_surface_view !== false) {
-      db.prepare(
-        `INSERT OR REPLACE INTO surface_views (id, artifact_id, title, metadata, updated_at)
-         VALUES (?, ?, ?, ?, datetime('now'))`
-      ).run(id, id, params.title, metadata);
-    }
   });
   tx();
   return readArtifact(db, id)!;
@@ -326,12 +335,9 @@ export function updateArtifact(
     title?: string;
     kind?: ArtifactKind;
     mime?: string;
-    renderer?: string | null;
-    source_type?: ArtifactSourceType;
     metadata?: Record<string, unknown>;
     files?: ArtifactInputFile[];
     reason?: string;
-    created_by?: string;
   }
 ) {
   const existing = getArtifact(db, id);
@@ -342,7 +348,6 @@ export function updateArtifact(
     if (params.files?.length) {
       const version = createArtifactVersion(db, id, params.files!, {
         reason: params.reason,
-        created_by: params.created_by,
         parent_version_id: currentVersion?.id || null,
       });
       db.prepare(`UPDATE artifacts SET current_version_id = ? WHERE id = ?`).run(version.id, id);
@@ -350,20 +355,15 @@ export function updateArtifact(
     const metadata = params.metadata !== undefined ? JSON.stringify(params.metadata) : existing.metadata;
     db.prepare(
       `UPDATE artifacts
-       SET title = ?, kind = ?, mime = ?, renderer = ?, source_type = ?, metadata = ?, updated_at = datetime('now')
+       SET title = ?, kind = ?, mime = ?, metadata = ?, updated_at = datetime('now')
        WHERE id = ?`
     ).run(
       params.title ?? existing.title,
       params.kind ?? existing.kind,
       params.mime ?? existing.mime,
-      params.renderer === undefined ? existing.renderer : params.renderer,
-      params.source_type ?? existing.source_type,
       metadata,
       id
     );
-    db.prepare(
-      `UPDATE surface_views SET title = ?, metadata = ?, updated_at = datetime('now') WHERE artifact_id = ?`
-    ).run(params.title ?? existing.title, metadata, id);
   });
   tx();
   return readArtifact(db, id);
@@ -371,11 +371,12 @@ export function updateArtifact(
 
 export function deleteArtifact(db: Database.Database, id: string): boolean {
   const result = db.prepare(`UPDATE artifacts SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`).run(id);
-  db.prepare(`DELETE FROM surface_views WHERE artifact_id = ?`).run(id);
   // Clear any pending user actions queued against this surface so they don't
   // accumulate forever or wake `surface wait` listeners after the surface
   // is gone.
   db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
+  db.prepare(`DELETE FROM surface_state WHERE surface_id = ?`).run(id);
+  db.prepare(`DELETE FROM surface_bindings WHERE surface_id = ?`).run(id);
   return result.changes > 0;
 }
 
@@ -384,6 +385,7 @@ export function presentFile(
   params: {
     filePath: string;
     title?: string;
+    project_root?: string;
     metadata?: Record<string, unknown>;
     copy?: boolean;
     open?: boolean;
@@ -409,6 +411,7 @@ export function presentFile(
     kind: mime === "text/html" ? "html" : "file",
     mime,
     source_type: "presented_file",
+    project_root: params.project_root,
     metadata,
     files: [{ path: path.basename(resolved), content, mime }],
     reason: "present_file",
@@ -416,9 +419,6 @@ export function presentFile(
 }
 
 export function readArtifactFileContent(file: ArtifactFile): Buffer {
-  if (file.storage_kind === "external") {
-    return fs.readFileSync(file.storage_path);
-  }
   return fs.readFileSync(file.storage_path);
 }
 
@@ -432,6 +432,7 @@ export function linkArtifact(
     path: string;
     entry?: string;
     title: string;
+    project_root?: string;
     metadata?: Record<string, unknown>;
   }
 ) {
@@ -528,24 +529,19 @@ export function linkArtifact(
 
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO artifacts (id, title, kind, mime, renderer, source_type, workspace_path, metadata, current_version_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(artifactId, params.title, kind, mime, null, "linked", workspaceRoot, metadataJson, versionId);
+      `INSERT INTO artifacts (id, title, kind, mime, source_type, template, project_root, workspace_path, metadata, current_version_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(artifactId, params.title, kind, mime, "linked", null, params.project_root || null, workspaceRoot, metadataJson, versionId);
 
     db.prepare(
-      `INSERT INTO artifact_versions (id, artifact_id, parent_version_id, version, reason, created_by, manifest_json, content_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(versionId, artifactId, null, 1, "link", null, JSON.stringify(manifest), sha256);
+      `INSERT INTO artifact_versions (id, artifact_id, parent_version_id, version, reason, manifest_json, content_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(versionId, artifactId, null, 1, "link", JSON.stringify(manifest), sha256);
 
     db.prepare(
       `INSERT INTO artifact_files (id, artifact_version_id, path, mime, size_bytes, sha256, storage_kind, storage_path)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(fileId, versionId, entryRelPath, mime, data.length, sha256, "external", entryAbsPath);
-
-    db.prepare(
-      `INSERT OR REPLACE INTO surface_views (id, artifact_id, title, metadata, updated_at)
-       VALUES (?, ?, ?, ?, datetime('now'))`
-    ).run(artifactId, artifactId, params.title, metadataJson);
   });
   tx();
 
@@ -556,7 +552,6 @@ export function touchArtifact(db: Database.Database, id: string): boolean {
   const artifact = getArtifact(db, id);
   if (!artifact) return false;
   db.prepare(`UPDATE artifacts SET updated_at = datetime('now') WHERE id = ?`).run(id);
-  db.prepare(`UPDATE surface_views SET updated_at = datetime('now') WHERE artifact_id = ?`).run(id);
   return true;
 }
 
@@ -567,7 +562,6 @@ function createArtifactVersion(
   options: {
     parent_version_id: string | null;
     reason?: string;
-    created_by?: string;
   }
 ): ArtifactVersion {
   const nextVersion =
@@ -613,15 +607,14 @@ function createArtifactVersion(
   fs.writeFileSync(path.join(versionDir, "manifest.json"), JSON.stringify(manifest, null, 2));
 
   db.prepare(
-    `INSERT INTO artifact_versions (id, artifact_id, parent_version_id, version, reason, created_by, manifest_json, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO artifact_versions (id, artifact_id, parent_version_id, version, reason, manifest_json, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     versionId,
     artifactId,
     options.parent_version_id,
     nextVersion,
     options.reason || null,
-    options.created_by || null,
     JSON.stringify(manifest),
     contentHash
   );
