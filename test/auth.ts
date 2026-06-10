@@ -272,6 +272,15 @@ async function main() {
     const devInbox = await req("GET", "/actions", { cookie: sessionCookie! });
     check("device cannot read the action inbox", devInbox.status === 403, devInbox.status);
 
+    const devState = await req("PATCH", `/artifacts/${devArtifactId}/state`, {
+      cookie: sessionCookie!,
+      body: { hacked: true },
+    });
+    check("device cannot write surface state", devState.status === 403, devState.status);
+
+    const devStateRead = await req("GET", `/artifacts/${devArtifactId}/state`, { cookie: sessionCookie! });
+    check("device can read surface state", devStateRead.status === 200, devStateRead.status);
+
     const devPairMint = await req("POST", "/api/auth/pairing-token", { cookie: sessionCookie!, body: {} });
     check("device cannot mint pairing tokens", devPairMint.status === 403, devPairMint.status);
 

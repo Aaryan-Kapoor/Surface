@@ -111,6 +111,26 @@ async function main() {
   });
   assert(action.action === "artifact_test_action", "Artifact action failed");
 
+  // ── Surface state ──
+
+  const state0 = await api("GET", `/artifacts/${htmlId}/state`);
+  assert(state0.state_version === 0 && Object.keys(state0.state).length === 0, "Fresh artifact should have empty state");
+
+  const state1 = await api("PATCH", `/artifacts/${htmlId}/state`, { progress: 0.42, tests: { passed: 10 } });
+  assert(state1.state_version === 1, "First patch should bump version to 1");
+  assert(state1.state.progress === 0.42, "Patch did not set progress");
+
+  const state2 = await api("PATCH", `/artifacts/${htmlId}/state`, { tests: { failed: 2 }, stage: "deploy" });
+  assert(state2.state.tests.passed === 10 && state2.state.tests.failed === 2, "Deep merge lost sibling keys");
+  assert(state2.state_version === 2, "Second patch should bump version to 2");
+
+  const state3 = await api("PATCH", `/artifacts/${htmlId}/state`, { stage: null });
+  assert(!("stage" in state3.state), "null should delete the key");
+
+  // surface.js runtime is injected into served HTML
+  const servedHtml = await api("GET", `/artifacts/${htmlId}/files/index.html`);
+  assert(servedHtml.includes(`/surface.js?id=${htmlId}`), "surface.js runtime not injected into served HTML");
+
   const pendingForSurface = await api("GET", `/artifacts/${mdId}/actions`);
   assert(pendingForSurface.some((a: any) => a.id === action.id), "Pending action not listed");
   const acked = await api("POST", `/actions/${action.id}/ack`);

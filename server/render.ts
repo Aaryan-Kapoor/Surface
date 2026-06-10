@@ -294,6 +294,21 @@ export function renderThumbPlaceholder(params: { title: string; mime: string }):
   </svg>`;
 }
 
+// Inject the surface.js runtime into surface HTML as it is served, so every
+// surface gets data-surface-bind / Surface.action() with no build step. The
+// tag goes just before </body> (or at the end), keeping byte offsets of the
+// author's own markup untouched.
+export function injectSurfaceRuntime(html: Buffer, artifactId: string): Buffer {
+  const tag = `<script src="/surface.js?id=${encodeURIComponent(artifactId)}"></script>`;
+  const text = html.toString("utf8");
+  if (text.includes('src="/surface.js')) return html;
+  const idx = text.toLowerCase().lastIndexOf("</body>");
+  const out = idx === -1
+    ? `${text}\n${tag}\n`
+    : `${text.slice(0, idx)}${tag}\n${text.slice(idx)}`;
+  return Buffer.from(out, "utf8");
+}
+
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => {
     switch (char) {

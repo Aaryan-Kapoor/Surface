@@ -26,6 +26,9 @@ Commands:
   link <abs-path>            Register linked artifact (file or directory)
   touch <id>                 Broadcast reload for linked artifact
   present <abs-path>         One-shot file presentation (copy)
+  set <id> <key> <value>     Set one state key (dotted paths ok, value parsed as JSON)
+  patch <id> <json|->        Deep-merge a JSON patch into surface state
+  state <id>                 Read surface state
   versions <id>              List artifact versions
   rollback <id> <version>    Restore artifact version
   delete <id>                Delete artifact
@@ -61,6 +64,9 @@ const CMD_HELP: Record<string, string> = {
   link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--agent <label>] [--metadata <json>] [--no-open]",
   touch: "surface touch <id>",
   present: "surface present <abs-path> [--title <t>] [--agent <label>] [--metadata <json>]",
+  set: "surface set <id> <dotted.key> <value>   (value parsed as JSON, falls back to string; null deletes)",
+  patch: "surface patch <id> <json|->",
+  state: "surface state <id>",
   versions: "surface versions <id>",
   rollback: "surface rollback <id> <version>",
   delete: "surface delete <id>",
@@ -366,6 +372,37 @@ async function main() {
       const metadata = attributionMetadata(flags);
       if (metadata) body.metadata = metadata;
       out(await call("POST", "/artifacts/present-file", body));
+      return;
+    }
+
+    case "set": {
+      const [id, key, ...rest] = positional;
+      const rawValue = rest.join(" ");
+      if (!id || !key || rawValue === "") usage("usage: " + CMD_HELP.set);
+      let value: unknown;
+      try { value = JSON.parse(rawValue); } catch { value = rawValue; }
+      // Build the nested single-key patch from the dotted path.
+      let patch: unknown = value;
+      const parts = key.split(".").filter(Boolean);
+      for (let i = parts.length - 1; i >= 0; i--) patch = { [parts[i]]: patch };
+      out(await call("PATCH", `/artifacts/${encodeURIComponent(id)}/state`, patch));
+      return;
+    }
+
+    case "patch": {
+      const id = positional[0];
+      if (!id) usage("usage: " + CMD_HELP.patch);
+      const raw = positional[1] === "-" || positional[1] === undefined ? await readStdin() : positional[1];
+      let body: unknown;
+      try { body = JSON.parse(raw); } catch { usage("patch expects valid JSON"); }
+      out(await call("PATCH", `/artifacts/${encodeURIComponent(id)}/state`, body));
+      return;
+    }
+
+    case "state": {
+      const id = positional[0];
+      if (!id) usage("usage: " + CMD_HELP.state);
+      out(await call("GET", `/artifacts/${encodeURIComponent(id)}/state`));
       return;
     }
 

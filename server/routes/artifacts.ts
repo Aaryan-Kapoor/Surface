@@ -23,7 +23,8 @@ import {
 } from "../artifacts.js";
 import { addSurfaceClient, broadcastGlobal, broadcastToSurface } from "../sse.js";
 import { enqueueThumb, hasThumb, getThumbPath } from "../thumbs.js";
-import { defaultPathForMime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
+import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
+import { getState, patchState } from "../state.js";
 import { requireSystem, targetOf } from "./helpers.js";
 
 export const artifactsRouter = Router();
@@ -251,6 +252,34 @@ artifactsRouter.delete("/artifacts/:id", (req, res) => {
   res.json({ deleted: true });
 });
 
+// ── Surface state (docs/state/stateful-surfaces.md) ──
+// One JSON doc per surface; reads are open to devices, writes are system-only.
+
+artifactsRouter.get("/artifacts/:id/state", (req, res) => {
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  res.json(getState(getDb(), req.params.id));
+});
+
+artifactsRouter.patch("/artifacts/:id/state", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
+  if (!getArtifact(getDb(), req.params.id)) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  try {
+    const result = patchState(getDb(), req.params.id, req.body);
+    const event = { id: req.params.id, patch: req.body, state_version: result.state_version };
+    broadcastGlobal("state_patch", event);
+    broadcastToSurface(req.params.id, "state_patch", event);
+    res.json(result);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 artifactsRouter.get("/artifacts/:id/manifest", (req, res) => {
   const version = getCurrentArtifactVersion(getDb(), req.params.id);
   if (!version) {
@@ -351,7 +380,9 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
       const contentType = file.mime || inferMime(file.path);
       const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
       res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
-      res.send(readArtifactFileContent(file));
+      let bytes = readArtifactFileContent(file);
+      if (contentType === "text/html") bytes = injectSurfaceRuntime(bytes, artifactId);
+      res.send(bytes);
       return;
     }
     // Linked-artifact fallback: serve any file under workspace_path that wasn't pre-registered.
@@ -394,7 +425,9 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
       const mime = inferMime(realAbs);
       const charset = mime.startsWith("text/") || mime === "application/json" || mime === "image/svg+xml";
       res.setHeader("Content-Type", charset ? `${mime}; charset=utf-8` : mime);
-      res.send(fs.readFileSync(realAbs));
+      let bytes: Buffer = fs.readFileSync(realAbs);
+      if (mime === "text/html") bytes = injectSurfaceRuntime(bytes, artifactId);
+      res.send(bytes);
       return;
     }
     res.status(404).send("Artifact file not found");

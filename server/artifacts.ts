@@ -375,7 +375,7 @@ export function deleteArtifact(db: Database.Database, id: string): boolean {
   // accumulate forever or wake `surface wait` listeners after the surface
   // is gone.
   db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
-  db.prepare(`DELETE FROM surface_state WHERE surface_id = ?`).run(id);
+  db.prepare(`DELETE FROM surface_state WHERE artifact_id = ?`).run(id);
   db.prepare(`DELETE FROM surface_bindings WHERE surface_id = ?`).run(id);
   return result.changes > 0;
 }

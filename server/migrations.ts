@@ -82,10 +82,11 @@ const migrations: Migration[] = [
         ON surface_actions(surface_id, status, created_at);
 
         CREATE TABLE IF NOT EXISTS surface_state (
-          surface_id TEXT PRIMARY KEY,
-          state TEXT NOT NULL DEFAULT '{}',
+          artifact_id TEXT PRIMARY KEY,
+          state_json TEXT NOT NULL DEFAULT '{}',
+          state_version INTEGER NOT NULL DEFAULT 0,
           updated_at TEXT DEFAULT (datetime('now')),
-          FOREIGN KEY (surface_id) REFERENCES artifacts(id) ON DELETE CASCADE
+          FOREIGN KEY (artifact_id) REFERENCES artifacts(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS surface_bindings (
