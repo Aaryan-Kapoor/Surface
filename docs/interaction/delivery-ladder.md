@@ -13,17 +13,22 @@ When an action arrives for a surface, delivery resolves strictly in this order:
 
 ### Layer 1 — Live waiter (default, free, in-context)
 
-At surface creation, the agent backgrounds a waiter **in its own working session**:
+At surface creation, the agent backgrounds a waiter **in its own working session**, in one of two forms:
 
 ```bash
-surface wait --id deploy-panel &   # harness background task; prints the action JSON on exit
+surface wait --follow &            # persistent action terminal: one JSON line per action, never exits
+surface wait --id deploy-panel &   # one-shot: prints the action JSON on exit
 ```
 
-Click → `wait` exits with the action JSON → the harness notifies the model (Claude Code and Codex both surface background-process completion) → the agent handles it **in the session that has all the context** → re-arms the waiter. Zero extra usage; the user keeps talking to the same session.
+**`--follow` is the preferred form.** It is a long-lived action terminal: every matching action is printed as one compact JSON line and acked on delivery, the pending inbox is drained on connect and after every reconnect, and the waiter registration never lapses. The harness watches its stdout — Claude Code's Monitor tool turns each line into a model wake-up (pattern-match on `"action":"`), and any harness with a background-output watchdog works the same way. Verified end-to-end 2026-06: pre-existing pending actions, live clicks, and auto-ack all deliver as individual wake events while the card stays "● listening".
+
+The one-shot form works on pure completion-notification harnesses: click → `wait` exits with the action JSON → the harness notifies the model (Claude Code and Codex both surface background-process completion) → the agent handles it → re-arms. Its weakness is the gap: between exit and re-arm the surface is unguarded (listening drops, a second click can trigger a binding), which `--follow` eliminates.
+
+Either way the agent handles the click **in the session that has all the context**, at zero extra usage; the user keeps talking to the same session.
 
 The open connection doubles as **presence**: `wait` connects to `/stream?wait_for=<id|*>`, which registers it in the waiter registry (`server/sse.ts`); while it lives, the card shows "● listening" (via `waiter_status` events and the `listening` card flag) and lower layers are suppressed.
 
-Honest caveats: sessions end, laptops sleep, harnesses cap background-task lifetimes, and re-arming is a SKILL.md discipline, not a guarantee. That is why this is a ladder and not a single mechanism.
+Honest caveats: sessions end, laptops sleep, and harnesses cap background-task lifetimes (Claude Code's Monitor needs `persistent: true` to survive past its default timeout). That is why this is a ladder and not a single mechanism.
 
 ### Layer 2 — Binding (fires only when no waiter is connected)
 

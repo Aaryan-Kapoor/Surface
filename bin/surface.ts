@@ -53,6 +53,7 @@ Commands:
   status                     Get display state
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
+                             (--follow: never exit; print one JSON line per action)
   pair                       Create a one-time pairing URL for a new device
   devices [revoke <name>]    List paired displays / revoke one by name
   auth <pairing|session> ... Manage pairing tokens and durable sessions
@@ -112,7 +113,7 @@ const CMD_HELP: Record<string, string> = {
   ].join("\n"),
   status: "surface status",
   stream: "surface stream [--id <surface-id>]",
-  wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]",
+  wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow]   (--follow keeps listening forever: one compact JSON line per action, acked as delivered — the persistent action terminal; --timeout becomes a lifetime cap)",
   pair: "surface pair [--name <device-name>] [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--json] [--no-qr]",
   devices: "surface devices [revoke <name-or-id>]",
   auth: [
@@ -359,9 +360,16 @@ async function waitForAction(opts: {
   wantEvent?: string;
   timeoutSec?: number;
   autoAck?: boolean;
+  // Follow mode: emit every matching action (one call per action) and keep
+  // listening instead of resolving on the first match. The connection stays
+  // registered as the layer-1 waiter the whole time.
+  onAction?: (action: any) => void;
 }): Promise<{ action?: any; timedOut?: boolean }> {
   const wantEvent = opts.wantEvent || "surface_action";
   const autoAck = opts.autoAck !== false;
+  // With --no-ack handled actions stay in the pending inbox, so the
+  // reconnect re-drain would emit them again without this.
+  const seen = new Set<string>();
 
   const normalizeData = (d: unknown) => {
     if (typeof d === "string") {
@@ -399,7 +407,10 @@ async function waitForAction(opts: {
       const path = opts.surfaceId ? `/artifacts/${encodeURIComponent(opts.surfaceId)}/actions` : `/actions`;
       const pending = (await call("GET", path)) as any[];
       for (const a of pending) {
-        if (isMatch(a)) return finalize(a);
+        if (!isMatch(a) || (a.id && seen.has(a.id))) continue;
+        if (a.id) seen.add(a.id);
+        if (opts.onAction) opts.onAction(await finalize(a));
+        else return finalize(a);
       }
     } catch {}
     return null;
@@ -458,7 +469,11 @@ async function waitForAction(opts: {
             if (lines.length > 0 && evt === wantEvent) {
               let parsed: any;
               try { parsed = JSON.parse(lines.join("\n")); } catch { parsed = lines.join("\n"); }
-              if (isMatch(parsed)) return finalize(parsed);
+              if (isMatch(parsed) && !(parsed?.id && seen.has(parsed.id))) {
+                if (parsed?.id) seen.add(parsed.id);
+                if (opts.onAction) opts.onAction(await finalize(parsed));
+                else return finalize(parsed);
+              }
             }
             evt = "message";
             lines = [];
@@ -1035,6 +1050,21 @@ async function main() {
       const wantEvent = typeof flags.event === "string" ? flags.event : "surface_action";
       const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 0;
       const autoAck = flags["no-ack"] !== true;
+
+      if (flags.follow === true) {
+        // The persistent action terminal: one compact JSON line per action,
+        // forever. Built for harness watchdogs that pattern-match stdout.
+        const result = await waitForAction({
+          surfaceId, wantAction, wantEvent, timeoutSec, autoAck,
+          onAction: (a) => process.stdout.write(JSON.stringify(a) + "\n"),
+        });
+        // Only resolves when --timeout was given and elapsed (a lifetime cap).
+        if (result.timedOut) {
+          console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
+          process.exit(3);
+        }
+        return;
+      }
 
       const result = await waitForAction({ surfaceId, wantAction, wantEvent, timeoutSec, autoAck });
       if (result.timedOut) {

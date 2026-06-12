@@ -72,7 +72,10 @@ EOF
 
 ## Reacting to clicks: the delivery ladder
 
-1. **Live waiter (default — use this).** Background `surface wait --id <id> [--action <name>] [--timeout <s>]` in your session. When the user clicks, it exits 0 with the action JSON and your harness wakes you; the action is acked on delivery (`--no-ack` to leave it pending; exit 3 on timeout). `--event <name>` waits on any SSE event instead of `surface_action`. **Re-arm after handling** — one wait handles one click. While a waiter is connected the card shows "agent listening" and bindings stay suppressed.
+1. **Live action terminal (default — use this).** Keep `surface wait --follow` running as a persistent background process: it prints one compact JSON line per user action (auto-acked on delivery; `--no-ack` to leave them pending) and never exits. It drains the pending inbox on connect and after every reconnect, so clicks from before it started are delivered too. While it's connected the card shows "agent listening" and bindings stay suppressed. Wire it to however your harness watches background output:
+   - **Claude Code**: arm it once with the Monitor tool (`persistent: true`) — every action line wakes you as a notification. For a single expected answer, Bash `run_in_background` with a one-shot `surface wait --id <id>` (exits 0 with the action JSON) also wakes you on completion.
+   - **Any harness with a keyword watchdog**: each line is self-contained JSON — pattern-match stdout on `"action":"` (or a specific `"action":"approve"`).
+   - **One-shot fallback**: `surface wait --id <id> [--action <name>] [--timeout <s>]` exits 0 with the first matching action (exit 3 on timeout; `--event <name>` waits on any SSE event). **Re-arm after handling** — one wait handles one click, and the surface is unguarded between exit and re-arm; prefer `--follow`.
 2. **Binding (wake-me-when-offline).** `surface bind <id> --action <pattern> --run '<command>'` makes Surface spawn the command when a click arrives and *no* waiter is connected. The command gets the full pending-action batch as JSON on stdin, runs with cwd = the project root (`--cwd` overrides), and is argv-tokenized (never shelled). Recipes:
 
    | Harness | Binding |

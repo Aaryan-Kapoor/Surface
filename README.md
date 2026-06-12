@@ -128,6 +128,7 @@ surface present ./report.pdf              # one-shot file snapshot
 surface open <id> --on phone              # show it (everywhere, or one device)
 surface notify "deploy finished" --style success
 surface wait --id <id> --action submit    # block until the user clicks
+surface wait --follow                     # persistent terminal: one JSON line per click
 surface bind <id> --action approve --run '…'           # clicks wake you when offline
 surface set board claude-code '{"status":"tests green"}'  # shared multi-agent status board
 surface devices                           # paired screens, live, what each is viewing
@@ -166,10 +167,11 @@ shorter than surface lifetimes**. You tap "regenerate report" at 11pm; the
 session that built it ended at 5. Surface resolves every action down a
 three-layer ladder ([docs](docs/interaction/delivery-ladder.md)):
 
-1. **Live waiter** — a backgrounded `surface wait` exits with the action
-   JSON and the harness wakes the agent *in the session that has the
-   context*. While it's connected the card shows **● listening** — free,
-   instant, the default.
+1. **Live action terminal** — a backgrounded `surface wait --follow` prints
+   one JSON line per click, forever, and the harness's background watchdog
+   wakes the agent *in the session that has the context*. While it's
+   connected the card shows **● listening** — free, instant, the default.
+   (One-shot `surface wait` exits with the first action instead.)
 2. **Binding** — nobody listening? Surface spawns the registered command
    (`claude -p --resume …`, `codex exec`, a webhook into a daemon) with the
    pending-action batch on stdin. Argv-safe (never a shell), single-flight,
