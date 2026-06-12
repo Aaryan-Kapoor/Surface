@@ -7,29 +7,41 @@ description: Universal display for AI agents. Push live, interactive surfaces to
 
 Surface is the user's universal display. When the user says "surface this", "put X on my display", "show me Y", "ask me when it's done", or similar, you use the `surface` CLI. The CLI talks to a local system service (HTTP on `127.0.0.1:3000` by default) — every agent uses the same binary, no per-agent protocol.
 
+The command set is curated: the hottest paths get top-level verbs (`ask`, `video`, `doc`, `append`); everything else — including **every custom template** — is reached through generic commands (`create --template <name>`). Minting a template never mints a command.
+
 `surface <command> --help` is authoritative for flags. The notes below tell you *when* to use each command.
 
 ## Session start ritual
 
-1. `surface actions` — drain your inbox: clicks that arrived while you were gone. Handle them (or ack and explain), don't ignore them.
+1. `surface actions` — drain your inbox: clicks that arrived while you were gone. Handle each one, then `surface ack <action-id>` (actions delivered through `surface wait` are acked automatically). Don't ignore them.
 2. If the project has a `SURFACE.md`, read it — it says which surfaces this project maintains and which state keys to update when.
-3. `surface list` — see what's already on the display. **Never create a duplicate**; update the existing card.
+3. `surface list` — see what's already on the display (`--project <root>` / `--agent <label>` filter; `--include-hidden` reveals hidden cards). **Never create a duplicate**; update the existing card.
 
 ## Creating content — pick by shape, not by habit
 
 | The content is… | Use |
 |---|---|
 | A question you need answered | `surface ask` (see below) — not a hand-written form |
-| A long-running log / narration | `surface create <t> --id <slug> --template stream`, then `surface append` |
-| A YouTube/web video | `surface video <url>` |
-| A markdown file in the repo | `surface doc <path> [--toc]` |
+| A long-running log / narration | `surface create <t> --id <slug> --template stream`, then `surface append <id> [text\|-] [--md]` |
+| A YouTube/web video | `surface video <url> [--start <s>] [--autoplay] [--loop]` |
+| A markdown file in the repo | `surface doc <path> [--toc] [--width narrow\|default\|wide]` |
 | A file in your project you'll keep editing | `surface link <abs-path> [--entry <rel>]` — served live from disk |
+| An instance of any template, built-in or custom | `surface create <t> --template <name> --param k=v …` — check `surface template list` first |
 | Ad-hoc HTML/interactive UI | `surface create <title> --mime text/html --content -` |
 | A one-shot file snapshot (PDF, image) | `surface present <abs-path>` |
 
+`link` and `doc` navigate every display to the new surface by default — pass `--no-open` to create quietly.
+
 Always pass `--agent <your-harness-name>` (e.g. `claude-code`, `codex`, `openclaw`) so the dashboard can attribute your surfaces, and `--id <slug>` for recurring purposes so updates target the same card. Surfaces are automatically owned by the git project you run the CLI from.
 
-**Before building the same UI a second time, make it a template**: `surface template create <name> --from <artifact-id>`, then edit the scaffolded `template.json`. Project templates live in `.surface/templates/` (committed); personal ones in `~/.surface/templates/`. `surface template list` shows what exists — check before hand-writing HTML.
+**Templates.** Before building the same UI a second time, promote it: `surface template create <name> --from <artifact-id>` scaffolds `template.json` + `index.html` — then edit the contract (declare params/state/actions, replace hard-coded values with `{{param}}` slots) or the description stays a useless placeholder. Project templates live in `.surface/templates/` (committed, shadow user templates, which shadow built-ins); `--user` writes to `~/.surface/templates/` instead. `surface template list` shows every template with its source; `surface template show <name>` prints the full contract — read it before instantiating a template you didn't write.
+
+## Reading and the artifact lifecycle
+
+- `surface read <id>` — the full record: metadata, current version, file list.
+- **Workspace artifacts** (from `create`): `surface update <id> [--title <t>] [--file <p>|--content -]` writes a *new version*. `surface versions <id>` lists history; `surface rollback <id> <version>` restores one. Experiment freely — undo is one command.
+- **Linked artifacts** (from `link`/`doc`): the bytes live in your repo. Edit the file on disk, then `surface touch <id>` to broadcast a reload. `update`-with-content and `rollback` return 409 on linked artifacts by design — disk is the source of truth.
+- `surface delete <id>` removes a card. Prefer updating an existing card over delete-and-recreate: a stable id keeps state, bindings, and the user's muscle memory.
 
 ## Live data: state, not HTML rewrites
 
@@ -37,7 +49,7 @@ Never regenerate HTML to change a number. Every surface has a JSON state doc:
 
 ```bash
 surface set build progress 0.42          # dotted keys ok: surface set build tests.passed 132
-surface patch build '{"stage":"deploy","eta_s":90}'
+surface patch build '{"stage":"deploy","eta_s":90}'   # deep-merge (or pipe JSON with -)
 surface state build                      # read it back
 ```
 
@@ -60,8 +72,8 @@ EOF
 
 ## Reacting to clicks: the delivery ladder
 
-1. **Live waiter (default — use this).** Background `surface wait --id <id> [--action <name>]` in your session. When the user clicks, it exits 0 with the action JSON and your harness wakes you; the action is acked on delivery. **Re-arm after handling** — one wait handles one click. While a waiter is connected the card shows "agent listening" and bindings stay suppressed.
-2. **Binding (wake-me-when-offline).** `surface bind <id> --action <pattern> --run '<command>'` makes Surface spawn the command when a click arrives and *no* waiter is connected. The command gets the full pending-action batch as JSON on stdin, runs with cwd = the project root, and is argv-tokenized (never shelled). Recipes:
+1. **Live waiter (default — use this).** Background `surface wait --id <id> [--action <name>] [--timeout <s>]` in your session. When the user clicks, it exits 0 with the action JSON and your harness wakes you; the action is acked on delivery (`--no-ack` to leave it pending; exit 3 on timeout). `--event <name>` waits on any SSE event instead of `surface_action`. **Re-arm after handling** — one wait handles one click. While a waiter is connected the card shows "agent listening" and bindings stay suppressed.
+2. **Binding (wake-me-when-offline).** `surface bind <id> --action <pattern> --run '<command>'` makes Surface spawn the command when a click arrives and *no* waiter is connected. The command gets the full pending-action batch as JSON on stdin, runs with cwd = the project root (`--cwd` overrides), and is argv-tokenized (never shelled). Recipes:
 
    | Harness | Binding |
    |---|---|
@@ -70,10 +82,18 @@ EOF
    | OpenClaw / daemon | `--webhook http://127.0.0.1:18789/hooks/agent` — push straight into the gateway |
    | Anything | `--run './scripts/on-click.sh'` — it's just a command |
 
-   **Consent — ask once per project.** A spawned session costs the user usage/quota. Before registering your first wake-binding in a project, ask: "Want clicks on this to wake me when I'm offline? It costs a headless session per wake." Record the answer in `.surface/config.json → bindings.enabled` (true/false; `surface init` scaffolds it as null = not asked yet). Never re-ask; never auto-bind without a recorded yes.
-3. **Inbox (always).** Unhandled clicks stay pending, badge the card, and wait for your next session's `surface actions` drain. Nothing is lost.
+   `surface bindings [<id>]` lists registered bindings with last-run status and error — check it first when a wake didn't fire. `surface unbind <binding-id>` removes one.
 
-Respond to the user with `surface reply <id> "text"` (toast), a state update they can see, or `surface notify`.
+   **Consent — ask once per project.** A spawned session costs the user usage/quota. Before registering your first wake-binding in a project, ask: "Want clicks on this to wake me when I'm offline? It costs a headless session per wake." Record the answer in `.surface/config.json → bindings.enabled` (true/false; `surface init` scaffolds it as null = not asked yet). Never re-ask; never auto-bind without a recorded yes.
+3. **Inbox (always).** Unhandled clicks stay pending, badge the card, and wait for your next session's `surface actions` drain (then `surface ack` each). Nothing is lost.
+
+Respond to the user with `surface reply <id> "text"` (toast attributed to that surface), a state update they can see, or `surface notify`.
+
+## Seeing what the user sees
+
+- `surface status` — live presence: which displays are connected right now, what each is viewing, viewport size, last activity. Check it before `ask --on phone` (is the phone awake?) or before deciding whether a notify will even be seen.
+- `surface devices` — the user's paired screens and their live state; `surface devices revoke <name>` cuts one off (lost phone, stale tablet).
+- `surface stream [--id <id>]` — tail the SSE firehose as JSONL until interrupted (auto-reconnects): `surface_created`/`surface_updated`, `state_patch`, `surface_action`, theme changes. This is the watch-everything primitive under `wait`; pipe it into a loop when you need to react to more than one kind of event.
 
 ## The board: tell the user what you're doing
 
@@ -85,20 +105,43 @@ surface set board <your-agent-name> '{"status":"PR #42 green, reviewing feedback
 
 Update your section when you start, finish, or get blocked on significant work — not per keystroke. Key by the same name you pass `--agent`. Set `link` to your most relevant surface so a tap leads somewhere useful. Stale sections dim automatically.
 
+## Taking over the screen: slots
+
+The homescreen renderer, the home widget, and the persistent overlay are themselves artifacts — versioned, linkable, rollback-able:
+
+```bash
+surface slot                          # show current assignments
+surface slot renderer <artifact-id>   # this artifact becomes the whole homescreen
+surface slot home <artifact-id>       # widget above the card grid
+surface slot overlay <artifact-id>    # persistent layer over everything
+surface slot home --clear             # vacate a slot
+```
+
+A slot is just `metadata.display_role` on the artifact. Renderer iframes get an injected API (`window.__surfaces`, `navigate(id)`, `onSurfaceChange(...)`) for building custom launchers. Treat slots as the user's space — take over the renderer only when asked.
+
+## Display control
+
+- `surface open <id> [--on <device>]` — show a surface (everywhere, or on one named device). No arg returns to the grid.
+- `surface notify "text" [--style info|success|warning|error] [--duration <ms>] [--on <device>]` — ephemeral toast.
+- `surface theme '<json>'` / `surface theme -` / `surface theme reset` — colors, fonts, background, raw CSS, card order.
+- `surface exec <id> --js '...'` (or `--file <p>` / `--js -`) — live JS poke inside a surface iframe, no new version. Good for one-off effects and debugging a running surface.
+
+## Combinations that work
+
+- **A build you watch from the couch**: `surface create "Build" --id build --template stream`, then `make 2>&1 | surface append build -`, with `surface set build progress 0.92` from a trap or wrapper.
+- **Live dev loop**: `surface link $(pwd)/demo.html` once, then edit → `surface touch demo` after each save. The display is your hot-reload target.
+- **Reach the user where they are**: `surface status` → if the phone is active, `surface ask "..." --on phone --wait`; otherwise ask everywhere.
+- **Wait for another agent**: `surface wait --id board --event state_patch` blocks until someone else updates the board — cheap cross-agent coordination with no extra infrastructure.
+- **Risky-change safety net**: `surface update` a workspace surface, show the user, `surface rollback <id> <n>` if they hate it.
+- **Not just agents**: cron jobs, git hooks, and CI scripts can call `surface set` / `surface notify` too — a nightly script keeping a dashboard current costs one line.
+- **Demo gallery**: `surface seed-demos` links every bundled example as a tutorial surface (idempotent — re-running revives hidden ones); `surface clear-demos` hides everything tagged `metadata.demo`. Use during first-run tours, then clear.
+
 ## Project conventions: `.surface/` and `SURFACE.md`
 
 - `surface init` scaffolds `.surface/` (config, manifests, templates) and a starter `SURFACE.md`.
 - Surfaces a project considers part of itself get manifests in `.surface/surfaces/*.json` (`surface sync --export <id>` writes one). `surface sync` recreates them on any machine — run it when manifests exist; it's idempotent.
 - Keep `SURFACE.md` current the way you keep CLAUDE.md current: what each surface is for, which state keys to update when.
 - Definitions belong in the repo; **live values never do** — they live in Surface's DB via `surface set`.
-
-## Display control
-
-- `surface open <id> [--on <device>]` — show a surface (everywhere, or on one named device). No arg returns to the grid.
-- `surface notify "text" [--style success|warning|error] [--on <device>]` — toast.
-- `surface devices` — the user's paired screens, live state, and what each is viewing.
-- `surface theme '<json>'` / `surface theme reset` — display look.
-- `surface exec <id> --js '...'` — live JS poke inside a surface iframe (no new version).
 
 ## Conventions
 
@@ -108,8 +151,8 @@ Update your section when you start, finish, or get blocked on significant work �
 - Surfaces should be self-contained (inline CSS/JS, no CDNs) — they render offline and screenshot headlessly.
 - `surface --help` and `surface <cmd> --help` are authoritative.
 
-## Environment
+## Environment & remote access
 
 - `SURFACE_URL` — base URL (default `http://127.0.0.1:3000`). Loopback needs no credential.
-- `SURFACE_SESSION` — session bearer for remote (non-loopback) agents. Mint from the Surface machine: `surface auth session issue --role system --label <where>`.
-- Pair a new display for the user: `surface pair --name <device-name>` (prints URL + QR).
+- `SURFACE_SESSION` — session bearer for remote (non-loopback) agents. Mint from the Surface machine: `surface auth session issue --role system --label <where>`; audit with `surface auth session list`, cut off with `surface auth session revoke <id>`.
+- Pair a new display for the user: `surface pair --name <device-name>` (prints URL + QR). Underneath it's `surface auth pairing create` — `auth pairing list` / `auth pairing revoke <id>` manage outstanding links.
