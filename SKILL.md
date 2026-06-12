@@ -16,6 +16,7 @@ The command set is curated: the hottest paths get top-level verbs (`ask`, `video
 1. `surface actions` — drain your inbox: clicks that arrived while you were gone. Handle each one, then `surface ack <action-id>` (actions delivered through `surface wait` are acked automatically). Don't ignore them.
 2. If the project has a `SURFACE.md`, read it — it says which surfaces this project maintains and which state keys to update when.
 3. `surface list` — see what's already on the display (`--project <root>` / `--agent <label>` filter; `--include-hidden` reveals hidden cards). **Never create a duplicate**; update the existing card.
+4. If the display has interactive surfaces you're responsible for, re-arm your action terminal — background `surface wait --follow` via your harness's mechanism (see the delivery ladder below). Terminals never survive a session restart; the surfaces do.
 
 ## Creating content — pick by shape, not by habit
 
@@ -72,10 +73,18 @@ EOF
 
 ## Reacting to clicks: the delivery ladder
 
-1. **Live action terminal (default — use this).** Keep `surface wait --follow` running as a persistent background process: it prints one compact JSON line per user action (auto-acked on delivery; `--no-ack` to leave them pending) and never exits. It drains the pending inbox on connect and after every reconnect, so clicks from before it started are delivered too. While it's connected the card shows "agent listening" and bindings stay suppressed. Wire it to however your harness watches background output:
-   - **Claude Code**: arm it once with the Monitor tool (`persistent: true`) — every action line wakes you as a notification. For a single expected answer, Bash `run_in_background` with a one-shot `surface wait --id <id>` (exits 0 with the action JSON) also wakes you on completion.
-   - **Any harness with a keyword watchdog**: each line is self-contained JSON — pattern-match stdout on `"action":"` (or a specific `"action":"approve"`).
-   - **One-shot fallback**: `surface wait --id <id> [--action <name>] [--timeout <s>]` exits 0 with the first matching action (exit 3 on timeout; `--event <name>` waits on any SSE event). **Re-arm after handling** — one wait handles one click, and the surface is unguarded between exit and re-arm; prefer `--follow`.
+1. **Live action terminal (default — use this).** Keep `surface wait --follow` running as a persistent background process: it prints one compact JSON line per user action (auto-acked on delivery; `--no-ack` to leave them pending) and never exits. It drains the pending inbox on connect and after every reconnect, so clicks from before it started are delivered too. While it's connected the card shows "agent listening" and bindings stay suppressed. Each harness watches background output its own way — arm it with yours:
+
+   | If you are… | Arm the terminal with |
+   |---|---|
+   | Claude Code | the `Monitor` tool, `persistent: true`, command `surface wait --follow` — each printed line wakes you. (Expecting exactly one answer? Bash `run_in_background` + one-shot `surface wait --id <id>` wakes you when it exits.) |
+   | Codex CLI | a backgrounded one-shot `surface wait --id <id>` — you're woken when it exits with the action JSON; **re-arm immediately after handling** |
+   | An always-on daemon (OpenClaw, a gateway) | no terminal needed — register a `--webhook` binding (rung 2); you're never offline |
+   | Anything else | per-line watchdog available → `wait --follow` and pattern-match stdout on `"action":"`; completion notifications only → one-shot `wait`, re-arm after each; no background support → rely on rungs 2–3 |
+
+   One-shot details: `surface wait --id <id> [--action <name>] [--timeout <s>]` exits 0 with the first matching action (exit 3 on timeout; `--event <name>` waits on any SSE event). The surface is unguarded between exit and re-arm — prefer `--follow` wherever your harness can watch it.
+
+   **The terminal dies with your session — re-arm on return.** A restarted harness never inherits background processes: when the user comes back after ending a session, the surfaces are still live but your terminal is gone and the card has silently stopped showing "listening". That's why re-arming is step 4 of the session start ritual — the inbox drain (step 1) covers everything clicked while you were dead, the fresh terminal covers everything after.
 2. **Binding (wake-me-when-offline).** `surface bind <id> --action <pattern> --run '<command>'` makes Surface spawn the command when a click arrives and *no* waiter is connected. The command gets the full pending-action batch as JSON on stdin, runs with cwd = the project root (`--cwd` overrides), and is argv-tokenized (never shelled). Recipes:
 
    | Harness | Binding |

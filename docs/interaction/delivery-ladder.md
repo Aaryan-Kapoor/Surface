@@ -28,7 +28,7 @@ Either way the agent handles the click **in the session that has all the context
 
 The open connection doubles as **presence**: `wait` connects to `/stream?wait_for=<id|*>`, which registers it in the waiter registry (`server/sse.ts`); while it lives, the card shows "● listening" (via `waiter_status` events and the `listening` card flag) and lower layers are suppressed.
 
-Honest caveats: sessions end, laptops sleep, and harnesses cap background-task lifetimes (Claude Code's Monitor needs `persistent: true` to survive past its default timeout). That is why this is a ladder and not a single mechanism.
+Honest caveats: sessions end, laptops sleep, and harnesses cap background-task lifetimes (Claude Code's Monitor needs `persistent: true` to survive past its default timeout). That is why this is a ladder and not a single mechanism. Terminals die with the session that started them while surfaces live on, so SKILL.md makes re-arming part of the session-start ritual: drain the inbox (layer 3 covers the dead interval), then start a fresh `--follow` terminal. SKILL.md also carries the per-harness arming recipes (Claude Code: Monitor tool; Codex: backgrounded one-shot + re-arm; always-on daemons: webhook bindings instead).
 
 ### Layer 2 — Binding (fires only when no waiter is connected)
 
