@@ -50,6 +50,8 @@ All four roadmap phases are implemented on this branch. Each feature has a spec 
 
 # Direction (appended 2026-06-12) — handoff plan after the interaction-model research
 
+The umbrella documents live locally in `planning/` (gitignored, this machine only): `planning/EXECUTION.md` (gated long-term plan: product phases 5–8, launch, content pipeline, community, review cadence) and `planning/MARKETING.md` (positioning, pillars, voice, channels). This section holds the research detail and immediate task queue they build on.
+
 Everything below was decided/researched on 2026-06-12 and is the working plan. Commits that session: `30ab969` (SKILL.md full command coverage), `9b0de88` (`wait --follow`), `0026364` (per-harness recipes + re-arm ritual), `e97039f` (`wait --heartbeat`), plus the earlier `a80820c`/`8cce991` (UI revamp, README/banner).
 
 ## Strategic position (user-locked)
