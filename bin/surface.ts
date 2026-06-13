@@ -1051,6 +1051,17 @@ async function main() {
       const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 0;
       const autoAck = flags["no-ack"] !== true;
 
+      // Some harnesses kill foreground commands after a silent interval
+      // (Gemini CLI: 300s default). A heartbeat on stderr resets those timers
+      // without polluting the stdout JSON contract.
+      const heartbeatSec = typeof flags.heartbeat === "string" ? Number(flags.heartbeat) : 0;
+      if (heartbeatSec > 0) {
+        const beat = setInterval(() => {
+          process.stderr.write(`: waiting ${new Date().toISOString()}\n`);
+        }, heartbeatSec * 1000);
+        beat.unref();
+      }
+
       if (flags.follow === true) {
         // The persistent action terminal: one compact JSON line per action,
         // forever. Built for harness watchdogs that pattern-match stdout.
