@@ -144,6 +144,41 @@
     }).then(function (r) { return r.json(); });
   }
 
+  // Stage / commit — batch at the surface, not at the agent. Intermediate
+  // clicks (picking options, toggling) stay LOCAL via stage(); a single
+  // commit() emits ONE action carrying the full picture, so the agent wakes
+  // once on the user's actual intent — not once per twitch, and not on a
+  // blind timer. Reserve bare action() for genuinely standalone clicks.
+  var staged = {};
+
+  function stage(key, value) {
+    if (value === undefined) delete staged[key];
+    else staged[key] = value;
+    return stagedCopy();
+  }
+
+  function stagedCopy() {
+    var c = {};
+    for (var k in staged) c[k] = staged[k];
+    return c;
+  }
+
+  function commit(name, extra) {
+    if (!name) return Promise.reject(new Error("commit(name): action name is required"));
+    var payload = stagedCopy();
+    if (extra && typeof extra === "object") {
+      for (var e in extra) payload[e] = extra[e];
+    }
+    // Clear the staged buffer only AFTER the action is accepted. A falsy name, a
+    // server rejection (res.error), or a network failure must not lose the
+    // user's buffered intent — so they can retry the commit.
+    return Promise.resolve(action(name, payload)).then(function (res) {
+      if (res && res.error) throw new Error("commit failed: " + res.error);
+      staged = {};
+      return res;
+    });
+  }
+
   window.Surface = {
     id: artifactId,
     get state() { return state; },
@@ -162,6 +197,10 @@
       };
     },
     action: action,
+    stage: stage,
+    commit: commit,
+    staged: stagedCopy,
+    clearStaged: function () { staged = {}; },
   };
 
   function boot() {
