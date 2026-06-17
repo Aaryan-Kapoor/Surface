@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { getDb, getDisplayConfig, setDisplayConfig, resetDisplayConfig } from "../db.js";
 import { getArtifact, getArtifactFiles, getCurrentArtifactVersion, listArtifactCards, readArtifactFileContent } from "../artifacts.js";
+import { safeJsonForScript } from "../render.js";
 import type { Artifact } from "../artifacts.js";
 import { listSessions } from "../auth.js";
 import { addGlobalClient, broadcastGlobal, hasWaiter, LOCAL_TARGET } from "../sse.js";
 import { listPresence, reportPresence } from "../presence.js";
-import { deviceNameOf, targetOf } from "./helpers.js";
+import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
 
 export const displayRouter = Router();
 
@@ -75,7 +76,8 @@ displayRouter.get("/display/config", (_req, res) => {
 
 // Update display theme config. The old raw-HTML slot keys are no longer
 // config — slots are artifacts now (metadata.display_role).
-displayRouter.put("/display/config", (req, res) => {
+displayRouter.put("/display/config", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // drives what every display shows
   const body = { ...req.body };
   const rejected = ["renderer", "home", "overlay"].filter((k) => k in body);
   for (const k of rejected) delete body[k];
@@ -89,7 +91,8 @@ displayRouter.put("/display/config", (req, res) => {
 });
 
 // Reset display theme to default
-displayRouter.post("/display/reset", (_req, res) => {
+displayRouter.post("/display/reset", (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   resetDisplayConfig();
   broadcastGlobal("display_theme", {});
   res.json({ reset: true });
@@ -149,7 +152,8 @@ function resolveDeviceTarget(res: any, device: unknown): string | null | undefin
 }
 
 // Agent forces navigation — optionally on one device only.
-displayRouter.post("/display/navigate", (req, res) => {
+displayRouter.post("/display/navigate", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // agents drive the display; devices view + click
   const { surface_id, device } = req.body;
   const target = resolveDeviceTarget(res, device);
   if (target === null) return;
@@ -158,7 +162,8 @@ displayRouter.post("/display/navigate", (req, res) => {
 });
 
 // Agent sends notification — optionally on one device only.
-displayRouter.post("/display/notify", (req, res) => {
+displayRouter.post("/display/notify", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // agents drive the display; devices view + click
   const { text, duration, style, device } = req.body;
   if (!text) {
     res.status(400).json({ error: "text is required" });
@@ -179,10 +184,13 @@ displayRouter.get("/display/renderer/html", (_req, res) => {
   const html = artifact ? slotHtml(artifact) : null;
   if (!html) { res.status(404).send(""); return; }
   const surfaces = listArtifactCards(getDb());
+  // Card fields are agent/device-authored; a literal `</script>` in any of them
+  // would otherwise break out of this inline script (see safeJsonForScript).
+  const surfacesJson = safeJsonForScript(surfaces);
   const inject = `<script>
 // ── Surface Renderer API ──
 // Surfaces array: full card payloads [{id, title, metadata (JSON string), created_at, updated_at, ...}, ...]
-window.__surfaces = ${JSON.stringify(surfaces)};
+window.__surfaces = ${surfacesJson};
 
 // Navigation — call these to switch views
 window.navigate = (id) => parent.postMessage({type:'surface_navigate',surface_id:id},'*');

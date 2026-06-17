@@ -178,10 +178,10 @@ export function renderArtifactShell(params: {
   </div>
   <main id="viewer" class="viewer${previewClass}"></main>
   <script>
-    const mime = ${JSON.stringify(params.mime)};
-    const fileUrl = ${JSON.stringify(params.fileUrl)};
+    const mime = ${safeJsonForScript(params.mime)};
+    const fileUrl = ${safeJsonForScript(params.fileUrl)};
     const viewer = document.getElementById("viewer");
-    window.parent && window.parent.postMessage({ surfaceProtocol: 1, artifactId: ${JSON.stringify(params.artifactId)}, type: "READY" }, "*");
+    window.parent && window.parent.postMessage({ surfaceProtocol: 1, artifactId: ${safeJsonForScript(params.artifactId)}, type: "READY" }, "*");
 
     const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
     const markdownToHtml = (text) => {
@@ -237,7 +237,7 @@ export function renderArtifactShell(params: {
     }
     render().catch((err) => {
       viewer.textContent = err.message;
-      window.parent && window.parent.postMessage({ surfaceProtocol: 1, artifactId: ${JSON.stringify(params.artifactId)}, type: "ERROR", message: err.message }, "*");
+      window.parent && window.parent.postMessage({ surfaceProtocol: 1, artifactId: ${safeJsonForScript(params.artifactId)}, type: "ERROR", message: err.message }, "*");
     });
   </script>
 </body>
@@ -327,4 +327,16 @@ export function escapeHtml(value: string): string {
       default: return char;
     }
   });
+}
+
+// JSON for embedding inside an inline <script> block. Plain JSON.stringify is
+// NOT safe there: a value containing `</script>` (or the U+2028/U+2029 line
+// terminators, which are invalid in JS string literals) breaks out of the
+// script. Escape `<` and the line separators so agent/device-authored strings
+// can never execute.
+export function safeJsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }

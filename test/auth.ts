@@ -248,8 +248,61 @@ async function main() {
     });
     check("device can post an action (click)", devAction.status === 201, devAction.status);
 
+    // A device may update the artifact IT authored.
+    const devUpdateOwn = await req("PUT", `/artifacts/${devArtifactId}`, {
+      cookie: sessionCookie!,
+      body: { content: "<p>edited from the phone</p>" },
+    });
+    check("device can update its own artifact", devUpdateOwn.status === 200, devUpdateOwn.status);
+
+    // display_role (slot assignment) is stripped from device-supplied metadata,
+    // and the artifact is stamped with the device authoring plane.
+    const devSlot = await req("POST", "/artifacts", {
+      cookie: sessionCookie!,
+      body: { title: "sneaky slot", mime: "text/html", content: "<p>x</p>", metadata: { display_role: "renderer" } },
+    });
+    const devSlotMeta = JSON.parse(devSlot.body?.artifact?.metadata || "{}");
+    check("device cannot assign display_role", devSlotMeta.display_role === undefined, devSlotMeta);
+    check("device artifact is stamped device plane", devSlotMeta.author_plane === "device", devSlotMeta);
+
+    // A system-authored artifact cannot be modified by a device (could inject JS
+    // into a surface the host display renders with system trust).
+    const sysArt = await req("POST", "/artifacts", {
+      token: SYS,
+      body: { title: "agent made", mime: "text/html", content: "<p>sys</p>" },
+    });
+    const sysArtId = sysArt.body?.artifact?.id as string;
+    check("system artifact is stamped system plane", JSON.parse(sysArt.body?.artifact?.metadata || "{}").author_plane === "system", sysArt.body);
+
+    const devTamper = await req("PUT", `/artifacts/${sysArtId}`, {
+      cookie: sessionCookie!,
+      body: { content: "<script>steal()</script>" },
+    });
+    check("device cannot modify a system-authored artifact", devTamper.status === 403, devTamper.status);
+
+    const devRollback = await req("POST", `/artifacts/${sysArtId}/rollback`, {
+      cookie: sessionCookie!,
+      body: { version: 1 },
+    });
+    check("device cannot rollback a system-authored artifact", devRollback.status === 403, devRollback.status);
+
+    // Third-party proxies are system-only (spend credentials / outbound network).
+    const devChat = await req("POST", "/api/chat", { cookie: sessionCookie!, body: { messages: [] } });
+    check("device cannot use the LLM proxy", devChat.status === 403, devChat.status);
+
+    const devTemplates = await req("GET", "/api/templates", { cookie: sessionCookie! });
+    check("device cannot list templates (reads project FS)", devTemplates.status === 403, devTemplates.status);
+
+    // Display control (theme/navigate/notify/reset) is an agent-plane push:
+    // a device renders what it's shown but cannot drive what other screens show.
     const devTheme = await req("PUT", "/display/config", { cookie: sessionCookie!, body: { title: "Phone set this" } });
-    check("device can use display control (theme)", devTheme.status === 200, devTheme.status);
+    check("device cannot use display control (theme)", devTheme.status === 403, devTheme.status);
+
+    const devNavigate = await req("POST", "/display/navigate", { cookie: sessionCookie!, body: { surface_id: null } });
+    check("device cannot force navigation", devNavigate.status === 403, devNavigate.status);
+
+    const devNotify = await req("POST", "/display/notify", { cookie: sessionCookie!, body: { text: "hi" } });
+    check("device cannot push notifications", devNotify.status === 403, devNotify.status);
 
     const devLink = await req("POST", "/artifacts/link", {
       cookie: sessionCookie!,

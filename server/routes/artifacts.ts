@@ -9,6 +9,7 @@ import {
   getArtifact,
   getArtifactFile,
   getCurrentArtifactVersion,
+  artifactAuthorPlane,
   inferMime,
   isLinkedArtifact,
   linkArtifact,
@@ -28,7 +29,21 @@ import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArt
 import { getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
 import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
-import { requireSystem, targetOf } from "./helpers.js";
+import { planeOf, requireSystem, targetOf } from "./helpers.js";
+
+// Devices may freely CRUD their own (device-authored) artifacts, but must not
+// mutate system-authored ones: a system artifact can hold a display_role slot
+// or trusted JS that runs in the host display. Returns true if the request may
+// proceed; writes a 403 and returns false otherwise.
+function canMutateArtifact(req: any, res: any, existing: { metadata: string } | undefined): boolean {
+  if (!existing) return true; // not-found is handled downstream
+  if (req.auth?.role === "system") return true;
+  if (artifactAuthorPlane(existing) === "system") {
+    res.status(403).json({ error: "Devices cannot modify system-authored artifacts" });
+    return false;
+  }
+  return true;
+}
 
 export const artifactsRouter = Router();
 
@@ -126,12 +141,14 @@ artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
 
 // ── Templates ──
 
-artifactsRouter.get("/api/templates", (req, res) => {
+artifactsRouter.get("/api/templates", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // reads .surface/templates from a caller-supplied project root
   const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
   res.json(listTemplates(project));
 });
 
-artifactsRouter.get("/api/templates/:name", (req, res) => {
+artifactsRouter.get("/api/templates/:name", (req: any, res) => {
+  if (!requireSystem(req, res)) return; // reads template files from a caller-supplied project root
   const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
   try {
     const tpl = resolveTemplate(req.params.name, project);
@@ -230,6 +247,7 @@ artifactsRouter.post("/artifacts", (req: any, res) => {
       metadata,
       files: inputFiles,
       reason: "artifact_create",
+      author_plane: planeOf(req),
     });
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     enqueueThumb(result.artifact.id);
@@ -301,13 +319,14 @@ artifactsRouter.get("/artifacts/:id/versions", (req, res) => {
   res.json(listArtifactVersions(getDb(), req.params.id));
 });
 
-artifactsRouter.post("/artifacts/:id/rollback", (req, res) => {
+artifactsRouter.post("/artifacts/:id/rollback", (req: any, res) => {
   const { version } = req.body;
   if (version === undefined) {
     res.status(400).json({ error: "version is required" });
     return;
   }
   const existing = getArtifact(getDb(), req.params.id);
+  if (!canMutateArtifact(req, res, existing)) return;
   if (isLinkedArtifact(existing)) {
     res.status(409).json({ error: "Linked artifacts have no version history; git is the source of truth." });
     return;
@@ -330,7 +349,7 @@ artifactsRouter.post("/artifacts/:id/rollback", (req, res) => {
   res.json(result);
 });
 
-artifactsRouter.put("/artifacts/:id", (req, res) => {
+artifactsRouter.put("/artifacts/:id", (req: any, res) => {
   const { title, kind, mime, metadata, files, content, path: filePath, reason } = req.body;
   const inputFiles = Array.isArray(files)
     ? files
@@ -338,6 +357,7 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
       ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
       : undefined;
   const existing = getArtifact(getDb(), req.params.id);
+  if (!canMutateArtifact(req, res, existing)) return;
   if (isLinkedArtifact(existing) && inputFiles) {
     res.status(409).json({
       error: "Linked artifacts are edited on disk. Use POST /artifacts/:id/touch after editing.",
@@ -365,6 +385,7 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
       metadata,
       files: inputFiles,
       reason: reason || "artifact_update",
+      author_plane: planeOf(req),
     });
     if (!result) {
       res.status(404).json({ error: "Artifact not found" });
@@ -540,6 +561,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
 
   if (req.query.regenerate === "1") {
+    if (!requireSystem(req, res)) return; // re-renders artifact content in headless Chrome
     try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
     enqueueThumb(req.params.id);
     res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");

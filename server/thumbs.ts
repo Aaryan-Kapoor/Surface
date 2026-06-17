@@ -3,6 +3,8 @@ import path from "path";
 import { spawn, spawnSync, ChildProcess } from "child_process";
 import { getDataDir } from "./paths.js";
 import { broadcastGlobal } from "./sse.js";
+import { getDb } from "./db.js";
+import { artifactAuthorPlane, getArtifact } from "./artifacts.js";
 
 const THUMB_WIDTH = 600;
 const THUMB_HEIGHT = 600;
@@ -23,6 +25,12 @@ function thumbsDir(): string {
 }
 
 export function getThumbPath(id: string): string {
+  // Defensive last line: ids are validated at creation (assertSafeArtifactId),
+  // but never trust an id flowing into a filesystem path. Reject anything that
+  // could escape thumbsDir().
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+    throw new Error(`Invalid artifact id for thumbnail: ${id}`);
+  }
   return path.join(thumbsDir(), `${id}.png`);
 }
 
@@ -106,6 +114,13 @@ async function capture(job: Job): Promise<void> {
   const tmpDir = fs.mkdtempSync(path.join(getDataDir(), ".chrome-"));
   const url = `http://127.0.0.1:${serverPort}/artifacts/${encodeURIComponent(job.id)}/view?preview=1`;
 
+  // The thumbnailer loads the artifact over loopback, which the server trusts as
+  // `system`. Device-authored HTML must therefore render with JavaScript OFF —
+  // otherwise its inline script could call system-only endpoints (mint tokens,
+  // read files) from inside this privileged context. Agent (system) content is
+  // trusted and keeps JS so dynamic surfaces thumbnail correctly.
+  const allowScripts = artifactAuthorPlane(getArtifact(getDb(), job.id)) === "system";
+
   const args = [
     "--headless=new",
     "--hide-scrollbars",
@@ -168,7 +183,7 @@ async function capture(job: Job): Promise<void> {
       if (!m) return;
       cdpStarted = true;
       try {
-        await runCdpCapture(m[1], url, dest);
+        await runCdpCapture(m[1], url, dest, allowScripts);
         finish();
       } catch (err: any) {
         finish(err);
@@ -193,7 +208,7 @@ interface CdpMessage {
   sessionId?: string;
 }
 
-function runCdpCapture(browserWsUrl: string, navigateUrl: string, destPath: string): Promise<void> {
+function runCdpCapture(browserWsUrl: string, navigateUrl: string, destPath: string, allowScripts: boolean): Promise<void> {
   return new Promise((resolve, reject) => {
     // @ts-ignore — WebSocket is globally available in Node 22+
     const ws = new WebSocket(browserWsUrl);
@@ -268,6 +283,10 @@ function runCdpCapture(browserWsUrl: string, navigateUrl: string, destPath: stri
           deviceScaleFactor: 1,
           mobile: false,
         });
+        if (!allowScripts) {
+          // Untrusted (device-authored) content: render statically, never run its JS.
+          await sendSession("Emulation.setScriptExecutionDisabled", { value: true });
+        }
         await sendSession("Page.navigate", { url: navigateUrl });
         await new Promise((r) => setTimeout(r, POST_NAVIGATE_DELAY_MS));
         const result = await sendSession("Page.captureScreenshot", {

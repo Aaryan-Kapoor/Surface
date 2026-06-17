@@ -28,15 +28,22 @@ The roles are `system` and `device` (the earlier `owner`/`client` names are gone
 |---|---|---|
 | View surfaces, files, thumbnails, SSE | ✓ | ✓ |
 | Post actions (clicks), report presence | ✓ | ✓ |
-| Create / update / delete / rename workspace artifacts | ✓ | ✓ |
+| Create / update / delete its own (device-authored) workspace artifacts | ✓ | ✓ |
+| Modify **system-authored** artifacts (update, rollback) | ✓ | ✗ (could inject JS into a trusted surface) |
+| Assign display slots (`metadata.display_role` = renderer/home/overlay) | ✓ | ✗ (display control) |
 | Link disk paths, present files (`surface link/present`) | ✓ | ✗ (filesystem access) |
 | Write surface state (`surface set/patch`) | ✓ | ✗ |
 | Inject JS (`surface exec`) | ✓ | ✗ |
 | Register / edit bindings | ✓ | ✗ (command execution) |
 | Mint pairing tokens, revoke sessions | ✓ | ✗ |
-| Display control (navigate, notify, theme) | ✓ | ✓ |
+| Display control (navigate, notify, theme, reset) | ✓ | ✗ (agents drive the display) |
+| Third-party proxies (LLM chat, Nexlayer deploy, PDF proxy) | ✓ | ✗ (spends credentials / outbound network) |
 
-The line is drawn at anything that touches the host filesystem, executes code, or mints credentials. A phone left in a cab can still browse and click the user's dashboard, but it can never register a binding that runs a shell command, pair additional devices, or pull files off the disk. Devices can only *fire* pre-registered bindings by clicking — never create them.
+The line is drawn at anything that touches the host filesystem, executes code, mints credentials, spends server-side credentials, or dictates what every screen shows. A phone left in a cab can still browse and click the user's dashboard, but it can never register a binding that runs a shell command, pair additional devices, pull files off the disk, or force-navigate/restyle the host display. Devices can only *fire* pre-registered bindings by clicking — never create them. Display control (forcing navigation, pushing notifications, theming, reset) is an agent-plane push: a device renders what it's shown but cannot drive what other screens show.
+
+### Why device artifact CRUD is scoped to device-authored content
+
+Devices can author their own workspace artifacts (a phone jotting a note onto the dashboard), but cannot *modify* artifacts the agent plane created, and cannot mark any artifact as a display slot. Both rules exist because artifact HTML is executed JavaScript: the host display renders slot artifacts directly, and the thumbnailer renders every artifact in headless Chrome over a loopback connection that the server trusts as `system`. If a device could inject script into a system-authored or slot artifact, that script would run with system privileges. Two mechanisms enforce this: every artifact records its authoring plane in server-authoritative `metadata.author_plane` (`server/artifacts.ts` `sealArtifactMetadata`), and the thumbnailer disables JavaScript when rendering device-authored content (`server/thumbs.ts`). A separate, non-loopback content origin for untrusted surfaces remains the longer-term hardening.
 
 ## `SURFACE_TOKEN` removal
 

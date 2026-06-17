@@ -1,10 +1,14 @@
 import { Router } from "express";
 import dns from "node:dns/promises";
 import net from "node:net";
+import { requireSystem } from "./helpers.js";
 
 // Third-party proxies quarantined behind one router: the Nexlayer deployment
 // API, the OpenRouter chat proxy, and the PDF X-Frame-Options bypass. None of
-// these touch Surface's own data model.
+// these touch Surface's own data model — but they spend server-side credentials
+// (OPENROUTER_API_KEY) and make outbound requests, so they are system-only: a
+// paired device must not be able to bill the operator or reach the network
+// through the host.
 
 export const integrationsRouter = Router();
 
@@ -12,7 +16,8 @@ export const integrationsRouter = Router();
 
 const NEXLAYER_API = "https://app.nexlayer.io";
 
-integrationsRouter.post("/api/nexlayer/deploy", async (req, res) => {
+integrationsRouter.post("/api/nexlayer/deploy", async (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   try {
     const yaml = req.body.yaml;
     if (!yaml) { res.status(400).json({ error: "yaml is required" }); return; }
@@ -31,7 +36,8 @@ integrationsRouter.post("/api/nexlayer/deploy", async (req, res) => {
   }
 });
 
-integrationsRouter.post("/api/nexlayer/extend", async (req, res) => {
+integrationsRouter.post("/api/nexlayer/extend", async (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   try {
     const { applicationName, sessionToken } = req.body;
     const upstream = await fetch(`${NEXLAYER_API}/extendDeployment`, {
@@ -46,7 +52,8 @@ integrationsRouter.post("/api/nexlayer/extend", async (req, res) => {
   }
 });
 
-integrationsRouter.get("/api/nexlayer/status", async (req, res) => {
+integrationsRouter.get("/api/nexlayer/status", async (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   try {
     const token = req.query.sessionToken as string;
     if (!token) { res.status(400).json({ error: "sessionToken required" }); return; }
@@ -80,7 +87,8 @@ function chatRateAllow(): { ok: true } | { ok: false; retryAfter: number } {
   return { ok: true };
 }
 
-integrationsRouter.post("/api/chat", async (req, res) => {
+integrationsRouter.post("/api/chat", async (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   const gate = chatRateAllow();
   if (!gate.ok) {
     res.setHeader("Retry-After", String(gate.retryAfter));
@@ -180,7 +188,8 @@ async function resolvesPrivate(hostname: string): Promise<boolean> {
 // PDF proxy — bypasses X-Frame-Options so surfaces can embed PDFs.
 // Refuses URLs that resolve to loopback / RFC1918 / link-local / metadata IPs
 // to defeat trivial SSRF through this endpoint.
-integrationsRouter.get("/proxy/pdf", async (req, res) => {
+integrationsRouter.get("/proxy/pdf", async (req: any, res) => {
+  if (!requireSystem(req, res)) return;
   const url = req.query.url as string;
   if (!url || !/^https?:\/\//.test(url)) {
     res.status(400).json({ error: "url query param required" });

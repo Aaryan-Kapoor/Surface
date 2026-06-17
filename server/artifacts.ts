@@ -112,6 +112,48 @@ export function inferMime(filePath: string, fallback = "application/octet-stream
   return MIME_BY_EXT[path.extname(filePath).toLowerCase()] || fallback;
 }
 
+// An artifact id is used verbatim to build filesystem paths (workspace dir,
+// thumbnail file). It can arrive from a client JSON body (`POST /artifacts`,
+// reachable by the device plane), so it must never contain path separators or
+// traversal segments. Allow only the characters uuidv4 and template/user ids
+// actually use.
+export function assertSafeArtifactId(id: string): void {
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
+    throw new Error(`Invalid artifact id: ${id}`);
+  }
+}
+
+export type ArtifactPlane = "system" | "device";
+
+// `metadata.author_plane` records which trust plane authored the current bytes;
+// the thumbnailer reads it to decide whether running the artifact's JS is safe
+// (see server/thumbs.ts). It is server-authoritative — never trust a value from
+// the request body — and `display_role` (slot assignment) is system-only. This
+// is the one chokepoint that enforces both, so every create/update path that
+// stores metadata must route through it.
+export function sealArtifactMetadata(
+  metadata: Record<string, unknown> | undefined,
+  plane: ArtifactPlane,
+): Record<string, unknown> {
+  const sealed = { ...(metadata || {}) };
+  delete sealed.author_plane; // server sets this, clients never do
+  if (plane !== "system") delete sealed.display_role; // slots are system-only
+  sealed.author_plane = plane;
+  return sealed;
+}
+
+// Reads the authoring plane of an existing artifact. Pre-plane (legacy) rows and
+// anything unparseable default to "system" — the conservative choice: devices
+// can't mutate them and their JS is treated as trusted (they were loopback-made).
+export function artifactAuthorPlane(artifact: { metadata: string } | undefined): ArtifactPlane {
+  if (!artifact) return "system";
+  try {
+    return JSON.parse(artifact.metadata)?.author_plane === "device" ? "device" : "system";
+  } catch {
+    return "system";
+  }
+}
+
 export function normalizeArtifactPath(input: string): string {
   const raw = (input || "index.html").replace(/\\/g, "/").trim();
   if (!raw || raw.startsWith("/") || /^[a-zA-Z]:\//.test(raw)) {
@@ -279,16 +321,18 @@ export function createArtifact(
     metadata?: Record<string, unknown>;
     files: ArtifactInputFile[];
     reason?: string;
+    author_plane?: ArtifactPlane;
   }
 ) {
   if (!params.title) throw new Error("title is required");
   if (!params.files.length) throw new Error("at least one file is required");
 
   const id = params.id || uuidv4();
+  assertSafeArtifactId(id);
   const firstPath = normalizeArtifactPath(params.files[0].path || "index.html");
   const mime = params.mime || params.files[0].mime || inferMime(firstPath);
   const kind = params.kind || (mime === "text/html" ? "html" : "file");
-  const metadata = JSON.stringify(params.metadata || {});
+  const metadata = JSON.stringify(sealArtifactMetadata(params.metadata, params.author_plane || "system"));
   const artifactWorkspace = path.join(getWorkspaceDir(), "artifacts", id);
 
   const tx = db.transaction(() => {
@@ -338,12 +382,14 @@ export function updateArtifact(
     metadata?: Record<string, unknown>;
     files?: ArtifactInputFile[];
     reason?: string;
+    author_plane?: ArtifactPlane;
   }
 ) {
   const existing = getArtifact(db, id);
   if (!existing) return undefined;
 
   const currentVersion = getCurrentArtifactVersion(db, id);
+  const plane = params.author_plane || "system";
   const tx = db.transaction(() => {
     if (params.files?.length) {
       const version = createArtifactVersion(db, id, params.files!, {
@@ -352,7 +398,16 @@ export function updateArtifact(
       });
       db.prepare(`UPDATE artifacts SET current_version_id = ? WHERE id = ?`).run(version.id, id);
     }
-    const metadata = params.metadata !== undefined ? JSON.stringify(params.metadata) : existing.metadata;
+    // Re-seal: a caller-supplied metadata replaces the doc; otherwise carry the
+    // existing one forward. Either way the plane is re-stamped, so a device
+    // touching an artifact downgrades it (its JS stops being thumbnail-trusted).
+    let baseMeta: Record<string, unknown>;
+    if (params.metadata !== undefined) {
+      baseMeta = params.metadata;
+    } else {
+      try { baseMeta = JSON.parse(existing.metadata) || {}; } catch { baseMeta = {}; }
+    }
+    const metadata = JSON.stringify(sealArtifactMetadata(baseMeta, plane));
     db.prepare(
       `UPDATE artifacts
        SET title = ?, kind = ?, mime = ?, metadata = ?, updated_at = datetime('now')
