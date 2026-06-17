@@ -14,7 +14,7 @@ const runtimeSrc = fs.readFileSync(path.join(__dirname, "..", "client", "surface
 
 interface FetchCall { url: string; method: string; body: any }
 
-function loadRuntime() {
+function loadRuntime(cfg: { failActions?: boolean } = {}) {
   const fetchCalls: FetchCall[] = [];
 
   const fetchMock = (url: string, opts?: any) => {
@@ -23,6 +23,10 @@ function loadRuntime() {
       method: (opts && opts.method) || "GET",
       body: opts && opts.body ? JSON.parse(opts.body) : undefined,
     });
+    // Simulate a server-rejected action POST so we can assert staged retention.
+    if (cfg.failActions && url.includes("/actions") && opts && opts.method === "POST") {
+      return Promise.resolve({ ok: false, json: () => Promise.resolve({ error: "server rejected" }) });
+    }
     // /state hydrate and /actions POST both read .json(); .ok for hydrate.
     return Promise.resolve({ ok: true, json: () => Promise.resolve({ state: {}, state_version: 0 }) });
   };
@@ -94,21 +98,21 @@ await test("stage() accumulates locally and emits ZERO actions", () => {
   assert.deepEqual(plain(Surface.staged()), { region: "eu-west", plan: "pro" });
 });
 
-await test("commit() emits exactly ONE action with the full staged payload", () => {
+await test("commit() emits exactly ONE action with the full staged payload", async () => {
   const { Surface, fetchCalls } = loadRuntime();
   Surface.stage("region", "eu-west");
   Surface.stage("plan", "pro");
-  Surface.commit("choices");
+  await Surface.commit("choices");
   const posts = actionsPosts(fetchCalls);
   assert.equal(posts.length, 1, "exactly one action POST");
   assert.equal(posts[0].body.action, "choices");
   assert.deepEqual(plain(posts[0].body.data), { region: "eu-west", plan: "pro" });
 });
 
-await test("commit(extra) merges extra over staged, then clears staged", () => {
+await test("commit(extra) merges extra over staged, then clears staged", async () => {
   const { Surface, fetchCalls } = loadRuntime();
   Surface.stage("region", "eu-west");
-  Surface.commit("choices", { confirmed: true });
+  await Surface.commit("choices", { confirmed: true });
   const posts = actionsPosts(fetchCalls);
   assert.deepEqual(plain(posts[0].body.data), { region: "eu-west", confirmed: true });
   assert.deepEqual(plain(Surface.staged()), {}, "staged cleared after commit");
@@ -124,15 +128,35 @@ await test("stage(key, undefined) unsets; clearStaged() empties", () => {
   assert.deepEqual(plain(Surface.staged()), {});
 });
 
-await test("a burst of 4 stages + 1 commit = ONE wake (the whole point)", () => {
+await test("a burst of 4 stages + 1 commit = ONE wake (the whole point)", async () => {
   const { Surface, fetchCalls } = loadRuntime();
   Surface.stage("g1", "agree");
   Surface.stage("g2", "agree");
   Surface.stage("g3", "agree");
   Surface.stage("g4", "agree");
   assert.equal(actionsPosts(fetchCalls).length, 0, "four selections, zero wakes");
-  Surface.commit("verdict", { kind: "approve" });
+  await Surface.commit("verdict", { kind: "approve" });
   assert.equal(actionsPosts(fetchCalls).length, 1, "one commit, one wake");
+});
+
+await test("commit() with no name rejects and preserves staged (no POST)", async () => {
+  const { Surface, fetchCalls } = loadRuntime();
+  Surface.stage("a", 1);
+  await assert.rejects(() => Surface.commit(""), /action name is required/);
+  assert.equal(actionsPosts(fetchCalls).length, 0, "a nameless commit never POSTs");
+  assert.deepEqual(plain(Surface.staged()), { a: 1 }, "staged retained after rejected commit");
+});
+
+await test("a FAILED commit preserves staged data (intent is not lost)", async () => {
+  const { Surface } = loadRuntime({ failActions: true });
+  Surface.stage("region", "eu-west");
+  Surface.stage("plan", "pro");
+  await assert.rejects(() => Surface.commit("choices"), /commit failed/);
+  assert.deepEqual(
+    plain(Surface.staged()),
+    { region: "eu-west", plan: "pro" },
+    "staged retained after a server rejection — the user can retry",
+  );
 });
 
 console.log("\nRuntime tests passed\n");

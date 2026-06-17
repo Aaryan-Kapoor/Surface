@@ -164,12 +164,19 @@
   }
 
   function commit(name, extra) {
+    if (!name) return Promise.reject(new Error("commit(name): action name is required"));
     var payload = stagedCopy();
     if (extra && typeof extra === "object") {
       for (var e in extra) payload[e] = extra[e];
     }
-    staged = {};
-    return action(name, payload);
+    // Clear the staged buffer only AFTER the action is accepted. A falsy name, a
+    // server rejection (res.error), or a network failure must not lose the
+    // user's buffered intent — so they can retry the commit.
+    return Promise.resolve(action(name, payload)).then(function (res) {
+      if (res && res.error) throw new Error("commit failed: " + res.error);
+      staged = {};
+      return res;
+    });
   }
 
   window.Surface = {
