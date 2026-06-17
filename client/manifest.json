@@ -1,14 +1,14 @@
 {
   "name": "Surface",
   "short_name": "Surface",
-  "description": "The last app. A universal canvas for AI agents.",
+  "description": "The last app. A universal display owned by your AI agents.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◉</text></svg>",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='28' fill='%23000000'/%3E%3Ccircle cx='64' cy='64' r='44' fill='none' stroke='%23ffffff' stroke-opacity='0.32' stroke-width='1' stroke-dasharray='3 6'/%3E%3Ccircle cx='64' cy='64' r='30' fill='none' stroke='%23ffffff' stroke-opacity='0.22' stroke-width='1'/%3E%3Crect x='59' y='59' width='10' height='10' rx='2' fill='%23ffffff'/%3E%3C/svg%3E",
       "sizes": "any",
       "type": "image/svg+xml"
     }

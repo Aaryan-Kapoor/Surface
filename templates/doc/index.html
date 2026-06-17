@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: #0a0a0a;
+    color: #ededec;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+
+  /* ---- slim header ---- */
+  #dochead {
+    display: none;
+    align-items: center;
+    min-height: 44px;
+    padding: 10px 22px;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  body.has-title #dochead { display: flex; }
+
+  /* ---- layout ---- */
+  #layout { display: flex; align-items: flex-start; }
+  #toc {
+    display: none;
+    flex: none;
+    width: 232px;
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    overflow-y: auto;
+    padding: 30px 10px 48px 22px;
+  }
+  body.has-toc #toc { display: block; }
+  @media (max-width: 899px) {
+    #toc { display: none !important; }
+  }
+  #toc a {
+    display: block;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: rgba(237,237,236,.52);
+    text-decoration: none;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #toc a:hover { color: #ededec; }
+  #toc a.active { color: #ededec; background: rgba(255,255,255,.06); }
+  #toc a.toc-h2 { padding-left: 22px; }
+  #toc a.toc-h3 { padding-left: 34px; }
+
+  #main { flex: 1; min-width: 0; padding: 34px 26px 96px; }
+  article { margin: 0 auto; }
+  article.w-narrow  { max-width: 55ch; }
+  article.w-default { max-width: 72ch; }
+  article.w-wide    { max-width: 95ch; }
+
+  /* ---- reading typography ---- */
+  article {
+    font-size: 16.5px;
+    line-height: 1.7;
+    word-wrap: break-word;
+  }
+  article > :first-child { margin-top: 0; }
+  article h1, article h2, article h3, article h4, article h5, article h6 {
+    margin: 1.5em 0 .55em;
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+    font-weight: 650;
+    scroll-margin-top: 16px;
+  }
+  article h1 { font-size: 1.85em; padding-bottom: .3em; border-bottom: 1px solid rgba(255,255,255,.08); }
+  article h2 { font-size: 1.4em; padding-bottom: .25em; border-bottom: 1px solid rgba(255,255,255,.08); }
+  article h3 { font-size: 1.15em; }
+  article h4 { font-size: 1em; }
+  article h5 { font-size: .92em; }
+  article h6 { font-size: .85em; color: rgba(237,237,236,.52); }
+  article p { margin: .8em 0; }
+  article a { color: #8cb4ff; text-decoration: none; }
+  article a:hover { text-decoration: underline; }
+  article ul, article ol { margin: .8em 0; padding-left: 1.8em; }
+  article li { margin: .25em 0; }
+  article li.task { list-style: none; }
+  article li.task input {
+    margin: 0 .55em 0 -1.6em;
+    vertical-align: -2px;
+    accent-color: #8cb4ff;
+  }
+  article code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .88em;
+    background: rgba(255,255,255,.07);
+    border-radius: 4px;
+    padding: .12em .38em;
+  }
+  article pre {
+    margin: 1em 0;
+    padding: 14px 16px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 8px;
+    overflow-x: auto;
+    line-height: 1.55;
+  }
+  article pre code { background: none; padding: 0; font-size: 13.5px; }
+  article pre[data-lang]::before {
+    content: attr(data-lang);
+    display: block;
+    margin-bottom: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10px;
+    text-transform: lowercase;
+    letter-spacing: .08em;
+    color: rgba(237,237,236,.32);
+  }
+  article blockquote {
+    margin: 1em 0;
+    padding: .1em 0 .1em 16px;
+    border-left: 3px solid rgba(255,255,255,.15);
+    color: rgba(237,237,236,.52);
+  }
+  article hr {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,.08);
+    margin: 2.2em 0;
+  }
+  article img {
+    max-width: 100%;
+    border-radius: 6px;
+  }
+  .tablewrap { overflow-x: auto; margin: 1em 0; }
+  article table {
+    border-collapse: collapse;
+    font-size: .9em;
+  }
+  article th, article td {
+    border: 1px solid rgba(255,255,255,.08);
+    padding: 7px 13px;
+    text-align: left;
+  }
+  article th { font-weight: 600; background: rgba(255,255,255,.03); }
+  article tbody tr:nth-child(even) { background: rgba(255,255,255,.015); }
+
+  /* ---- error ---- */
+  #error {
+    min-height: 100vh;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+  }
+  body.has-error #error { display: flex; }
+  body.has-error #layout, body.has-error #dochead { display: none; }
+  #error .error-title { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
+  #error .error-detail { font-size: 13px; color: rgba(237,237,236,.52); margin-bottom: 14px; }
+  #error .error-url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: rgba(237,237,236,.52);
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 6px;
+    padding: 8px 14px;
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---- print ---- */
+  @media print {
+    body { background: #fff; color: #111; }
+    #toc, #dochead { display: none !important; }
+    #main { padding: 0; }
+    article a { color: #1a4ba8; text-decoration: underline; }
+    article code { background: #f2f2f2; color: #111; }
+    article pre { background: #f8f8f8; border-color: #ddd; color: #111; }
+    article pre[data-lang]::before { color: #999; }
+    article blockquote { border-color: #bbb; color: #444; }
+    article h1, article h2 { border-color: #ddd; }
+    article th, article td { border-color: #ccc; }
+    article th { background: #f5f5f5; }
+    article hr { border-color: #ccc; }
+    article h6 { color: #555; }
+  }
+</style>
+</head>
+<body>
+  <header id="dochead">{{title}}</header>
+  <div id="layout">
+    <nav id="toc" aria-label="Table of contents"></nav>
+    <div id="main">
+      <article id="content" class="w-default"></article>
+    </div>
+  </div>
+  <div id="error">
+    <div>
+      <div class="error-title">Couldn&rsquo;t load document</div>
+      <div class="error-detail" id="error-msg"></div>
+      <div class="error-url" id="error-url"></div>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var params = window.__TEMPLATE_PARAMS || {};
+  var content = document.getElementById("content");
+  var tocEl = document.getElementById("toc");
+  var docheadEl = document.getElementById("dochead");
+  var errorMsg = document.getElementById("error-msg");
+  var errorUrl = document.getElementById("error-url");
+
+  var contentUrl = String(params.content_url || "");
+  var titleParam = String(params.title || "").trim();
+  var wantToc = !!params.toc;
+  var width = String(params.width || "default");
+  if (width !== "narrow" && width !== "wide") width = "default";
+  content.className = "w-" + width;
+  if (titleParam) {
+    document.body.classList.add("has-title");
+    document.title = titleParam;
+  }
+
+  var baseUrl = null;
+  try { baseUrl = new URL(contentUrl, location.origin); } catch (e) {}
+
+  /* ---------- escaping ---------- */
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+  function unesc(s) {
+    return String(s)
+      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  }
+
+  function resolveUrl(raw) {
+    if (!raw) return null;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)) {
+      return /^https?:/i.test(raw) ? raw : null; // block javascript: etc.
+    }
+    try {
+      return new URL(raw, baseUrl || location.href).href;
+    } catch (e) { return null; }
+  }
+
+  /* ---------- markdown renderer ----------
+     The whole source is HTML-escaped up front; all parsing below operates on
+     escaped text, so generated markup is the only markup. */
+
+  var slugCounts = {};
+  function slugify(escapedText) {
+    var t = unesc(escapedText).replace(/[`*~!_\[\]()]/g, "");
+    var s = t.toLowerCase().trim()
+      .replace(/[^a-z0-9\s-]/g, "")
+      .replace(/\s+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "section";
+    var n = slugCounts[s] || 0;
+    slugCounts[s] = n + 1;
+    return n ? s + "-" + n : s;
+  }
+
+  var NUL = String.fromCharCode(0); // token sentinel; never present in text
+
+  function inline(s) {
+    var toks = [];
+    function stash(html) {
+      toks.push(html);
+      return NUL + (toks.length - 1) + NUL;
+    }
+
+    // inline code first, protected from every other rule
+    s = s.replace(/`([^`]+)`/g, function (_, c) {
+      return stash("<code>" + c + "</code>");
+    });
+
+    // images: ![alt](src)
+    s = s.replace(/!\[([^\]]*)\]\(([^)]*)\)/g, function (_, alt, src) {
+      var url = resolveUrl(unesc(src).trim().split(/\s+/)[0]);
+      if (!url) return alt;
+      return stash('<img src="' + esc(url) + '" alt="' + alt + '" loading="lazy">');
+    });
+
+    // links: [text](url) — tags stashed so emphasis still runs on the text
+    s = s.replace(/\[([^\]]+)\]\(([^)]*)\)/g, function (_, text, href) {
+      var raw = unesc(href).trim().split(/\s+/)[0];
+      if (raw.charAt(0) === "#") {
+        return stash('<a href="' + esc(raw) + '">') + text + stash("</a>");
+      }
+      var url = resolveUrl(raw);
+      if (!url) return text;
+      return stash('<a href="' + esc(url) + '" target="_blank" rel="noopener">') + text + stash("</a>");
+    });
+
+    s = s.replace(/\*\*([^\n]+?)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    s = s.replace(/~~([^\n]+?)~~/g, "<del>$1</del>");
+    s = s.replace(/ {2,}\n/g, "<br>\n");
+
+    // restore stashed tokens
+    var parts = s.split(NUL);
+    var out = "";
+    for (var k = 0; k < parts.length; k++) {
+      out += (k % 2) ? toks[+parts[k]] : parts[k];
+    }
+    return out;
+  }
+
+  function isDelimRow(s) {
+    return /^[\s|:-]+$/.test(s) && s.indexOf("-") !== -1 && s.indexOf("|") !== -1;
+  }
+  function splitRow(line) {
+    var s = line.trim();
+    if (s.charAt(0) === "|") s = s.slice(1);
+    if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+    return s.split("|").map(function (c) { return c.trim(); });
+  }
+
+  function listItem(text) {
+    var task = /^\[( |x|X)\]\s+/.exec(text);
+    if (task) {
+      var checked = task[1] !== " ";
+      return {
+        task: true,
+        html: '<input type="checkbox" disabled' + (checked ? " checked" : "") + ">" +
+              inline(text.slice(task[0].length))
+      };
+    }
+    return { task: false, html: inline(text) };
+  }
+
+  var HR_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+  var LI_RE = /^(\s*)([-*+]|\d+\.)\s+(.*)$/;
+
+  function parseBlocks(lines) {
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (!line.trim()) { i++; continue; }
+
+      // fenced code block
+      var f = /^\s*```(.*)$/.exec(line);
+      if (f) {
+        var code = [];
+        i++;
+        while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) code.push(lines[i++]);
+        i++; // closing fence
+        var lang = unesc(f[1]).trim().split(/\s+/)[0];
+        out.push("<pre" + (lang ? ' data-lang="' + esc(lang) + '"' : "") +
+                 "><code>" + code.join("\n") + "</code></pre>");
+        continue;
+      }
+
+      // heading
+      var h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+      if (h) {
+        var level = h[1].length;
+        out.push("<h" + level + ' id="' + slugify(h[2]) + '">' + inline(h[2]) +
+                 "</h" + level + ">");
+        i++;
+        continue;
+      }
+
+      // horizontal rule
+      if (HR_RE.test(line)) { out.push("<hr>"); i++; continue; }
+
+      // blockquote ('>' is '&gt;' after escaping)
+      if (/^\s*&gt;/.test(line)) {
+        var q = [];
+        while (i < lines.length && /^\s*&gt;/.test(lines[i])) {
+          q.push(lines[i].replace(/^\s*&gt; ?/, ""));
+          i++;
+        }
+        out.push("<blockquote>" + parseBlocks(q) + "</blockquote>");
+        continue;
+      }
+
+      // table
+      if (line.indexOf("|") !== -1 && i + 1 < lines.length && isDelimRow(lines[i + 1])) {
+        var header = splitRow(line);
+        var aligns = splitRow(lines[i + 1]).map(function (c) {
+          var l = c.charAt(0) === ":", r = c.charAt(c.length - 1) === ":";
+          return l && r ? "center" : r ? "right" : l ? "left" : "";
+        });
+        var alignAttr = function (idx) {
+          return aligns[idx] ? ' style="text-align:' + aligns[idx] + '"' : "";
+        };
+        i += 2;
+        var rows = [];
+        while (i < lines.length && lines[i].trim() && lines[i].indexOf("|") !== -1) {
+          rows.push(splitRow(lines[i]));
+          i++;
+        }
+        var thead = "<tr>" + header.map(function (c, idx) {
+          return "<th" + alignAttr(idx) + ">" + inline(c) + "</th>";
+        }).join("") + "</tr>";
+        var tbody = rows.map(function (r) {
+          return "<tr>" + header.map(function (_, idx) {
+            return "<td" + alignAttr(idx) + ">" + inline(r[idx] || "") + "</td>";
+          }).join("") + "</tr>";
+        }).join("");
+        out.push('<div class="tablewrap"><table><thead>' + thead +
+                 "</thead><tbody>" + tbody + "</tbody></table></div>");
+        continue;
+      }
+
+      // lists (one nesting level: items indented 2+ spaces nest under the previous item)
+      if (LI_RE.test(line)) {
+        var items = [];
+        var orderedTop = null;
+        while (i < lines.length) {
+          var lm = LI_RE.exec(lines[i]);
+          if (!lm) break;
+          var indent = lm[1].replace(/\t/g, "  ").length;
+          var ordered = lm[2].charAt(0) >= "0" && lm[2].charAt(0) <= "9";
+          var it = listItem(lm[3]);
+          if (indent >= 2 && items.length) {
+            var parent = items[items.length - 1];
+            if (!parent.sub) parent.sub = { ordered: ordered, items: [] };
+            parent.sub.items.push(it);
+          } else {
+            if (orderedTop === null) orderedTop = ordered;
+            items.push({ item: it, sub: null });
+          }
+          i++;
+        }
+        var tag = orderedTop ? "ol" : "ul";
+        var lis = items.map(function (entry) {
+          var sub = "";
+          if (entry.sub) {
+            var st = entry.sub.ordered ? "ol" : "ul";
+            sub = "<" + st + ">" + entry.sub.items.map(function (si) {
+              return "<li" + (si.task ? ' class="task"' : "") + ">" + si.html + "</li>";
+            }).join("") + "</" + st + ">";
+          }
+          return "<li" + (entry.item.task ? ' class="task"' : "") + ">" +
+                 entry.item.html + sub + "</li>";
+        }).join("");
+        out.push("<" + tag + ">" + lis + "</" + tag + ">");
+        continue;
+      }
+
+      // paragraph
+      var para = [];
+      while (i < lines.length && lines[i].trim() &&
+             !/^\s*(?:#{1,6}\s|```|&gt;)/.test(lines[i]) &&
+             !LI_RE.test(lines[i]) && !HR_RE.test(lines[i])) {
+        para.push(lines[i]);
+        i++;
+      }
+      if (!para.length) { para.push(line); i++; } // always make progress
+      out.push("<p>" + inline(para.join("\n")) + "</p>");
+    }
+    return out.join("\n");
+  }
+
+  function renderDoc(srcRaw) {
+    slugCounts = {};
+    content.innerHTML = parseBlocks(esc(srcRaw).split(/\r?\n/));
+    if (!titleParam) {
+      var first = content.querySelector("h1, h2, h3");
+      if (first) document.title = first.textContent;
+    }
+  }
+
+  /* ---------- table of contents ---------- */
+  var observer = null;
+
+  function setActive(id) {
+    var links = tocEl.querySelectorAll("a");
+    for (var i = 0; i < links.length; i++) {
+      links[i].classList.toggle("active", links[i].getAttribute("data-target") === id);
+    }
+  }
+
+  function buildToc() {
+    if (!wantToc) return;
+    if (observer) { observer.disconnect(); observer = null; }
+    tocEl.innerHTML = "";
+    var hs = content.querySelectorAll("h1, h2, h3");
+    if (!hs.length) {
+      document.body.classList.remove("has-toc");
+      return;
+    }
+    document.body.classList.add("has-toc");
+    var frag = document.createDocumentFragment();
+    for (var i = 0; i < hs.length; i++) {
+      var a = document.createElement("a");
+      a.href = "#" + hs[i].id;
+      a.textContent = hs[i].textContent;
+      a.className = "toc-" + hs[i].tagName.toLowerCase();
+      a.setAttribute("data-target", hs[i].id);
+      frag.appendChild(a);
+    }
+    tocEl.appendChild(frag);
+    setActive(hs[0].id);
+
+    if (typeof IntersectionObserver !== "undefined") {
+      observer = new IntersectionObserver(function (entries) {
+        for (var j = 0; j < entries.length; j++) {
+          if (entries[j].isIntersecting) setActive(entries[j].target.id);
+        }
+      }, { rootMargin: "0px 0px -72% 0px", threshold: 0 });
+      for (var k = 0; k < hs.length; k++) observer.observe(hs[k]);
+    }
+  }
+
+  /* ---------- load / live reload ---------- */
+  function showError(message, url) {
+    errorMsg.textContent = message;
+    errorUrl.textContent = url || "";
+    document.body.classList.add("has-error");
+  }
+
+  function load(bust) {
+    if (!contentUrl) {
+      showError("No content_url was provided to this surface.", "");
+      return;
+    }
+    var url = contentUrl;
+    if (bust) url += (url.indexOf("?") === -1 ? "?" : "&") + "v=" + Date.now();
+    var scroller = document.scrollingElement || document.documentElement;
+    var savedScroll = scroller.scrollTop;
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status + " " + (r.statusText || ""));
+        return r.text();
+      })
+      .then(function (text) {
+        document.body.classList.remove("has-error");
+        renderDoc(text);
+        buildToc();
+        if (bust) scroller.scrollTop = savedScroll;
+      })
+      .catch(function (err) {
+        showError(String(err && err.message || err), contentUrl);
+      });
+  }
+
+  function boot() {
+    if (window.Surface) {
+      Surface.onEvent("surface_updated", function () { load(true); });
+    }
+    load(false);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

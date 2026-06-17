@@ -1,103 +1,45 @@
 import Database from "better-sqlite3";
+import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, "..", "surfaces.db");
+import { bootstrapDataDir, getDbPath } from "./paths.js";
+import { isPreBaseline, runMigrations } from "./migrations.js";
 
 let db: Database.Database;
 
-export interface Surface {
-  id: string;
-  title: string;
-  html: string;
-  metadata: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SurfaceListItem {
-  id: string;
-  title: string;
-  metadata: string;
-  created_at: string;
-  updated_at: string;
+// Fresh-start policy (decided 2026-06): a pre-baseline database is archived to
+// db.sqlite.bak (plus -wal/-shm), never row-migrated. Agents re-link or
+// re-create their surfaces against the clean schema.
+function archivePreBaselineDb(): void {
+  const dbPath = getDbPath();
+  let suffix = "";
+  let n = 0;
+  while (fs.existsSync(`${dbPath}.bak${suffix}`)) {
+    n++;
+    suffix = `.${n}`;
+  }
+  console.log(`[surface] pre-baseline database found; archiving to ${dbPath}.bak${suffix}`);
+  fs.renameSync(dbPath, `${dbPath}.bak${suffix}`);
+  for (const ext of ["-wal", "-shm"]) {
+    if (fs.existsSync(dbPath + ext)) fs.renameSync(dbPath + ext, `${dbPath}.bak${suffix}${ext}`);
+  }
 }
 
 export function initDb(): void {
-  db = new Database(DB_PATH);
-  db.pragma("journal_mode = WAL");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS surfaces (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      html TEXT NOT NULL,
-      metadata TEXT DEFAULT '{}',
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-  initActionsTable();
-  initDisplayConfigTable();
-}
-
-export function createSurface(params: {
-  id?: string;
-  title: string;
-  html: string;
-  metadata?: Record<string, unknown>;
-}): Surface {
-  const id = params.id || uuidv4();
-  const metadata = JSON.stringify(params.metadata || {});
-  db.prepare(
-    `INSERT INTO surfaces (id, title, html, metadata) VALUES (?, ?, ?, ?)`
-  ).run(id, params.title, params.html, metadata);
-  return getSurface(id)!;
-}
-
-export function getSurface(id: string): Surface | undefined {
-  return db.prepare(`SELECT * FROM surfaces WHERE id = ?`).get(id) as
-    | Surface
-    | undefined;
-}
-
-export function listSurfaces(): SurfaceListItem[] {
-  return db
-    .prepare(
-      `SELECT id, title, metadata, created_at, updated_at FROM surfaces ORDER BY updated_at DESC`
-    )
-    .all() as SurfaceListItem[];
-}
-
-export function updateSurface(
-  id: string,
-  params: {
-    title?: string;
-    html?: string;
-    metadata?: Record<string, unknown>;
+  bootstrapDataDir();
+  db = new Database(getDbPath());
+  if (isPreBaseline(db)) {
+    db.close();
+    archivePreBaselineDb();
+    db = new Database(getDbPath());
   }
-): Surface | undefined {
-  const existing = getSurface(id);
-  if (!existing) return undefined;
-
-  const title = params.title ?? existing.title;
-  const html = params.html ?? existing.html;
-  const metadata =
-    params.metadata !== undefined
-      ? JSON.stringify(params.metadata)
-      : existing.metadata;
-
-  db.prepare(
-    `UPDATE surfaces SET title = ?, html = ?, metadata = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(title, html, metadata, id);
-
-  return getSurface(id)!;
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  runMigrations(db);
 }
 
-export function deleteSurface(id: string): boolean {
-  const result = db.prepare(`DELETE FROM surfaces WHERE id = ?`).run(id);
-  return result.changes > 0;
+export function getDb(): Database.Database {
+  if (!db) throw new Error("Database has not been initialized");
+  return db;
 }
 
 // ── Actions (surface → agent) ──
@@ -109,20 +51,7 @@ export interface SurfaceAction {
   data: string;
   status: string;
   created_at: string;
-}
-
-export function initActionsTable(): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS surface_actions (
-      id TEXT PRIMARY KEY,
-      surface_id TEXT NOT NULL,
-      action TEXT NOT NULL,
-      data TEXT DEFAULT '{}',
-      status TEXT DEFAULT 'pending',
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (surface_id) REFERENCES surfaces(id) ON DELETE CASCADE
-    )
-  `);
+  handled_at: string | null;
 }
 
 export function createAction(params: {
@@ -138,6 +67,10 @@ export function createAction(params: {
   return db.prepare(`SELECT * FROM surface_actions WHERE id = ?`).get(id) as SurfaceAction;
 }
 
+export function getAction(id: string): SurfaceAction | undefined {
+  return db.prepare(`SELECT * FROM surface_actions WHERE id = ?`).get(id) as SurfaceAction | undefined;
+}
+
 export function getPendingActions(surfaceId?: string): SurfaceAction[] {
   if (surfaceId) {
     return db
@@ -151,21 +84,25 @@ export function getPendingActions(surfaceId?: string): SurfaceAction[] {
 
 export function ackAction(id: string): boolean {
   const result = db.prepare(
-    `UPDATE surface_actions SET status = 'handled' WHERE id = ?`
+    `UPDATE surface_actions SET status = 'handled', handled_at = datetime('now') WHERE id = ? AND status = 'pending'`
   ).run(id);
   return result.changes > 0;
 }
 
-// ── Display Config ──
-
-export function initDisplayConfigTable(): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS display_config (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    )
-  `);
+// Inbox TTL (docs/interaction/actions-inbox.md): handled actions are kept 7
+// days for inspection; pending ones expire after 30 — by then "nothing is
+// ever lost" has lost to "nobody is coming".
+export function cleanupActions(): { handled: number; pending: number } {
+  const handled = db.prepare(
+    `DELETE FROM surface_actions WHERE status = 'handled' AND handled_at < datetime('now', '-7 days')`
+  ).run().changes;
+  const pending = db.prepare(
+    `DELETE FROM surface_actions WHERE status = 'pending' AND created_at < datetime('now', '-30 days')`
+  ).run().changes;
+  return { handled, pending };
 }
+
+// ── Display Config ──
 
 export function getDisplayConfig(): Record<string, any> {
   const row = db.prepare(`SELECT value FROM display_config WHERE key = 'theme'`).get() as { value: string } | undefined;

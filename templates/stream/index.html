@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #0a0a0a;
+    color: #ededec;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ---- header ---- */
+  #hdr {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 46px;
+    padding: 10px 18px;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  #hdr h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #status {
+    flex: none;
+    max-width: 55%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    color: rgba(237,237,236,.52);
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 999px;
+    padding: 3px 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #hdr .spacer { flex: 1; }
+
+  /* ---- scrollback ---- */
+  #scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 10px 0 22px;
+    overscroll-behavior: contain;
+  }
+  #empty {
+    color: rgba(237,237,236,.32);
+    font-size: 13px;
+    text-align: center;
+    padding: 48px 18px;
+  }
+  .chunk {
+    display: flex;
+    align-items: flex-start;
+    padding: 2px 18px 2px 0;
+  }
+  .gutter {
+    flex: none;
+    width: 84px;
+    padding: 2px 14px 0 0;
+    text-align: right;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: rgba(237,237,236,.30);
+    user-select: none;
+  }
+  .content { flex: 1; min-width: 0; }
+  .content.text {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding-top: 1px;
+  }
+
+  /* ---- markdown chunks ---- */
+  .content.md {
+    font-size: 13.5px;
+    line-height: 1.6;
+    padding: 2px 0;
+  }
+  .content.md > :first-child { margin-top: 0; }
+  .content.md > :last-child { margin-bottom: 0; }
+  .content.md h1, .content.md h2, .content.md h3 {
+    margin: .7em 0 .35em;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+  .content.md h1 { font-size: 17px; font-weight: 650; }
+  .content.md h2 { font-size: 15px; font-weight: 600; }
+  .content.md h3 { font-size: 13.5px; font-weight: 600; color: rgba(237,237,236,.8); }
+  .content.md p { margin: .35em 0; }
+  .content.md ul { margin: .35em 0; padding-left: 22px; }
+  .content.md li { margin: .15em 0; }
+  .content.md code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .92em;
+    background: rgba(255,255,255,.07);
+    border-radius: 4px;
+    padding: .1em .35em;
+  }
+  .content.md pre {
+    margin: .5em 0;
+    padding: 10px 12px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 6px;
+    overflow-x: auto;
+  }
+  .content.md pre code { background: none; padding: 0; font-size: 12px; line-height: 1.55; }
+  .content.md a { color: #8cb4ff; text-decoration: none; }
+  .content.md a:hover { text-decoration: underline; }
+
+  /* ---- live pill ---- */
+  #pill {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%) translateY(8px);
+    background: rgba(28,28,30,.92);
+    border: 1px solid rgba(255,255,255,.14);
+    color: #ededec;
+    border-radius: 999px;
+    padding: 7px 16px;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,0,0,.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease, transform .15s ease;
+  }
+  #pill.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+
+  #scroll::-webkit-scrollbar { width: 10px; }
+  #scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 5px; border: 2px solid #0a0a0a; }
+  #scroll::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+  <header id="hdr" style="display:none">
+    <h1 id="title">{{title}}</h1>
+    <span class="spacer"></span>
+    <span id="status" data-surface-bind="status" data-surface-show="status"></span>
+  </header>
+  <div id="scroll">
+    <div id="empty">Waiting for output&hellip;</div>
+    <div id="log"></div>
+  </div>
+  <button id="pill" type="button">&darr; live</button>
+
+<script>
+(function () {
+  "use strict";
+
+  var params = window.__TEMPLATE_PARAMS || {};
+  var hdr = document.getElementById("hdr");
+  var titleEl = document.getElementById("title");
+  var scroller = document.getElementById("scroll");
+  var log = document.getElementById("log");
+  var empty = document.getElementById("empty");
+  var pill = document.getElementById("pill");
+
+  var hasTitle = !!String(params.title || "").trim();
+  if (!hasTitle) titleEl.style.display = "none";
+
+  function updateHeader() {
+    var status = window.Surface ? String((Surface.state || {}).status || "") : "";
+    hdr.style.display = (hasTitle || status) ? "" : "none";
+  }
+  updateHeader();
+
+  /* ---------- escaping ---------- */
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+
+  /* ---------- ANSI rendering (DOM nodes only, never raw innerHTML) ---------- */
+  var ANSI_FG = {
+    30: "#686868", 31: "#ff6e67", 32: "#5ad27d", 33: "#e5c07b",
+    34: "#61afef", 35: "#c678dd", 36: "#56b6c2", 37: "#d7d7d7",
+    90: "#8c8c8c", 91: "#ff938e", 92: "#86e2a4", 93: "#f0d399",
+    94: "#8cc7ff", 95: "#d99af0", 96: "#7fd1dc", 97: "#ffffff"
+  };
+
+  function appendAnsi(el, raw) {
+    raw = String(raw)
+      // OSC sequences (e.g. terminal titles): ESC ] ... BEL or ESC ] ... ESC \
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, "");
+    // SGR is captured; every other CSI / two-char escape is stripped.
+    var re = /\x1b\[([0-9;]*)m|\x1b\[[0-9;?]*[A-Za-z]|\x1b./g;
+    var bold = false, fg = null, last = 0, m;
+    function push(text) {
+      if (!text) return;
+      if (!bold && !fg) { el.appendChild(document.createTextNode(text)); return; }
+      var span = document.createElement("span");
+      if (bold) span.style.fontWeight = "700";
+      if (fg) span.style.color = fg;
+      span.textContent = text;
+      el.appendChild(span);
+    }
+    while ((m = re.exec(raw))) {
+      push(raw.slice(last, m.index));
+      last = re.lastIndex;
+      if (m[1] !== undefined) {
+        var codes = m[1] === "" ? [0] : m[1].split(";");
+        for (var i = 0; i < codes.length; i++) {
+          var c = parseInt(codes[i], 10);
+          if (c === 0) { bold = false; fg = null; }
+          else if (c === 1) { bold = true; }
+          else if (ANSI_FG[c]) { fg = ANSI_FG[c]; }
+          /* other SGR codes: ignored */
+        }
+      }
+    }
+    push(raw.slice(last));
+  }
+
+  /* ---------- minimal markdown (input HTML-escaped before any markup) ---------- */
+  function mdInline(s) {
+    s = esc(s);
+    var codes = [];
+    s = s.replace(/`([^`]+)`/g, function (_, c) {
+      codes.push(c);
+      return "\u0000" + (codes.length - 1) + "\u0000";
+    });
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_, text, url) {
+      if (!/^(?:https?:|\/|\.\/|\.\.\/|#)/i.test(url)) return text;
+      return '<a href="' + url + '" target="_blank" rel="noopener">' + text + "</a>";
+    });
+    s = s.replace(/\u0000(\d+)\u0000/g, function (_, n) {
+      return "<code>" + codes[+n] + "</code>";
+    });
+    return s;
+  }
+
+  function mdRender(src) {
+    var out = [];
+    var lines = String(src).split(/\r?\n/);
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+      if (/^```/.test(line)) {
+        var buf = [];
+        i++;
+        while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+        i++; // closing fence
+        out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>");
+        continue;
+      }
+      var h = /^(#{1,3})\s+(.+)$/.exec(line);
+      if (h) {
+        out.push("<h" + h[1].length + ">" + mdInline(h[2]) + "</h" + h[1].length + ">");
+        i++;
+        continue;
+      }
+      if (/^\s*-\s+/.test(line)) {
+        var items = [];
+        while (i < lines.length && /^\s*-\s+/.test(lines[i])) {
+          items.push("<li>" + mdInline(lines[i].replace(/^\s*-\s+/, "")) + "</li>");
+          i++;
+        }
+        out.push("<ul>" + items.join("") + "</ul>");
+        continue;
+      }
+      if (!line.trim()) { i++; continue; }
+      var para = [];
+      while (i < lines.length && lines[i].trim() &&
+             !/^(?:#{1,3}\s|```|\s*-\s)/.test(lines[i])) {
+        para.push(mdInline(lines[i]));
+        i++;
+      }
+      out.push("<p>" + para.join("\n") + "</p>");
+    }
+    return out.join("");
+  }
+
+  /* ---------- timestamps ---------- */
+  function fmtTime(s) {
+    if (!s) return "";
+    var d;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+      d = new Date(s.replace(" ", "T") + "Z"); // server timestamps are UTC
+    } else {
+      d = new Date(s);
+    }
+    if (isNaN(d.getTime())) return "";
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+
+  /* ---------- scrollback ---------- */
+  var MAX_CHUNKS = 2000;
+  var lastSeq = 0;
+  var paused = false;
+
+  function atBottomDistance() {
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  }
+  function toBottom() {
+    scroller.scrollTop = scroller.scrollHeight;
+  }
+  function setPaused(v) {
+    paused = v;
+    pill.classList.toggle("show", v);
+  }
+  scroller.addEventListener("scroll", function () {
+    if (atBottomDistance() > 80) {
+      if (!paused) setPaused(true);
+    } else if (paused) {
+      setPaused(false);
+    }
+  });
+  pill.addEventListener("click", function () {
+    setPaused(false);
+    toBottom();
+  });
+
+  function addChunk(chunk) {
+    empty.style.display = "none";
+    var row = document.createElement("div");
+    row.className = "chunk";
+    var t = document.createElement("div");
+    t.className = "gutter";
+    t.textContent = fmtTime(chunk.created_at);
+    var c = document.createElement("div");
+    if (chunk.kind === "md") {
+      c.className = "content md";
+      c.innerHTML = mdRender(chunk.content || "");
+    } else {
+      c.className = "content text";
+      appendAnsi(c, chunk.content || "");
+    }
+    row.appendChild(t);
+    row.appendChild(c);
+    log.appendChild(row);
+    while (log.children.length > MAX_CHUNKS) log.removeChild(log.firstChild);
+  }
+
+  /* ---------- data flow ---------- */
+  function boot() {
+    if (!window.Surface) { setTimeout(boot, 60); return; }
+
+    var ready = false;
+    var pending = [];
+
+    Surface.onEvent("stream_append", function (ev) {
+      if (!ev || (ev.id && ev.id !== Surface.id)) return;
+      if (!ready) { pending.push(ev); return; }
+      applyEvent(ev);
+    });
+
+    function applyEvent(ev) {
+      var seq = typeof ev.seq === "number" ? ev.seq : lastSeq + 1;
+      if (seq <= lastSeq) return; // dedupe
+      lastSeq = seq;
+      addChunk(ev.chunk || {});
+      if (!paused) toBottom();
+    }
+
+    fetch("/artifacts/" + encodeURIComponent(Surface.id) + "/chunks")
+      .then(function (r) { return r.ok ? r.json() : { chunks: [] }; })
+      .then(function (doc) { return doc && doc.chunks ? doc.chunks : []; })
+      .catch(function () { return []; })
+      .then(function (chunks) {
+        chunks.forEach(function (ch) {
+          var seq = typeof ch.seq === "number" ? ch.seq : lastSeq + 1;
+          if (seq <= lastSeq) return;
+          lastSeq = seq;
+          addChunk(ch);
+        });
+        ready = true;
+        pending.forEach(applyEvent);
+        pending = [];
+        toBottom();
+      });
+
+    Surface.onState(updateHeader);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>

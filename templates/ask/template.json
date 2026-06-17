@@ -1,0 +1,36 @@
+{
+  "name": "ask",
+  "description": "Ask the human a question — option buttons and optional freetext; the answer flows back as an action",
+  "params": {
+    "question": {
+      "type": "string",
+      "required": true,
+      "description": "The question headline"
+    },
+    "context_md": {
+      "type": "markdown",
+      "default": "",
+      "description": "Optional markdown context rendered under the question"
+    },
+    "options": {
+      "type": "list",
+      "default": [],
+      "description": "Choice buttons (array or comma-separated string)"
+    },
+    "freetext": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also show a free-text input with a Send button"
+    },
+    "expires_at": {
+      "type": "string",
+      "default": "",
+      "description": "ISO timestamp after which the ask expires"
+    }
+  },
+  "state": {
+    "status": { "type": "string", "default": "open" },
+    "answer": { "type": "object" }
+  },
+  "actions": ["answer"]
+}

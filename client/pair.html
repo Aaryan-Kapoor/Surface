@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Pair with this Surface</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: #000000; color: #ffffff;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    ::selection { background: #ffffff; color: #000000; }
+    body {
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+      background-image:
+        radial-gradient(900px 420px at 50% -100px, rgba(255, 255, 255, 0.06), transparent 70%),
+        radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1.2px);
+      background-size: auto, 26px 26px;
+    }
+    .card {
+      width: 100%; max-width: 400px;
+      background: rgba(5, 5, 5, 0.96);
+      border: 1px solid rgba(255, 255, 255, 0.40);
+      border-radius: 0;
+      padding: 40px 36px 32px;
+      box-shadow: 0 60px 140px -40px rgba(0, 0, 0, 0.9), 0 0 80px -30px rgba(255, 255, 255, 0.10);
+      animation: card-in .5s cubic-bezier(.22,1,.36,1) both;
+    }
+    @keyframes card-in {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .eyebrow {
+      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px; letter-spacing: .26em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.30); margin-bottom: 14px;
+    }
+    h1 { font-size: 22px; margin: 0 0 8px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; }
+    p.sub { margin: 0 0 26px; color: rgba(255, 255, 255, 0.52); font-size: 13.5px; line-height: 1.55; }
+    label {
+      display: block;
+      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.52); margin: 0 0 8px;
+    }
+    input {
+      width: 100%; padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.035); color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 0;
+      font-size: 16px; letter-spacing: .14em; text-transform: uppercase;
+      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      caret-color: #ffffff;
+      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+    input::placeholder { color: rgba(255, 255, 255, 0.30); }
+    input:hover { border-color: rgba(255, 255, 255, 0.26); }
+    input:focus {
+      outline: none; border-color: rgba(255, 255, 255, 0.40);
+      background: rgba(255, 255, 255, 0.05);
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+    }
+    .row { display: flex; gap: 10px; margin-top: 22px; }
+    button {
+      flex: 1; padding: 12px 14px; border-radius: 0;
+      font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: background-color .18s ease, color .18s ease, border-color .18s ease, box-shadow .2s ease;
+    }
+    button.primary { background: #ffffff; color: #000000; border: 1px solid #ffffff; }
+    button.primary:hover { background: transparent; color: #ffffff; box-shadow: 0 0 24px rgba(255, 255, 255, 0.15); }
+    button.primary:disabled { opacity: .55; cursor: default; }
+    button.ghost { background: transparent; color: rgba(255, 255, 255, 0.52); border: 1px solid rgba(255, 255, 255, 0.14); }
+    button.ghost:hover { color: #ffffff; border-color: rgba(255, 255, 255, 0.40); }
+    .msg { margin-top: 18px; font-size: 13px; min-height: 18px; }
+    .msg.error { color: #ff453a; }
+    .msg.ok { color: #ffffff; }
+    .msg.info { color: rgba(255, 255, 255, 0.52); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="eyebrow">Surface · Pairing</div>
+    <h1>Pair this device</h1>
+    <p class="sub">Name this device, then enter the one-time pairing token shown by the Surface server.</p>
+    <form id="pair-form" autocomplete="off">
+      <label for="device-name">Device name</label>
+      <input id="device-name" name="device-name" type="text" inputmode="text" autocapitalize="none"
+             spellcheck="false" placeholder="phone, desk-monitor, kitchen-tablet" maxlength="40"
+             style="text-transform:none;letter-spacing:normal;font-family:inherit;margin-bottom:14px;" required>
+      <label for="token">Pairing token</label>
+      <input id="token" name="token" type="text" inputmode="latin" autocapitalize="characters"
+             spellcheck="false" placeholder="UKKD5N47XXZ8" maxlength="24" required>
+      <div class="row">
+        <button class="primary" id="submit" type="submit">Continue</button>
+        <button class="ghost" id="reload" type="button">Reload app</button>
+      </div>
+    </form>
+    <div class="msg info" id="msg"></div>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById("pair-form");
+      var input = document.getElementById("token");
+      var nameInput = document.getElementById("device-name");
+      var submitBtn = document.getElementById("submit");
+      var msg = document.getElementById("msg");
+
+      // Friendly default device name guessed from the user agent. The user can
+      // (and should) override it — the label is how `surface devices`,
+      // revocation, and `--on <device>` targeting refer to this screen.
+      function guessDeviceName() {
+        var ua = navigator.userAgent;
+        if (/iPhone/.test(ua)) return "iphone";
+        if (/iPad/.test(ua)) return "ipad";
+        if (/Android/.test(ua)) return "android";
+        if (/Macintosh/.test(ua)) return "mac";
+        if (/Windows/.test(ua)) return "windows";
+        if (/Linux/.test(ua)) return "linux";
+        return "device";
+      }
+      nameInput.value = guessDeviceName();
+
+      function setMsg(text, kind) {
+        msg.textContent = text || "";
+        msg.className = "msg " + (kind || "info");
+      }
+
+      // 1. Read the token from the URL fragment, then 2. immediately strip it so
+      // it never lingers in history, the address bar, or referrer headers.
+      var hash = window.location.hash || "";
+      var hashToken = "";
+      var m = hash.match(/(?:^#|&)token=([^&]+)/);
+      if (m) {
+        try { hashToken = decodeURIComponent(m[1]); } catch (e) { hashToken = m[1]; }
+      }
+      if (hashToken) {
+        history.replaceState(null, "", window.location.pathname + window.location.search);
+      }
+
+      function bootstrap(credential) {
+        var label = (nameInput.value || "").trim() || guessDeviceName();
+        submitBtn.disabled = true;
+        setMsg("Pairing…", "info");
+        fetch("/api/auth/bootstrap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential: credential, label: label }),
+        })
+          .then(function (res) {
+            return res.json().then(function (body) { return { status: res.status, body: body }; });
+          })
+          .then(function (r) {
+            if (r.status >= 200 && r.status < 300 && r.body && r.body.authenticated) {
+              setMsg("Paired. Opening Surface…", "ok");
+              window.location.replace("/");
+              return;
+            }
+            submitBtn.disabled = false;
+            var err = (r.body && r.body.error) || "Pairing failed.";
+            setMsg(err, "error");
+          })
+          .catch(function () {
+            submitBtn.disabled = false;
+            setMsg("Server unreachable. Check your connection and try again.", "error");
+          });
+      }
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var credential = input.value.trim();
+        if (!credential) { setMsg("Enter a pairing token.", "error"); return; }
+        bootstrap(credential);
+      });
+
+      document.getElementById("reload").addEventListener("click", function () {
+        window.location.replace("/");
+      });
+
+      // 3. Prefill when the token arrived in the URL. No auto-submit: the user
+      // names the device first — that label is its identity from here on.
+      if (hashToken) {
+        input.value = hashToken;
+        setMsg("Token received. Name this device and continue.", "info");
+        nameInput.focus();
+        nameInput.select();
+      } else {
+        nameInput.focus();
+      }
+    })();
+  </script>
+</body>
+</html>

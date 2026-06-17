@@ -1,188 +1,248 @@
-# Surface
+<div align="center">
 
-**The last app.** A universal display that AI agents own end-to-end.
+<img src="docs/assets/banner.svg" alt="Surface — the universal display for AI agents. An agent pushes content from a terminal; clicks flow back." width="100%">
 
-Instead of installing a weather app, a reading app, a game app — you have one Surface. Agents decide what goes on it.
+<br>
+<br>
 
-> "Surface me a game."
+**The last app.** One self-hosted display that AI agents own end-to-end:
+they push UI onto it, you tap it from any screen you own, and the tap finds
+its way back to an agent — even one that exited hours ago.
+
+[Quick start](#quick-start) ·
+[Connect an agent](#connect-an-agent) ·
+[The loop](#the-loop-clicks-always-come-back) ·
+[CLI](#the-cli) ·
+[HTTP API](#direct-http) ·
+[Docs](docs/README.md)
+
+</div>
+
+---
+
+## Why
+
+You don't need a weather app, a reading app, a kanban app, a game app. You
+need **one display** and an agent that can fill it:
+
+> "Surface me a pomodoro."
 > "Put today's paper on my surface."
-> "Make my surface look cyberpunk."
+> "Ask me before shipping — I'll be on my phone."
 
-Each surface is a live HTML/CSS/JS mini-app an agent created. The PWA homescreen is your app drawer. Agents have full control — theming, navigation, overlays, live JS execution, custom renderers that replace the entire homescreen.
+Agents can already write anything. What they're missing is a *place*: a
+persistent screen that outlives the session, follows you to your phone and
+TV, and carries your clicks back. Surface is that place. Single user,
+single deployment, all data on your machine, MIT-licensed.
 
-## Quick Start
+## What it feels like
+
+**A question that waits for you.** The agent puts a question on every
+screen you own and blocks until you answer — from your desk or your phone:
 
 ```bash
+surface ask "Ship release v2.4.0 to production?" --options ship,hold --wait
+# … you tap [ship] on your phone …
+# → {"choice": "ship", "answered_at": "…", "device": "phone"}   exit 0
+```
+
+**A build you can watch from the couch.** Pipe any process into a live,
+scrolling, ANSI-colored stream surface; update a progress bar with one line:
+
+```bash
+surface create "Build" --id build --template stream
+make 2>&1 | surface append build -
+surface set build progress 0.92
+```
+
+**An approval at 11pm, hours after the agent exited.** Register a binding
+when you create the surface; when a click arrives and nobody is listening,
+Surface revives the exact session that has the context:
+
+```bash
+surface bind deploy-panel --action "approve|hold" \
+  --run 'claude -p --resume <session-id> "Handle the Surface action batch on stdin."'
+```
+
+The card shows **⟳ handling…** while the spawned session works, and the
+click is acknowledged when it's done. Nothing is fire-and-forget; nothing
+is lost.
+
+## Quick start
+
+```bash
+git clone https://github.com/Aaryan-Kapoor/Surface.git
+cd Surface
 npm install
-npm run dev        # → http://localhost:3000
+npm run dev        # → http://127.0.0.1:3000
 ```
 
-Create a surface:
+For a persistent Linux user service:
 
 ```bash
-curl -X POST localhost:3000/surfaces \
-  -H "Content-Type: application/json" \
-  -d '{"title": "Hello", "html": "<h1 style=\"color:white\">Hello from Surface</h1>"}'
+./scripts/install-systemd-user-service.sh
+systemctl --user status surface.service --no-pager
 ```
 
-Open `localhost:3000` — it appears instantly via SSE.
-
-## Connect an Agent
-
-### Claude Code / Cursor (MCP)
-
-Add to your MCP config:
-
-```json
-{
-  "mcpServers": {
-    "surface": {
-      "command": "npx",
-      "args": ["tsx", "/path/to/surface/server/mcp.ts"],
-      "env": { "SURFACE_URL": "http://localhost:3000" }
-    }
-  }
-}
-```
-
-The agent gets 14 tools:
-
-| Tool | What it does |
-|------|-------------|
-| `surface_create` | Push a new HTML mini-app |
-| `surface_read` | Read current surface content |
-| `surface_update` | Update HTML, hot-reloads in browser |
-| `surface_delete` | Remove a surface |
-| `surface_list` | List all surfaces |
-| `surface_exec` | Run JS in a live surface without replacing HTML |
-| `surface_actions` | Read pending user actions from surfaces |
-| `surface_ack` | Acknowledge an action |
-| `reply` | Send a toast notification to a surface |
-| `display_set_theme` | Change colors, fonts, background, inject CSS, set a custom renderer/overlay/home widget |
-| `display_reset_theme` | Reset everything to default |
-| `display_navigate` | Force what's on screen |
-| `display_status` | See what the user is viewing |
-| `display_notify` | Push ephemeral notifications |
-
-### Direct HTTP
-
-All the same capabilities via REST:
-
-```
-POST   /surfaces              Create surface
-GET    /surfaces              List surfaces
-GET    /surfaces/:id          Get surface
-PUT    /surfaces/:id          Update surface
-DELETE /surfaces/:id          Delete surface
-GET    /surfaces/:id/html     Serve surface HTML (iframe src)
-POST   /surfaces/:id/exec     Execute JS in surface iframe
-POST   /surfaces/:id/actions  Post an action from a surface
-POST   /surfaces/:id/reply    Send toast to surface
-GET    /stream                Global SSE (created/updated/deleted events)
-GET    /surfaces/:id/stream   Per-surface SSE (updates + agent replies)
-PUT    /display/config        Set theme/renderer/overlay
-POST   /display/reset         Reset to default
-POST   /display/navigate      Force navigation
-POST   /display/notify        Push notification
-GET    /display/status        Get display state
-```
-
-## Marketplace
-
-Browse and install pre-made surfaces, themes, renderers, and overlays from the built-in marketplace.
-
-Click **Explore** on the homescreen, or use the API:
+Put the single-file CLI on your `$PATH` (built automatically on install):
 
 ```bash
-# List everything
-curl localhost:3000/marketplace
-
-# Filter by type
-curl "localhost:3000/marketplace?type=theme"
-
-# Install
-curl -X POST localhost:3000/marketplace/mp-pomodoro/install
+npm link
+surface --help
 ```
 
-**10 surfaces** (Pomodoro, Clock, Calculator, Piano, Color Palette, Habit Tracker, Notes, Weather, Breathing Guide, Stopwatch), **3 themes** (Cyberpunk Neon, Minimal Light, Deep Forest), **1 renderer** (Retro Terminal), **1 overlay** (Floating Clock).
+Surface binds to `127.0.0.1` and stores everything under `~/.surface/`.
+Read [SECURITY.md](SECURITY.md) before exposing it beyond loopback.
 
-## Display Control
+**Extra screens** pair in seconds — `surface pair --name kitchen-tablet`
+prints a one-time URL + QR; the device names itself and shows up in
+`surface devices`, individually revocable, targetable with `--on`.
 
-Agents don't just push content — they own the display.
+## Connect an agent
 
-**Theming** — colors, fonts, backgrounds, starfield/nebula effects, card radius, raw CSS injection:
+The agent contract is two files — no MCP servers, no per-agent protocol,
+nothing to register. Any agent that can run a shell command (Claude Code,
+Cursor, Codex CLI, Aider, a cron script) works identically:
+
+- **[`SKILL.md`](SKILL.md)** — what `surface` does and when to reach for
+  each command. Drop it into your agent's skills directory.
+- **[`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md)** — the first-run
+  bootstrap an agent follows on a new machine, including a guided tour for
+  new users.
+
+Tell your agent: *"Read INSTALL_FOR_AGENTS.md and follow it."* That's the
+whole integration.
+
+## The CLI
 
 ```bash
-curl -X PUT localhost:3000/display/config \
-  -H "Content-Type: application/json" \
-  -d '{"background":"linear-gradient(135deg,#0a0012,#1a0028)","colors":{"accent":"#ff0080"}}'
+surface list                              # what's on the display (check before creating!)
+surface ask "Ship it?" --options ship,hold --wait      # question on every screen; blocks
+surface link $(pwd)/demo.html --title D   # serve a file straight out of your repo, live
+surface touch <id>                        # broadcast reload after editing it on disk
+surface doc ./README.md --toc             # rendered repo markdown, hot-reloading
+surface video https://youtu.be/abc123     # YouTube/web embed, one line
+surface create "Build" --id build --template stream    # live log surface…
+make 2>&1 | surface append build -        # …pipe a process into it
+surface set build progress 0.42           # live state — bound elements re-render
+surface present ./report.pdf              # one-shot file snapshot
+surface open <id> --on phone              # show it (everywhere, or one device)
+surface notify "deploy finished" --style success
+surface wait --id <id> --action submit    # block until the user clicks
+surface wait --follow                     # persistent terminal: one JSON line per click
+surface bind <id> --action approve --run '…'           # clicks wake you when offline
+surface set board claude-code '{"status":"tests green"}'  # shared multi-agent status board
+surface devices                           # paired screens, live, what each is viewing
+surface slot renderer <id>                # an artifact takes over the whole homescreen
+surface theme '{"colors":{"accent":"#ff0080"}}'        # restyle the display
+surface sync                              # reconstitute a project's surfaces from .surface/
 ```
 
-**Custom renderer** — replace the entire homescreen with your own HTML/CSS/JS. Your code gets `window.__surfaces`, `navigate(id)`, `onSurfaceChange()`, and more injected automatically.
+`surface --help` and `surface <cmd> --help` are authoritative; intent
+mapping lives in [`SKILL.md`](SKILL.md).
 
-**Overlays** — persistent HTML layer across all views (floating clocks, status bars).
+## Templates and live state
 
-**Home widgets** — HTML/JS iframe above the card grid.
+Agent-built UI doesn't mean 200 lines of hand-rolled HTML per update.
+Templates are parameterized surfaces — `ask`, `stream`, `video`, `board`,
+`doc` ship built-in, and agents promote any one-off surface into a reusable
+template with `surface template create <name> --from <id>`. Project
+templates override user templates override built-ins
+([docs](docs/templates/overview.md)).
 
-**Live JS execution** — run code in a surface's iframe without replacing HTML:
+Every surface also carries a versioned JSON state document and an injected
+runtime (`surface.js`): elements marked `data-surface-bind` re-render on
+`surface set/patch`, and `Surface.action("approve", {...})` emits clicks
+without any postMessage boilerplate. Updating a dashboard number is a shell
+one-liner, not an HTML rewrite ([docs](docs/state/stateful-surfaces.md)).
 
-```bash
-curl -X POST localhost:3000/surfaces/my-game/exec \
-  -H "Content-Type: application/json" \
-  -d '{"js":"document.getElementById(\"score\").textContent = 42"}'
+Projects own their surfaces: `surface init` scaffolds a committable
+`.surface/` directory (manifests, templates, config) plus a `SURFACE.md`,
+and `surface sync` reconstitutes everything on a fresh clone
+([docs](docs/state/project-directory.md)).
+
+## The loop: clicks always come back
+
+The hard problem isn't pushing pixels — it's that **agent lifetimes are
+shorter than surface lifetimes**. You tap "regenerate report" at 11pm; the
+session that built it ended at 5. Surface resolves every action down a
+three-layer ladder ([docs](docs/interaction/delivery-ladder.md)):
+
+1. **Live action terminal** — a backgrounded `surface wait --follow` prints
+   one JSON line per click, forever, and the harness's background watchdog
+   wakes the agent *in the session that has the context*. While it's
+   connected the card shows **● listening** — free, instant, the default.
+   (One-shot `surface wait` exits with the first action instead.)
+2. **Binding** — nobody listening? Surface spawns the registered command
+   (`claude -p --resume …`, `codex exec`, a webhook into a daemon) with the
+   pending-action batch on stdin. Argv-safe (never a shell), single-flight,
+   rapid clicks coalesced into one batch. Opt-in, once per project.
+3. **Inbox** — otherwise the action stays pending, badges the card, and is
+   drained by `surface actions` at the next session start.
+
+## Yours, all the way down
+
+- **Display control** — colors, fonts, backgrounds, raw CSS, card order;
+  the homescreen renderer, home widget, and persistent overlay are
+  themselves artifacts (versioned, linkable, rollback-able) promoted with
+  `surface slot` ([docs](docs/display/theming.md)).
+- **Two trust planes** — loopback is the agent plane (`system`: full
+  power, attributed by name tag). Remote displays pair into named,
+  revocable `device` sessions that can view, click, and drive the display
+  but can never touch the filesystem, execute code, register bindings, or
+  mint credentials ([docs](docs/auth/trust-model.md)). A phone left in a
+  cab can browse your dashboard; it cannot reach your disk.
+- **Self-hosted, no cloud** — one process, one SQLite file, your machine.
+
+## Direct HTTP
+
+The CLI is a thin wrapper over a local HTTP API — anything that can
+`fetch` can drive the display.
+
+<details>
+<summary>Route map</summary>
+
 ```
+GET    /artifacts             Full card list (one fetch renders a dashboard)
+POST   /artifacts             Create workspace artifact (or {template, params})
+POST   /artifacts/link        Register linked artifact (file lives in caller's repo)
+POST   /artifacts/:id/touch   Broadcast reload for linked artifact
+POST   /artifacts/present-file  One-shot file presentation
+GET    /artifacts/:id         Read artifact   ·  PUT new version  ·  DELETE
+GET    /artifacts/:id/versions / view / files/* / manifest / state / chunks
+PATCH  /artifacts/:id/state   Deep-merge state; broadcasts state_patch
+POST   /artifacts/:id/append  Append stream chunks
+POST   /artifacts/:id/actions Display posts a user action
+POST   /artifacts/:id/reply   Agent sends a toast
+POST   /artifacts/:id/exec    Run JS in the surface iframe (system plane)
+POST   /artifacts/:id/bindings  Register a wake-me binding (system plane)
+GET    /actions               Pending inbox · POST /actions/:id/ack
+GET    /stream                Global SSE (?wait_for=<id> registers a waiter)
+GET    /artifacts/:id/stream  Per-surface SSE
+GET    /display/status /config /slots · PUT /display/config
+POST   /display/reset /navigate /notify   (navigate/notify accept {device})
+GET    /api/auth/devices      Paired displays · POST /api/auth/devices/revoke
+```
+
+`PUT /artifacts/:id` and `POST /artifacts/:id/rollback` return `409` for
+linked artifacts — edit the file on disk and `POST /artifacts/:id/touch`
+instead. Full reference: [docs/core/http-api.md](docs/core/http-api.md).
+
+</details>
 
 ## Architecture
 
-```
-AI Agent (Claude, OpenClaw, etc.)
-    │ MCP tools or HTTP
-    ▼
-Surface Server (Express + SQLite + SSE)
-    │ SSE live updates
-    ▼
-Surface PWA (vanilla JS, hash routing, sandboxed iframes)
-```
+One long-running service (Express 5 + better-sqlite3 + SSE) on
+`127.0.0.1:3000`; a vanilla-JS PWA; a single-file CLI. Two artifact kinds:
+**workspace** (bytes owned by Surface, linear version history) and
+**linked** (bytes stay in your repo, served live from disk). No bundler, no
+client dependencies, no cloud.
 
-- **Server**: Express 5, SQLite via better-sqlite3, SSE for real-time updates
-- **Client**: Vanilla JS PWA, installable via Add to Home Screen
-- **MCP**: stdio transport, works with Claude Code, Cursor, OpenClaw, any MCP client
-- **Surfaces**: Rendered in same-origin iframes (`/surfaces/:id/html`) so scripts work
-- **Previews**: Live iframe thumbnails for simple surfaces, icon fallback for complex ones
-- **PDFs**: Server-side proxy at `/proxy/pdf?url=` bypasses X-Frame-Options
+The full per-feature documentation tree lives in
+[`docs/README.md`](docs/README.md) —
+[`docs/architecture.md`](docs/architecture.md) is the orientation doc. The
+legacy MCP adapter is preserved in [`archived/`](archived/) but the CLI +
+`SKILL.md` is the canonical contract.
 
-## OpenClaw Integration
+## License
 
-Surface actions (button clicks, form submissions) can automatically fan out to OpenClaw's gateway for real-time push-based agent responses.
-
-Set in `.env`:
-
-```
-OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
-OPENCLAW_HOOKS_TOKEN=your-hooks-token
-```
-
-When a user interacts with a surface, the action is POSTed to `POST /hooks/agent` on the OpenClaw gateway. The OpenClaw agent wakes up immediately, processes the action, and can respond by calling the Surface HTTP API.
-
-## Two-Way Communication
-
-Surfaces can talk back to agents. Inside your surface HTML:
-
-```javascript
-// Send an action to the agent
-parent.postMessage({
-  type: 'surface_action',
-  action: 'button_clicked',
-  data: { button: 'submit', value: 42 }
-}, '*');
-```
-
-The agent receives this via `surface_actions` tool or channel notifications, and can respond with `surface_update`, `surface_exec`, or `reply`.
-
-## Stack
-
-- Express 5 + SQLite (better-sqlite3)
-- SSE for live updates
-- Vanilla JS PWA
-- MCP SDK (`@modelcontextprotocol/sdk`)
-- `tsx` for dev, `bun` for MCP server
+MIT — see [LICENSE](LICENSE).

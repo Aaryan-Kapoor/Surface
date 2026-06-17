@@ -1,0 +1,19 @@
+{
+  "name": "stream",
+  "description": "Append-only live log viewer: ANSI-colored text and markdown chunks with timestamps, autoscroll, and a status band",
+  "params": {
+    "title": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Header title; header is hidden while both title and status are empty"
+    }
+  },
+  "state": {
+    "status": {
+      "type": "string",
+      "default": ""
+    }
+  },
+  "actions": []
+}

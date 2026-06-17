@@ -3,6 +3,7 @@ dist/
 surfaces.db
 surfaces.db-shm
 surfaces.db-wal
+.mcp.json
 .env
 .env.*
 .env*
@@ -10,8 +11,10 @@ surfaces.db-wal
 *.swp
 screenshots/
 .playwright-mcp/
+.artifact-research/
 .gemini/
 hackathon_packet/
 Hackathon packet.zip
 video/
 structures_symmetry_symbols.*
+planning/
