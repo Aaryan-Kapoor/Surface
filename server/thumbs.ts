@@ -16,6 +16,26 @@ let serverPort = 0;
 
 export function setThumbServerPort(port: number) {
   serverPort = port;
+  sweepStaleChromeDirs();
+}
+
+// Headless-Chrome scratch dirs (`.chrome-*` user-data-dirs) can leak when a
+// capture is killed before cleanup finishes — a SIGKILL on timeout, or a hard
+// process/host crash. At boot no capture is in flight, so every leftover
+// `.chrome-*` under the data dir is stale and safe to delete. This makes the
+// leak self-healing across restarts rather than letting dirs accumulate.
+function sweepStaleChromeDirs() {
+  let entries: string[];
+  try { entries = fs.readdirSync(getDataDir()); } catch { return; }
+  let removed = 0;
+  for (const name of entries) {
+    if (!name.startsWith(".chrome-")) continue;
+    try {
+      fs.rmSync(path.join(getDataDir(), name), { recursive: true, force: true, maxRetries: 3 });
+      removed++;
+    } catch {}
+  }
+  if (removed) console.log(`[thumbs] swept ${removed} stale chrome scratch dir(s)`);
 }
 
 function thumbsDir(): string {
@@ -149,8 +169,22 @@ async function capture(job: Job): Promise<void> {
   let child: ChildProcess | null = null;
   let settled = false;
   const cleanup = () => {
-    try { if (child && !child.killed) child.kill("SIGKILL"); } catch {}
-    fs.rm(tmpDir, { recursive: true, force: true }, () => {});
+    // Remove the scratch dir only AFTER Chrome has exited — a just-SIGKILLed
+    // process still holds open handles under user-data-dir, and rm-ing into that
+    // race is what leaks dirs. Retry as a backstop, plus a timed fallback in
+    // case the exit event never arrives.
+    const removeDir = () => fs.rm(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }, () => {});
+    try {
+      if (child && !child.killed) {
+        child.once("exit", removeDir);
+        setTimeout(removeDir, 3000).unref();
+        child.kill("SIGKILL");
+      } else {
+        removeDir();
+      }
+    } catch {
+      removeDir();
+    }
   };
 
   return new Promise<void>((resolve, reject) => {
