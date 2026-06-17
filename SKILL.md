@@ -11,6 +11,14 @@ The command set is curated: the hottest paths get top-level verbs (`ask`, `video
 
 `surface <command> --help` is authoritative for flags. The notes below tell you *when* to use each command.
 
+## Make it Surface-native
+
+Surface isn't a chat transcript or a file viewer — it's a live display the user *acts on*. Default to surfaces that are **two-way and current**: the user can answer, click, or watch a value change, and you react. That loop — `surface ask`, `Surface.action()`, live `surface set` + state bindings, the delivery ladder below — is the native idiom, not an advanced feature. A wall of text you could have printed to the terminal is the thing to avoid.
+
+Reach for **dynamic, interactive HTML** — charts, maps, timelines, small tools, anything in the shape of `examples/demos/` — whenever a custom surface lets the user understand or act *faster* than prose would. The medium is the full web platform; use it.
+
+**But don't force it.** Dynamism earns its place when it adds a decision, a live value, or a spatial/visual relationship text can't carry. It's gratuitous when it dresses up a plain answer: a yes/no is `surface ask`, not a bespoke dashboard; a single status is one bound number, not an animation. Native means *fit to the task* in both directions — never less interactive than the task wants, never more.
+
 ## Session start ritual
 
 1. `surface actions` — drain your inbox: clicks that arrived while you were gone. Handle each one, then `surface ack <action-id>` (actions delivered through `surface wait` are acked automatically). Don't ignore them.
@@ -20,15 +28,17 @@ The command set is curated: the hottest paths get top-level verbs (`ask`, `video
 
 ## Creating content — pick by shape, not by habit
 
+Most content has a purpose-built verb — reach for it. But when the user is served by a custom shape (interactive, visual, or two-way), **building ad-hoc HTML is a first-class default, not a last resort.**
+
 | The content is… | Use |
 |---|---|
 | A question you need answered | `surface ask` (see below) — not a hand-written form |
+| **An interactive tool, chart, map, or custom UI** | **`surface create <title> --mime text/html --content -` — full HTML; wire it two-way with `Surface.action()` + state bindings** |
 | A long-running log / narration | `surface create <t> --id <slug> --template stream`, then `surface append <id> [text\|-] [--md]` |
 | A YouTube/web video | `surface video <url> [--start <s>] [--autoplay] [--loop]` |
 | A markdown file in the repo | `surface doc <path> [--toc] [--width narrow\|default\|wide]` |
 | A file in your project you'll keep editing | `surface link <abs-path> [--entry <rel>]` — served live from disk |
 | An instance of any template, built-in or custom | `surface create <t> --template <name> --param k=v …` — check `surface template list` first |
-| Ad-hoc HTML/interactive UI | `surface create <title> --mime text/html --content -` |
 | A one-shot file snapshot (PDF, image) | `surface present <abs-path>` |
 
 `link` and `doc` navigate every display to the new surface by default — pass `--no-open` to create quietly.
@@ -54,7 +64,9 @@ surface patch build '{"stage":"deploy","eta_s":90}'   # deep-merge (or pipe JSON
 surface state build                      # read it back
 ```
 
-In your HTML, bind with `data-surface-bind="tests.passed"` / `data-surface-show="deploy.ready"` — the injected `surface.js` runtime re-renders bound elements live on every display. Emit actions from markup with `Surface.action("name", {...})`.
+In your HTML, bind with `data-surface-bind="tests.passed"` / `data-surface-show="deploy.ready"` — the injected `surface.js` runtime re-renders bound elements live on every display. Emit actions from markup with `Surface.action("name", {...})`. Together these are the native two-way loop: **state flows out** to every screen, **actions flow back** to you — a surface that only renders is half-built.
+
+**Emit at boundaries, not per twitch.** Each `Surface.action()` wakes you. For a multi-step interaction (pick options, toggle, then submit), keep the intermediate clicks *local* and fire once at the commit: `Surface.stage(key, value)` accumulates client-side with no network, and `Surface.commit("name"[, extra])` emits a single action carrying the full staged payload — including options left at their defaults. So you wake once, on the user's actual intent, with the whole picture — never once per click, never on a blind timer. Reserve bare `Surface.action()` for genuinely standalone clicks.
 
 ## Asking the user: `surface ask`
 

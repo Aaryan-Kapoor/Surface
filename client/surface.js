@@ -144,6 +144,34 @@
     }).then(function (r) { return r.json(); });
   }
 
+  // Stage / commit — batch at the surface, not at the agent. Intermediate
+  // clicks (picking options, toggling) stay LOCAL via stage(); a single
+  // commit() emits ONE action carrying the full picture, so the agent wakes
+  // once on the user's actual intent — not once per twitch, and not on a
+  // blind timer. Reserve bare action() for genuinely standalone clicks.
+  var staged = {};
+
+  function stage(key, value) {
+    if (value === undefined) delete staged[key];
+    else staged[key] = value;
+    return stagedCopy();
+  }
+
+  function stagedCopy() {
+    var c = {};
+    for (var k in staged) c[k] = staged[k];
+    return c;
+  }
+
+  function commit(name, extra) {
+    var payload = stagedCopy();
+    if (extra && typeof extra === "object") {
+      for (var e in extra) payload[e] = extra[e];
+    }
+    staged = {};
+    return action(name, payload);
+  }
+
   window.Surface = {
     id: artifactId,
     get state() { return state; },
@@ -162,6 +190,10 @@
       };
     },
     action: action,
+    stage: stage,
+    commit: commit,
+    staged: stagedCopy,
+    clearStaged: function () { staged = {}; },
   };
 
   function boot() {
