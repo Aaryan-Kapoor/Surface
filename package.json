@@ -12,6 +12,7 @@
     "test:artifacts": "tsx test/artifacts.ts",
     "test:auth": "tsx test/auth.ts",
     "test:startup-access": "tsx test/startupAccess.ts",
+    "test:thumbs": "tsx test/thumbs.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {
