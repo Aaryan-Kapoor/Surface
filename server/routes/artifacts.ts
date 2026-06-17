@@ -407,7 +407,9 @@ artifactsRouter.put("/artifacts/:id", (req: any, res) => {
   }
 });
 
-artifactsRouter.delete("/artifacts/:id", (req, res) => {
+artifactsRouter.delete("/artifacts/:id", (req: any, res) => {
+  const existing = getArtifact(getDb(), req.params.id);
+  if (!canMutateArtifact(req, res, existing)) return; // devices can't delete system-authored artifacts
   const deleted = deleteArtifact(getDb(), req.params.id);
   if (!deleted) {
     res.status(404).json({ error: "Artifact not found" });

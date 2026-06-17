@@ -286,6 +286,13 @@ async function main() {
     });
     check("device cannot rollback a system-authored artifact", devRollback.status === 403, devRollback.status);
 
+    const devDeleteSys = await req("DELETE", `/artifacts/${sysArtId}`, { cookie: sessionCookie! });
+    check("device cannot delete a system-authored artifact", devDeleteSys.status === 403, devDeleteSys.status);
+
+    // ...but a device can delete an artifact it authored.
+    const devDeleteOwn = await req("DELETE", `/artifacts/${devSlot.body?.artifact?.id}`, { cookie: sessionCookie! });
+    check("device can delete its own artifact", devDeleteOwn.status === 200, devDeleteOwn.status);
+
     // Third-party proxies are system-only (spend credentials / outbound network).
     const devChat = await req("POST", "/api/chat", { cookie: sessionCookie!, body: { messages: [] } });
     check("device cannot use the LLM proxy", devChat.status === 403, devChat.status);

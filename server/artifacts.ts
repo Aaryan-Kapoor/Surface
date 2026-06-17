@@ -568,13 +568,15 @@ export function linkArtifact(
   const artifactId = uuidv4();
   const versionId = uuidv4();
   const fileId = uuidv4();
-  const metadataJson = JSON.stringify({
+  // Sealed through the same chokepoint as create/update: linking is system-only
+  // today, but stamping author_plane keeps every metadata-writing path consistent.
+  const metadataJson = JSON.stringify(sealArtifactMetadata({
     icon: iconForMime(mime),
     description: `linked from ${absPath}`,
     original_path: absPath,
     linked: true,
     ...(params.metadata || {}),
-  });
+  }, "system"));
 
   const manifest = {
     artifact_id: artifactId,
