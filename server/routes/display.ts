@@ -71,7 +71,9 @@ displayRouter.get("/stream", (req: any, res) => {
 
 // Get display theme config
 displayRouter.get("/display/config", (_req, res) => {
-  res.json(getDisplayConfig());
+  // content_port tells the PWA which origin to embed device-authored surfaces
+  // from (the untrusted content plane). Read-only, not persisted with theme.
+  res.json({ ...getDisplayConfig(), content_port: Number(process.env.SURFACE_CONTENT_PORT || 3100) });
 });
 
 // Update display theme config. The old raw-HTML slot keys are no longer

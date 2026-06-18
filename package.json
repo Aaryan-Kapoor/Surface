@@ -15,6 +15,7 @@
     "test:thumbs": "tsx test/thumbs.ts",
     "test:runtime": "tsx test/runtime.ts",
     "test:bindings": "tsx test/bindings.ts",
+    "test:content-origin": "tsx test/contentOrigin.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {

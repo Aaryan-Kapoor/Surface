@@ -7,6 +7,9 @@ let displayConfig = {};
 // Display slots are artifacts (metadata.display_role) — ids resolved by the
 // server at GET /display/slots.
 let displaySlots = { renderer: null, home: null, overlay: null };
+// Origin that device-authored surfaces are embedded from (the untrusted content
+// plane). Set at boot from /display/config.content_port; empty = same origin.
+let contentOrigin = "";
 
 async function refreshSlots() {
   try {
@@ -34,6 +37,10 @@ function maybeRefreshSlots(cardOrId) {
 
 window.addEventListener("message", (e) => {
   if (!e.data) return;
+  // Only honor messages from our own (app) origin. Device-authored surfaces
+  // render on the content origin and post their actions directly to that origin
+  // (surface.js), so they must never reach the trusted bridge here.
+  if (e.origin !== location.origin) return;
 
   // Renderer/overlay/widget navigation
   if (e.data.type === "surface_navigate") {
@@ -1449,11 +1456,17 @@ async function renderSurface(id) {
 
   const iframe = document.createElement("iframe");
   iframe.className = "surface-frame";
-  // Same-origin by design (surface.js needs fetch/SSE); the sandbox attr still
-  // blocks top-navigation and modal abuse from surface content.
+  // The sandbox attr blocks top-navigation and modal abuse. allow-same-origin
+  // lets surface.js use fetch/SSE — but for DEVICE-authored content we load it
+  // from the untrusted content origin, so "same-origin" there is the content
+  // plane (never system), not this trusted app origin. System content stays on
+  // the app origin. (docs/auth/trust-model.md)
   iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
   iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write");
-  iframe.src = data.view_url || `/artifacts/${id}/view`;
+  const viewPath = data.view_url || `/artifacts/${id}/view`;
+  const meta = parseMetadata(artifact.metadata);
+  const fromDevicePlane = meta && meta.author_plane === "device";
+  iframe.src = (fromDevicePlane && contentOrigin ? contentOrigin : "") + viewPath;
   view.appendChild(iframe);
 
   app.innerHTML = "";
@@ -1753,6 +1766,9 @@ function startApp() {
   ])
     .then(([config, slots]) => {
       displaySlots = slots;
+      if (config && config.content_port) {
+        contentOrigin = location.protocol + "//" + location.hostname + ":" + config.content_port;
+      }
       applyTheme(config);
       return render();
     })

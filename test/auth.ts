@@ -118,6 +118,9 @@ function spawnServer(port: number, dataDir: string, env: Record<string, string>)
       SURFACE_BIND: "127.0.0.1",
       SURFACE_PAIR_ON_START: "0",
       PORT: String(port),
+      // Unique content port per spawn so the second listener never collides
+      // with another test server (or the live service) on the default 3100.
+      SURFACE_CONTENT_PORT: String(port + 1000),
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],

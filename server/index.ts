@@ -17,6 +17,11 @@ import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thu
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
 const BIND = process.env.SURFACE_BIND || "127.0.0.1";
+// Second listener serving the same app as the *untrusted content plane*.
+// Device-authored surfaces render from this origin so their JavaScript can
+// never inherit system trust just by being displayed on the host. See
+// docs/auth/trust-model.md and planning/content-origin-scope.md.
+const CONTENT_PORT = Number(process.env.SURFACE_CONTENT_PORT || 3100);
 
 if (process.env.SURFACE_TOKEN) {
   console.warn(
@@ -83,6 +88,16 @@ function isPublicRequest(req: express.Request): boolean {
 // role for downstream system-only checks. Loopback IS the agent plane: same
 // uid, same machine, full power (docs/auth/trust-model.md).
 app.use((req, res, next) => {
+  // The content plane (CONTENT_PORT) is never system, full stop — even over
+  // loopback. Device-authored surface JS runs here, so granting it system would
+  // be the exact escalation this split exists to prevent. Anonymous resolves to
+  // `device` so the surface runtime (state/stream/actions) still works; every
+  // system-only endpoint stays 403.
+  if (req.socket.localPort === CONTENT_PORT) {
+    (req as any).auth = { role: "device", via: "content-port" };
+    return next();
+  }
+
   const remote = req.socket.remoteAddress || "";
   if (TRUST_LOOPBACK && LOOPBACK_ADDRS.has(remote)) {
     (req as any).auth = { role: "system", via: "loopback" };
@@ -160,4 +175,16 @@ const httpServer = app.listen(PORT, BIND, () => {
   } catch (err) {
     console.error("[thumbs] backfill scan failed:", err);
   }
+});
+
+// Content plane: same app, separate origin, never granted system (see the auth
+// middleware above). Device-authored surfaces are embedded from here.
+const contentServer = app.listen(CONTENT_PORT, BIND, () => {
+  console.log(`Surface content origin on http://${BIND}:${CONTENT_PORT} (untrusted device plane)`);
+});
+contentServer.on("error", (err: any) => {
+  console.error(
+    `[content-origin] could not bind ${BIND}:${CONTENT_PORT} (${err?.code || err?.message}). ` +
+    `Device-authored surfaces will fail to load until this port is free or SURFACE_CONTENT_PORT is changed.`,
+  );
 });

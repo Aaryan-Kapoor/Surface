@@ -131,17 +131,31 @@
     return out;
   }
 
-  function action(name, data) {
-    if (window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: "surface_action", action: name, data: data || {} }, "*");
-      return Promise.resolve({ delivered: "bridge" });
-    }
-    // Standalone tab (no PWA bridge): post straight to the server.
+  function postDirect(name, data) {
+    // Post straight to our own origin's actions endpoint. For a device-authored
+    // surface this origin is the content plane, so the action lands as `device`
+    // without ever touching the trusted parent.
     return fetch("/artifacts/" + encodeURIComponent(artifactId) + "/actions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: name, data: data || {} }),
     }).then(function (r) { return r.json(); });
+  }
+
+  function action(name, data) {
+    if (window.parent && window.parent !== window) {
+      // Cross-origin (content-plane) iframe: the parent can't be trusted to
+      // relay, and same-origin bridge access would throw — post directly.
+      var sameOriginParent = true;
+      try { void window.parent.location.origin; } catch (e) { sameOriginParent = false; }
+      if (!sameOriginParent) return postDirect(name, data);
+      // Same-origin (system) iframe: use the PWA bridge so it can update the
+      // "agent listening" UI and route through its own connection.
+      window.parent.postMessage({ type: "surface_action", action: name, data: data || {} }, "*");
+      return Promise.resolve({ delivered: "bridge" });
+    }
+    // Standalone tab (no PWA bridge): post straight to the server.
+    return postDirect(name, data);
   }
 
   // Stage / commit — batch at the surface, not at the agent. Intermediate
