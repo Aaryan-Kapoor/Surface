@@ -14,6 +14,7 @@
     "test:startup-access": "tsx test/startupAccess.ts",
     "test:thumbs": "tsx test/thumbs.ts",
     "test:runtime": "tsx test/runtime.ts",
+    "test:app-routing": "tsx test/appRouting.ts",
     "test:bindings": "tsx test/bindings.ts",
     "test:content-origin": "tsx test/contentOrigin.ts",
     "test:e2e": "tsx test/e2e.ts"

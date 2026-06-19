@@ -55,7 +55,9 @@ Surface serves the **same app from a second listener on `SURFACE_CONTENT_PORT` (
 - The browser's same-origin policy blocks it from reaching the `:3000` API at all.
 - The surface runtime still works there: `GET state`, `GET stream`, `POST actions` are device-plane endpoints. `surface.js` posts actions directly to its own (content) origin rather than relaying through the trusted parent (`client/surface.js`); the PWA's postMessage bridge ignores cross-origin messages (`client/app.js`).
 
-Verified end-to-end in `test/contentOrigin.ts`. Out of scope for now (defense-in-depth): rendering the thumbnailer and display slots via the content origin, and per-remote-host content origins for paired devices (a paired device is already `device`, so it has no system to escalate to).
+The content listener is **mandatory**: if it can't bind (`SURFACE_CONTENT_PORT`, default 3100, already in use), the server refuses to start rather than run with device surfaces unisolated. Behind a reverse proxy or HTTPS terminator where `host:3100` isn't directly reachable, set `SURFACE_CONTENT_ORIGIN` to the externally reachable content origin; the PWA embeds device surfaces from it and **fails closed to a placeholder** when no content origin is available (`client/app.js` `surfaceFrameSrc`), never falling back to the trusted app origin.
+
+Verified end-to-end in `test/contentOrigin.ts` (the port pivot, the boot guards) and `test/appRouting.ts` (the client embedding decision). Out of scope for now (defense-in-depth): rendering the thumbnailer and display slots via the content origin, and per-remote-host content origins for paired devices (a paired device is already `device`, so it has no system to escalate to).
 
 ## `SURFACE_TOKEN` removal
 

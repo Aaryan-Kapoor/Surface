@@ -8,8 +8,18 @@ let displayConfig = {};
 // server at GET /display/slots.
 let displaySlots = { renderer: null, home: null, overlay: null };
 // Origin that device-authored surfaces are embedded from (the untrusted content
-// plane). Set at boot from /display/config.content_port; empty = same origin.
+// plane). Set at boot from /display/config; empty = same origin.
 let contentOrigin = "";
+
+// Where a surface's view iframe loads from. Device-authored content must never
+// run on the trusted app origin (its JS would inherit system), so it is embedded
+// from the content origin; system content loads same-origin. Returns null when a
+// device surface has no content origin available, so the caller fails closed with
+// a placeholder instead of silently falling back to the trusted origin.
+function surfaceFrameSrc(fromDevicePlane, contentOrigin, viewPath) {
+  if (fromDevicePlane) return contentOrigin ? contentOrigin + viewPath : null;
+  return viewPath;
+}
 
 async function refreshSlots() {
   try {
@@ -1466,16 +1476,16 @@ async function renderSurface(id) {
   const viewPath = data.view_url || `/artifacts/${id}/view`;
   const meta = parseMetadata(artifact.metadata);
   const fromDevicePlane = meta && meta.author_plane === "device";
-  if (fromDevicePlane && !contentOrigin) {
-    // Fail closed. Device-authored JS must never run on this trusted app origin
-    // (it would inherit system). It belongs on the content plane; if that origin
-    // isn't advertised we refuse to embed rather than silently reopen the hole.
+  const frameSrc = surfaceFrameSrc(fromDevicePlane, contentOrigin, viewPath);
+  if (frameSrc === null) {
+    // Fail closed (see surfaceFrameSrc): a device-authored surface with no
+    // content plane available is NOT rendered on the trusted app origin.
     const warn = document.createElement("div");
     warn.className = "surface-frame surface-frame-unavailable";
     warn.textContent = "This surface needs the isolated content plane, which is unavailable.";
     view.appendChild(warn);
   } else {
-    iframe.src = (fromDevicePlane ? contentOrigin : "") + viewPath;
+    iframe.src = frameSrc;
     view.appendChild(iframe);
   }
 
@@ -1776,7 +1786,9 @@ function startApp() {
   ])
     .then(([config, slots]) => {
       displaySlots = slots;
-      if (config && config.content_port) {
+      if (config && config.content_origin) {
+        contentOrigin = config.content_origin;
+      } else if (config && config.content_port) {
         contentOrigin = location.protocol + "//" + location.hostname + ":" + config.content_port;
       }
       applyTheme(config);

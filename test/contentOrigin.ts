@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -61,6 +62,8 @@ async function main() {
       SURFACE_DATA_DIR: dataDir,
       PORT: String(PORT),
       SURFACE_CONTENT_PORT: String(CONTENT_PORT),
+      // A pinned content origin for the proxy-deploy path; advertised verbatim.
+      SURFACE_CONTENT_ORIGIN: "http://content.test:4555",
       SURFACE_BIND: "127.0.0.1",
       SURFACE_PAIR_ON_START: "0",
       NODE_ENV: "test",
@@ -111,9 +114,45 @@ async function main() {
     assert.ok(view.ok || view.status === 200, `view loads on content port (got ${view.status})`);
   });
 
-  await test("/display/config advertises the content port to the PWA", async () => {
+  await test("/display/config advertises the content port (and pinned origin) to the PWA", async () => {
     const cfg = await call(APP, "GET", "/display/config");
     assert.equal(cfg.json.content_port, CONTENT_PORT, "content_port advertised");
+    assert.equal(
+      cfg.json.content_origin,
+      "http://content.test:4555",
+      "pinned SURFACE_CONTENT_ORIGIN advertised for proxy/HTTPS deploys",
+    );
+  });
+
+  await test("server refuses to boot when the content port is taken (content plane is mandatory)", async () => {
+    // The content plane is the isolation boundary; a server with a dead content
+    // listener must not run (it would break or mis-route device surfaces).
+    const appPort = PORT + 10;
+    const takenContentPort = PORT + 11;
+    const squatter = net.createServer();
+    await new Promise<void>((resolve) => squatter.listen(takenContentPort, "127.0.0.1", () => resolve()));
+    const guardDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-bindfail-"));
+    const proc = spawn(path.join(repoRoot, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        SURFACE_DATA_DIR: guardDataDir,
+        PORT: String(appPort),
+        SURFACE_CONTENT_PORT: String(takenContentPort),
+        SURFACE_BIND: "127.0.0.1",
+        SURFACE_PAIR_ON_START: "0",
+        NODE_ENV: "test",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    proc.stderr!.setEncoding("utf8");
+    proc.stderr!.on("data", (c: string) => { err += c; });
+    const code: number = await new Promise((resolve) => proc.on("exit", (c) => resolve(c ?? -1)));
+    await new Promise<void>((resolve) => squatter.close(() => resolve()));
+    fs.rmSync(guardDataDir, { recursive: true, force: true });
+    assert.notEqual(code, 0, "process must exit non-zero when the content port can't bind");
+    assert.match(err, /could not bind|content plane/i, "logs why it refused to run");
   });
 
   await test("server refuses to boot when CONTENT_PORT === PORT (collision guard)", async () => {
