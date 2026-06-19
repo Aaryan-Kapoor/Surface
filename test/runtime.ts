@@ -14,8 +14,9 @@ const runtimeSrc = fs.readFileSync(path.join(__dirname, "..", "client", "surface
 
 interface FetchCall { url: string; method: string; body: any }
 
-function loadRuntime(cfg: { failActions?: boolean } = {}) {
+function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origin" | "cross-origin" } = {}) {
   const fetchCalls: FetchCall[] = [];
+  const postMessages: any[] = [];
 
   const fetchMock = (url: string, opts?: any) => {
     fetchCalls.push({
@@ -54,14 +55,32 @@ function loadRuntime(cfg: { failActions?: boolean } = {}) {
     setTimeout,
     clearTimeout,
   };
-  // window IS the global, and window.parent === window (standalone-tab path → fetch).
+  // window IS the global. The parent decides how action() routes:
+  //   self         → no parent frame; post straight to the server (standalone tab)
+  //   same-origin  → trusted system iframe; relay through the PWA postMessage bridge
+  //   cross-origin → content-plane iframe; reading parent.location throws, so post direct
   sandbox.window = sandbox;
-  sandbox.window.parent = sandbox.window;
+  const parentMode = cfg.parent || "self";
+  if (parentMode === "self") {
+    sandbox.window.parent = sandbox.window;
+  } else if (parentMode === "same-origin") {
+    sandbox.window.parent = {
+      location: { origin: "http://localhost" },
+      postMessage: (msg: any) => { postMessages.push(msg); },
+    };
+  } else {
+    const crossParent: any = { postMessage: (msg: any) => { postMessages.push(msg); } };
+    // Touching .location on a cross-origin window throws a SecurityError; mirror that.
+    Object.defineProperty(crossParent, "location", {
+      get() { throw new Error("SecurityError: cross-origin"); },
+    });
+    sandbox.window.parent = crossParent;
+  }
 
   vm.createContext(sandbox);
   vm.runInContext(runtimeSrc, sandbox);
 
-  return { Surface: sandbox.window.Surface, fetchCalls };
+  return { Surface: sandbox.window.Surface, fetchCalls, postMessages };
 }
 
 function test(name: string, fn: () => void | Promise<void>) {
@@ -157,6 +176,26 @@ await test("a FAILED commit preserves staged data (intent is not lost)", async (
     { region: "eu-west", plan: "pro" },
     "staged retained after a server rejection — the user can retry",
   );
+});
+
+await test("cross-origin (content-plane) parent → action posts DIRECT, never via the bridge", async () => {
+  const { Surface, fetchCalls, postMessages } = loadRuntime({ parent: "cross-origin" });
+  await Surface.action("tap", { x: 1 });
+  const posts = actionsPosts(fetchCalls);
+  assert.equal(posts.length, 1, "device surface posts its action to its own (content) origin");
+  assert.equal(posts[0].body.action, "tap");
+  assert.deepEqual(plain(posts[0].body.data), { x: 1 });
+  assert.equal(postMessages.length, 0, "it must NOT relay through the trusted parent");
+});
+
+await test("same-origin (system) parent → action uses the bridge, no direct POST", async () => {
+  const { Surface, fetchCalls, postMessages } = loadRuntime({ parent: "same-origin" });
+  await Surface.action("tap", { x: 1 });
+  assert.equal(actionsPosts(fetchCalls).length, 0, "system surface relays, does not POST itself");
+  assert.equal(postMessages.length, 1, "exactly one bridge message");
+  assert.equal(postMessages[0].type, "surface_action");
+  assert.equal(postMessages[0].action, "tap");
+  assert.deepEqual(plain(postMessages[0].data), { x: 1 });
 });
 
 console.log("\nRuntime tests passed\n");

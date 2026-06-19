@@ -23,6 +23,18 @@ const BIND = process.env.SURFACE_BIND || "127.0.0.1";
 // docs/auth/trust-model.md and planning/content-origin-scope.md.
 const CONTENT_PORT = Number(process.env.SURFACE_CONTENT_PORT || 3100);
 
+// The content gate keys off the listening port (req.socket.localPort), so the
+// content port MUST be distinct from the app port. If they collide, every
+// request — including the agent plane's own — resolves to `device` and system
+// access silently breaks. Fail fast and loud rather than boot into that state.
+if (CONTENT_PORT === PORT) {
+  console.error(
+    `[content-origin] SURFACE_CONTENT_PORT (${CONTENT_PORT}) must differ from PORT (${PORT}): ` +
+    `they share one app and a collision would de-privilege the whole server to 'device'. Refusing to start.`,
+  );
+  process.exit(1);
+}
+
 if (process.env.SURFACE_TOKEN) {
   console.warn(
     "[auth] SURFACE_TOKEN is no longer supported and is ignored. " +

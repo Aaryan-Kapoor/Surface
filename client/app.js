@@ -1466,8 +1466,18 @@ async function renderSurface(id) {
   const viewPath = data.view_url || `/artifacts/${id}/view`;
   const meta = parseMetadata(artifact.metadata);
   const fromDevicePlane = meta && meta.author_plane === "device";
-  iframe.src = (fromDevicePlane && contentOrigin ? contentOrigin : "") + viewPath;
-  view.appendChild(iframe);
+  if (fromDevicePlane && !contentOrigin) {
+    // Fail closed. Device-authored JS must never run on this trusted app origin
+    // (it would inherit system). It belongs on the content plane; if that origin
+    // isn't advertised we refuse to embed rather than silently reopen the hole.
+    const warn = document.createElement("div");
+    warn.className = "surface-frame surface-frame-unavailable";
+    warn.textContent = "This surface needs the isolated content plane, which is unavailable.";
+    view.appendChild(warn);
+  } else {
+    iframe.src = (fromDevicePlane ? contentOrigin : "") + viewPath;
+    view.appendChild(iframe);
+  }
 
   app.innerHTML = "";
   app.appendChild(view);

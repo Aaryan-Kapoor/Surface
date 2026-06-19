@@ -116,6 +116,34 @@ async function main() {
     assert.equal(cfg.json.content_port, CONTENT_PORT, "content_port advertised");
   });
 
+  await test("server refuses to boot when CONTENT_PORT === PORT (collision guard)", async () => {
+    // A collision would make the content gate match the app port too, forcing
+    // every request — including the agent plane's own — to `device`. The server
+    // must fail fast instead of booting into a fully de-privileged state.
+    const samePort = PORT + 5; // exits before any listen, so the value need only collide
+    const guardDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-guard-"));
+    const proc = spawn(path.join(repoRoot, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        SURFACE_DATA_DIR: guardDataDir,
+        PORT: String(samePort),
+        SURFACE_CONTENT_PORT: String(samePort),
+        SURFACE_BIND: "127.0.0.1",
+        SURFACE_PAIR_ON_START: "0",
+        NODE_ENV: "test",
+      },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    proc.stderr!.setEncoding("utf8");
+    proc.stderr!.on("data", (c: string) => { err += c; });
+    const code: number = await new Promise((resolve) => proc.on("exit", (c) => resolve(c ?? -1)));
+    fs.rmSync(guardDataDir, { recursive: true, force: true });
+    assert.notEqual(code, 0, "process must exit non-zero on port collision");
+    assert.match(err, /must differ from PORT/, "logs the collision reason");
+  });
+
   console.log("\nContent-origin tests passed\n");
 }
 
