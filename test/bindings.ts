@@ -101,6 +101,9 @@ async function main() {
       ...process.env,
       SURFACE_DATA_DIR: dataDir,
       PORT: String(PORT),
+      // Unique content port so the (now mandatory) second listener never
+      // collides with another test server or the live service on the default 3100.
+      SURFACE_CONTENT_PORT: String(PORT + 1000),
       SURFACE_BIND: "127.0.0.1",
       SURFACE_PAIR_ON_START: "0",
       NODE_ENV: "test",

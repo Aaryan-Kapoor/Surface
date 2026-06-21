@@ -43,7 +43,21 @@ The line is drawn at anything that touches the host filesystem, executes code, m
 
 ### Why device artifact CRUD is scoped to device-authored content
 
-Devices can author their own workspace artifacts (a phone jotting a note onto the dashboard), but cannot *modify* artifacts the agent plane created, and cannot mark any artifact as a display slot. Both rules exist because artifact HTML is executed JavaScript: the host display renders slot artifacts directly, and the thumbnailer renders every artifact in headless Chrome over a loopback connection that the server trusts as `system`. If a device could inject script into a system-authored or slot artifact, that script would run with system privileges. Two mechanisms enforce this: every artifact records its authoring plane in server-authoritative `metadata.author_plane` (`server/artifacts.ts` `sealArtifactMetadata`), and the thumbnailer disables JavaScript when rendering device-authored content (`server/thumbs.ts`). A separate, non-loopback content origin for untrusted surfaces remains the longer-term hardening.
+Devices can author their own workspace artifacts (a phone jotting a note onto the dashboard), but cannot *modify* artifacts the agent plane created, and cannot mark any artifact as a display slot. Both rules exist because artifact HTML is executed JavaScript: the host display renders slot artifacts directly, and the thumbnailer renders every artifact in headless Chrome over a loopback connection that the server trusts as `system`. If a device could inject script into a system-authored or slot artifact, that script would run with system privileges. Two mechanisms enforce this: every artifact records its authoring plane in server-authoritative `metadata.author_plane` (`server/artifacts.ts` `sealArtifactMetadata`), and the thumbnailer disables JavaScript when rendering device-authored content (`server/thumbs.ts`). The remaining vector — the host's own browser rendering device content same-origin — is closed by the content plane below.
+
+## The content plane — untrusted origin for device-authored surfaces
+
+The host PWA runs on the app origin (`127.0.0.1:3000`), which is `system`. Surfaces render in iframes, so without isolation a device-authored surface's JavaScript would execute on the trusted origin and could `fetch()` system-only endpoints with system authority just by being displayed — a device→system escalation.
+
+Surface serves the **same app from a second listener on `SURFACE_CONTENT_PORT` (default 3100)** — the content plane. The auth middleware (`server/index.ts`) grants **`device`, never `system`, to every request arriving on the content port**, even over loopback. The PWA embeds **device-authored** surfaces from this origin (chosen by `metadata.author_plane`), while system-authored surfaces stay on the app origin (they are as trusted as the agent that wrote them). Consequences:
+
+- Device JS runs on `:3100`; its same-origin `fetch()`es hit the content plane (`device`) and get 403 on anything system-only.
+- The browser's same-origin policy blocks it from reaching the `:3000` API at all.
+- The surface runtime still works there: `GET state`, `GET stream`, `POST actions` are device-plane endpoints. `surface.js` posts actions directly to its own (content) origin rather than relaying through the trusted parent (`client/surface.js`); the PWA's postMessage bridge ignores cross-origin messages (`client/app.js`).
+
+The content listener is **mandatory**: if it can't bind (`SURFACE_CONTENT_PORT`, default 3100, already in use), the server refuses to start rather than run with device surfaces unisolated. Behind a reverse proxy or HTTPS terminator where `host:3100` isn't directly reachable, set `SURFACE_CONTENT_ORIGIN` to the externally reachable content origin; the PWA embeds device surfaces from it and **fails closed to a placeholder** when no content origin is available (`client/app.js` `surfaceFrameSrc`), never falling back to the trusted app origin.
+
+Verified end-to-end in `test/contentOrigin.ts` (the port pivot, the boot guards) and `test/appRouting.ts` (the client embedding decision). Out of scope for now (defense-in-depth): rendering the thumbnailer and display slots via the content origin, and per-remote-host content origins for paired devices (a paired device is already `device`, so it has no system to escalate to).
 
 ## `SURFACE_TOKEN` removal
 
