@@ -57,7 +57,7 @@ Note the per-surface `surface_updated` payload differs from the global one (it c
 
 ### PWA (`client/app.js`)
 - Grid view opens the **global** stream (`connectGlobalSSE`). `surface_created`/`updated`/`deleted` mutate the card grid in place; a `surface_updated` carrying `metadata.hidden===true` removes the card without deleting the row; `surface_action`/`actions_acked` and `waiter_status` keep the pending badge and "● listening" pill live; `thumb_ready` cache-busts the card image with `?v=Date.now()`. `display_navigate`/`display_notify`/`display_theme` drive routing, toasts, and theme.
-- Surface view opens the **per-surface** stream. `surface_updated` with `reload`/`version_id` reloads the iframe via a cache-busting `?v=`; `agent_reply` shows a toast; `surface_exec` `eval`s the JS inside the iframe. The injected `surface.js` runtime consumes `state_patch` and `stream_append` to update bound elements without a reload.
+- Surface view opens the **per-surface** stream. `surface_updated` with `reload`/`version_id` reloads the iframe via a cache-busting `?v=`; `agent_reply` shows a toast; `surface_exec` attempts a best-effort eval inside accessible iframes. The injected `surface.js` runtime consumes `state_patch` and `stream_append` to update bound elements without a reload.
 
 ### CLI
 - `surface stream [--id]` connects to the chosen stream and prints one `{event, data}` JSON line per event, ignoring `:` heartbeat comments, reconnecting with exponential backoff on drops.

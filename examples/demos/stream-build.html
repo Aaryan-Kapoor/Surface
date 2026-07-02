@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Build Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #07110f; color: #d9ffe8; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; display: grid; place-items: center; }
+  main { width: min(900px, calc(100vw - 28px)); }
+  h1 { margin: 0 0 18px; font-size: clamp(30px, 7vw, 70px); line-height: .95; letter-spacing: 0; }
+  pre { min-height: 330px; margin: 0; padding: 20px; border-radius: 8px; background: #020504; border: 1px solid rgba(217,255,232,.18); overflow: auto; line-height: 1.55; }
+  .ok { color: #77e891; }
+  .warn { color: #ffd166; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Streaming output stays live.</h1>
+  <pre id="log"></pre>
+</main>
+<script>
+  const lines = [
+    ["$ npm test", ""],
+    ["build:cli bundled dist/surface.mjs", "ok"],
+    ["artifacts suite isolated on a random port", "ok"],
+    ["content-origin rejects hostile hosts", "ok"],
+    ["waiting for user action listener", "warn"],
+    ["surface append would stream these lines into every open display", "ok"]
+  ];
+  const log = document.getElementById("log");
+  let i = 0;
+  function tick() {
+    if (i >= lines.length) return;
+    const [text, cls] = lines[i++];
+    const span = document.createElement("span");
+    span.className = cls;
+    span.textContent = text + "\n";
+    log.appendChild(span);
+    log.scrollTop = log.scrollHeight;
+    setTimeout(tick, 520);
+  }
+  tick();
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Action Panel Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #0b1020; color: #edf2ff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; display: grid; place-items: center; }
+  main { width: min(760px, calc(100vw - 32px)); }
+  h1 { font-size: clamp(30px, 8vw, 72px); line-height: .92; letter-spacing: 0; margin: 0 0 22px; }
+  .actions { display: grid; gap: 12px; }
+  button { text-align: left; border: 1px solid rgba(237,242,255,.18); border-radius: 8px; padding: 18px; background: rgba(255,255,255,.06); color: inherit; font: inherit; cursor: pointer; }
+  button:hover { background: rgba(128,178,255,.15); border-color: #80b2ff; }
+  strong { display: block; font-size: 18px; margin-bottom: 6px; }
+  span { color: rgba(237,242,255,.68); }
+  output { display: block; margin-top: 18px; color: #80b2ff; min-height: 22px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Every click can wake the agent.</h1>
+  <div class="actions">
+    <button data-action="approve"><strong>Approve</strong><span>Emit a single approve action.</span></button>
+    <button data-action="rerun"><strong>Rerun checks</strong><span>Ask the agent to start another verification pass.</span></button>
+    <button data-action="explain"><strong>Explain risk</strong><span>Request a report surface with the details.</span></button>
+  </div>
+  <output>Idle.</output>
+</main>
+<script>
+  const out = document.querySelector("output");
+  document.querySelectorAll("[data-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const action = button.dataset.action;
+      const data = { label: button.querySelector("strong").textContent, ts: Date.now() };
+      if (window.Surface && Surface.action) await Surface.action(action, data);
+      out.textContent = "Emitted " + action + " with " + JSON.stringify(data);
+    });
+  });
+</script>
+</body>
+</html>

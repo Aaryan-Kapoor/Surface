@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>State Gauge Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #15110d; color: #f7f4ec; font-family: Inter, ui-sans-serif, system-ui, sans-serif; display: grid; place-items: center; }
+  main { width: min(880px, calc(100vw - 32px)); display: grid; gap: 22px; }
+  h1 { margin: 0; font-size: clamp(32px, 8vw, 76px); line-height: .9; letter-spacing: 0; }
+  .panel { border: 1px solid rgba(247,244,236,.18); border-radius: 8px; padding: 24px; background: rgba(255,255,255,.05); }
+  .bar { height: 28px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .fill { width: 42%; height: 100%; background: linear-gradient(90deg, #ffca5c, #5dd39e); transition: width .25s ease; }
+  .meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; color: rgba(247,244,236,.72); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  input { width: 100%; accent-color: #5dd39e; }
+</style>
+</head>
+<body>
+<main>
+  <h1>State moves the surface, not the HTML.</h1>
+  <section class="panel">
+    <input id="slider" type="range" min="0" max="100" value="42">
+    <div class="bar"><div class="fill"></div></div>
+    <div class="meta">
+      <span>progress</span>
+      <strong><span data-surface-bind="build.progress">42</span>%</strong>
+    </div>
+  </section>
+</main>
+<script>
+  const slider = document.getElementById("slider");
+  const fill = document.querySelector(".fill");
+  const label = document.querySelector("[data-surface-bind]");
+  function paint(value) {
+    fill.style.width = value + "%";
+    label.textContent = value;
+  }
+  slider.addEventListener("input", () => paint(slider.value));
+  slider.addEventListener("change", async () => {
+    if (window.Surface && Surface.action) await Surface.action("progress_selected", { progress: Number(slider.value) / 100 });
+  });
+  paint(slider.value);
+</script>
+</body>
+</html>

@@ -97,13 +97,18 @@ surface touch <id-from-step-4>
 cat > demo.html <<'EOF'
 <!doctype html>
 <html><body style="background:#101820;color:#39ff14;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:24px">
-  <h1>Click me</h1>
-  <button onclick="parent.postMessage({type:'surface_action',action:'pinged',data:{ts:Date.now()}},'*')"
-          style="padding:12px 24px;background:#39ff14;color:#101820;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:bold">Ping the agent</button>
+  <h1 data-surface-bind="message">Click me</h1>
+  <button id="ping" style="padding:12px 24px;background:#39ff14;color:#101820;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:bold">Ping the agent</button>
+  <script>
+    document.getElementById("ping").addEventListener("click", () => {
+      Surface.action("pinged", { ts: Date.now() });
+    });
+  </script>
 </body></html>
 EOF
 
 surface touch <id-from-step-4>
+surface set <id-from-step-4> message "Click me"
 
 # In a background shell — exits as soon as the user clicks.
 surface wait --id <id-from-step-4> --action pinged --timeout 600 > /tmp/ping.json &
@@ -126,9 +131,10 @@ User clicks the button.
 
 ```bash
 surface reply <id-from-step-4> "Got your ping at $(date +%H:%M:%S)"
+surface set <id-from-step-4> message "Ping received"
 ```
 
-**Expect:** a toast appears at the bottom of the surface.
+**Expect:** a toast appears at the bottom of the surface, and the heading changes live from the state update without rewriting the HTML file.
 
 Other delivery modes:
 

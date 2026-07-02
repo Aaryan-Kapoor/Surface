@@ -24,13 +24,43 @@ let clientCounter = 0;
 // Keepalive heartbeat: a comment line every 20s so idle connections survive
 // proxies and NAT timeouts, and dead ones get detected by the TCP stack.
 const HEARTBEAT_MS = 20_000;
+const MAX_WRITABLE_BUFFER = 1024 * 1024;
+
+function removeGlobalClient(id: string): void {
+  const idx = globalClients.findIndex((c) => c.id === id);
+  if (idx !== -1) globalClients.splice(idx, 1);
+}
+
+function removeSurfaceClient(surfaceId: string, id: string): void {
+  const clients = surfaceClients.get(surfaceId);
+  if (!clients) return;
+  const idx = clients.findIndex((c) => c.id === id);
+  if (idx !== -1) clients.splice(idx, 1);
+  if (clients.length === 0) surfaceClients.delete(surfaceId);
+}
+
+function safeWrite(client: SSEClient, payload: string, onFailure?: () => void): boolean {
+  try {
+    if (client.res.destroyed || client.res.writableEnded) throw new Error("SSE response closed");
+    const ok = client.res.write(payload);
+    if (!ok && client.res.writableLength > MAX_WRITABLE_BUFFER) {
+      throw new Error("SSE client exceeded write buffer");
+    }
+    return true;
+  } catch {
+    onFailure?.();
+    try { client.res.destroy(); } catch {}
+    return false;
+  }
+}
+
 setInterval(() => {
   for (const client of globalClients) {
-    try { client.res.write(":hb\n\n"); } catch {}
+    safeWrite(client, ":hb\n\n", () => removeGlobalClient(client.id));
   }
-  for (const clients of surfaceClients.values()) {
+  for (const [surfaceId, clients] of surfaceClients) {
     for (const client of clients) {
-      try { client.res.write(":hb\n\n"); } catch {}
+      safeWrite(client, ":hb\n\n", () => removeSurfaceClient(surfaceId, client.id));
     }
   }
 }, HEARTBEAT_MS).unref();
@@ -46,11 +76,11 @@ export function addGlobalClient(
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
-  res.write(":\n\n"); // heartbeat
+  res.on("error", () => removeGlobalClient(id));
   globalClients.push({ id, res, target, waiterFor: opts.waiterFor ?? null });
+  safeWrite(globalClients[globalClients.length - 1], ":\n\n", () => removeGlobalClient(id)); // heartbeat
   res.on("close", () => {
-    const idx = globalClients.findIndex((c) => c.id === id);
-    if (idx !== -1) globalClients.splice(idx, 1);
+    removeGlobalClient(id);
     opts.onClose?.();
   });
   return id;
@@ -61,10 +91,6 @@ export function hasWaiter(surfaceId: string): boolean {
   return globalClients.some((c) => c.waiterFor === surfaceId || c.waiterFor === "*");
 }
 
-export function waitedSurfaces(): Set<string> {
-  return new Set(globalClients.filter((c) => c.waiterFor).map((c) => c.waiterFor as string));
-}
-
 export function addSurfaceClient(surfaceId: string, res: Response, target: string = LOCAL_TARGET): string {
   const id = String(++clientCounter);
   res.writeHead(200, {
@@ -72,24 +98,20 @@ export function addSurfaceClient(surfaceId: string, res: Response, target: strin
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
-  res.write(":\n\n");
+  res.on("error", () => removeSurfaceClient(surfaceId, id));
   if (!surfaceClients.has(surfaceId)) {
     surfaceClients.set(surfaceId, []);
   }
   surfaceClients.get(surfaceId)!.push({ id, res, target });
+  safeWrite(surfaceClients.get(surfaceId)![surfaceClients.get(surfaceId)!.length - 1], ":\n\n", () => removeSurfaceClient(surfaceId, id));
   res.on("close", () => {
-    const clients = surfaceClients.get(surfaceId);
-    if (clients) {
-      const idx = clients.findIndex((c) => c.id === id);
-      if (idx !== -1) clients.splice(idx, 1);
-      if (clients.length === 0) surfaceClients.delete(surfaceId);
-    }
+    removeSurfaceClient(surfaceId, id);
   });
   return id;
 }
 
-function sendEvent(client: SSEClient, event: string, data: unknown): void {
-  client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+function sendEvent(client: SSEClient, event: string, data: unknown, onFailure?: () => void): void {
+  safeWrite(client, `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`, onFailure);
 }
 
 // Broadcast to every global client, or — when `onlyTarget` is set — to just
@@ -97,7 +119,7 @@ function sendEvent(client: SSEClient, event: string, data: unknown): void {
 export function broadcastGlobal(event: string, data: unknown, onlyTarget?: string): void {
   for (const client of globalClients) {
     if (onlyTarget && client.target !== onlyTarget) continue;
-    sendEvent(client, event, data);
+    sendEvent(client, event, data, () => removeGlobalClient(client.id));
   }
 }
 
@@ -109,7 +131,7 @@ export function broadcastToSurface(
   const clients = surfaceClients.get(surfaceId);
   if (clients) {
     for (const client of clients) {
-      sendEvent(client, event, data);
+      sendEvent(client, event, data, () => removeSurfaceClient(surfaceId, client.id));
     }
   }
 }
@@ -119,4 +141,18 @@ export function broadcastToSurface(
 // the floor.
 export function connectedTargets(): Set<string> {
   return new Set(globalClients.map((c) => c.target));
+}
+
+export function closeSSEClients(): void {
+  for (const client of globalClients.splice(0)) {
+    try { client.res.end(); } catch {}
+    try { client.res.destroy(); } catch {}
+  }
+  for (const clients of surfaceClients.values()) {
+    for (const client of clients) {
+      try { client.res.end(); } catch {}
+      try { client.res.destroy(); } catch {}
+    }
+  }
+  surfaceClients.clear();
 }

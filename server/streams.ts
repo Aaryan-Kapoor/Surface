@@ -28,15 +28,14 @@ export function appendChunks(
       .get(artifactId) as { seq: number | null };
     let seq = row.seq || 0;
     const insert = db.prepare(
-      `INSERT INTO surface_stream_chunks (artifact_id, seq, kind, content) VALUES (?, ?, ?, ?)`,
+      `INSERT INTO surface_stream_chunks (artifact_id, seq, kind, content)
+       VALUES (?, ?, ?, ?)
+       RETURNING *`,
     );
     for (const chunk of chunks) {
       seq++;
       const kind = chunk.kind === "md" ? "md" : "text";
-      insert.run(artifactId, seq, kind, String(chunk.content ?? ""));
-      inserted.push(
-        db.prepare(`SELECT * FROM surface_stream_chunks WHERE artifact_id = ? AND seq = ?`).get(artifactId, seq) as StreamChunk,
-      );
+      inserted.push(insert.get(artifactId, seq, kind, String(chunk.content ?? "")) as StreamChunk);
     }
     db.prepare(
       `DELETE FROM surface_stream_chunks WHERE artifact_id = ? AND seq <= ?`,

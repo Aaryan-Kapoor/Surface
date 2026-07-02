@@ -10,11 +10,34 @@ function escapeHtml(value: string): string {
   ));
 }
 
+function safeMarkdownUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (value.startsWith("#") || value.startsWith("/") || value.startsWith("./") || value.startsWith("../")) {
+    return escapeHtml(value);
+  }
+  try {
+    const parsed = new URL(value, "http://surface.local");
+    if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+      return escapeHtml(value);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function inline(text: string): string {
   let out = escapeHtml(text);
   // images before links
-  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, '<img alt="$1" src="$2">');
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, alt, url) => {
+    const safe = safeMarkdownUrl(url);
+    return safe ? `<img alt="${alt}" src="${safe}">` : alt;
+  });
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, label, url) => {
+    const safe = safeMarkdownUrl(url);
+    return safe ? `<a href="${safe}" target="_blank" rel="noopener">${label}</a>` : label;
+  });
   out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   out = out.replace(/(^|\W)\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");

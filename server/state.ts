@@ -34,6 +34,7 @@ export function deepMerge(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(patch)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     if (value === null) {
       delete out[key];
     } else if (isPlainObject(value) && isPlainObject(out[key])) {

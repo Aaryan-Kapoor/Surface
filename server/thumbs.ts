@@ -4,7 +4,7 @@ import { spawn, spawnSync, ChildProcess } from "child_process";
 import { getDataDir } from "./paths.js";
 import { broadcastGlobal } from "./sse.js";
 import { getDb } from "./db.js";
-import { artifactAuthorPlane, getArtifact } from "./artifacts.js";
+import { artifactAuthorPlane, assertSafeArtifactId, getArtifact } from "./artifacts.js";
 
 const THUMB_WIDTH = 600;
 const THUMB_HEIGHT = 600;
@@ -48,9 +48,7 @@ export function getThumbPath(id: string): string {
   // Defensive last line: ids are validated at creation (assertSafeArtifactId),
   // but never trust an id flowing into a filesystem path. Reject anything that
   // could escape thumbsDir().
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) {
-    throw new Error(`Invalid artifact id for thumbnail: ${id}`);
-  }
+  assertSafeArtifactId(id);
   return path.join(thumbsDir(), `${id}.png`);
 }
 

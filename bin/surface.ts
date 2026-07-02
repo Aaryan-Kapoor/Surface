@@ -1,4 +1,3 @@
-#!/usr/bin/env -S npx tsx
 import { execFileSync } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -68,77 +67,102 @@ Environment:
                    (mint with: surface auth session issue --role system)
 `;
 
-const CMD_HELP: Record<string, string> = {
-  list: "surface list [--project <root>] [--agent <label>] [--include-hidden]",
-  read: "surface read <id>",
-  create: "surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--template <name> --param k=v ...] [--id <id>] [--agent <label>] [--metadata <json>]",
-  update: "surface update <id> [--title <t>] [--mime <type>] [--file <path>|--content <s>|--content -] [--metadata <json>]",
-  link: "surface link <abs-path> [--entry <relpath>] [--title <t>] [--agent <label>] [--metadata <json>] [--no-open]",
-  touch: "surface touch <id>",
-  present: "surface present <abs-path> [--title <t>] [--agent <label>] [--metadata <json>]",
-  set: "surface set <id> <dotted.key> <value>   (value parsed as JSON, falls back to string; null deletes)",
-  patch: "surface patch <id> <json|->",
-  state: "surface state <id>",
-  ask: "surface ask <question> [--options a,b,c] [--freetext] [--context -|<md>] [--context-file <p>] [--wait] [--timeout <s>] [--on <device>] [--id <id>] [--agent <l>] [--title <t>]",
-  append: "surface append <id> [<text>|-] [--md]   (- pipes stdin line by line)",
-  video: "surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]",
-  doc: "surface doc <path> [--title <t>] [--toc] [--width narrow|default|wide] [--agent <l>] [--no-open]",
-  template: [
+type FlagKind = "string" | "boolean" | "number" | "duration" | "multi";
+type FlagSpecs = Record<string, FlagKind>;
+interface CommandContext {
+  cmd: string;
+  positional: string[];
+  flags: Record<string, string | boolean>;
+  multi: Record<string, string[]>;
+}
+interface CommandSpec {
+  help: string;
+  flags: FlagSpecs;
+  run: (ctx: CommandContext) => Promise<void>;
+}
+
+const STR = "string";
+const BOOL = "boolean";
+const NUM = "number";
+const DUR = "duration";
+const MULTI = "multi";
+const command = (help: string, flags: FlagSpecs = {}): CommandSpec => ({ help, flags, run: runCommand });
+
+const COMMANDS: Record<string, CommandSpec> = {
+  list: command("surface list [--project <root>] [--agent <label>] [--include-hidden]", { project: STR, agent: STR, "include-hidden": BOOL }),
+  read: command("surface read <id>"),
+  create: command("surface create <title> [--mime <type>] [--file <path>|--content <s>|--content -] [--template <name> --param k=v ...] [--id <id>] [--agent <label>] [--metadata <json>]", { mime: STR, file: STR, content: STR, template: STR, param: MULTI, id: STR, agent: STR, metadata: STR }),
+  update: command("surface update <id> [--title <t>] [--mime <type>] [--file <path>|--content <s>|--content -] [--metadata <json>]", { title: STR, mime: STR, file: STR, content: STR, metadata: STR }),
+  link: command("surface link <abs-path> [--entry <relpath>] [--title <t>] [--agent <label>] [--metadata <json>] [--no-open]", { entry: STR, title: STR, agent: STR, metadata: STR, "no-open": BOOL }),
+  touch: command("surface touch <id>"),
+  present: command("surface present <abs-path> [--title <t>] [--agent <label>] [--metadata <json>]", { title: STR, agent: STR, metadata: STR }),
+  set: command("surface set <id> <dotted.key> <value>   (value parsed as JSON, falls back to string; null deletes)"),
+  patch: command("surface patch <id> <json|->"),
+  state: command("surface state <id>"),
+  ask: command("surface ask <question> [--options a,b,c] [--freetext] [--context -|<md>] [--context-file <p>] [--wait] [--timeout <s>] [--on <device>] [--id <id>] [--agent <l>] [--title <t>]", { options: STR, freetext: BOOL, context: STR, "context-file": STR, wait: BOOL, timeout: NUM, on: STR, id: STR, agent: STR, title: STR }),
+  append: command("surface append <id> [<text>|-] [--md]   (- pipes stdin line by line)", { md: BOOL }),
+  video: command("surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]", { title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR }),
+  doc: command("surface doc <path> [--title <t>] [--toc] [--width narrow|default|wide] [--agent <l>] [--no-open]", { title: STR, toc: BOOL, width: STR, agent: STR, "no-open": BOOL }),
+  template: command([
     "surface template list [--json]",
     "surface template show <name>",
-    "surface template create <name> --from <artifact-id> [--user]   (--user → ~/.surface/templates, else <project>/.surface/templates)",
-  ].join("\n"),
-  bind: "surface bind <id> [--action <name|a|b|*>] (--run '<command>' | --webhook <url>) [--cwd <dir>] [--timeout <s>]   (command is argv-tokenized, never shelled; the action batch arrives on stdin as JSON)",
-  bindings: "surface bindings [<id>] [--json]",
-  unbind: "surface unbind <binding-id>",
-  init: "surface init   (scaffolds .surface/{config.json,surfaces/,templates/} and SURFACE.md at the project root)",
-  sync: [
+    "surface template create <name> --from <artifact-id> [--user]   (--user -> ~/.surface/templates, else <project>/.surface/templates)",
+  ].join("\n"), { json: BOOL, from: STR, user: BOOL }),
+  bind: command("surface bind <id> [--action <name|a|b|*>] (--run '<command>' | --webhook <url>) [--cwd <dir>] [--timeout <s>]   (command is argv-tokenized, never shelled; the action batch arrives on stdin as JSON)", { action: STR, run: STR, webhook: STR, cwd: STR, timeout: NUM }),
+  bindings: command("surface bindings [<id>] [--json]", { json: BOOL }),
+  unbind: command("surface unbind <binding-id>"),
+  init: command("surface init   (scaffolds .surface/{config.json,surfaces/,templates/} and SURFACE.md at the project root)"),
+  sync: command([
     "surface sync                 reconcile every .surface/surfaces/*.json manifest (create missing, re-render drifted)",
     "surface sync --export <id>   write a manifest for an existing surface into .surface/surfaces/",
-  ].join("\n"),
-  versions: "surface versions <id>",
-  rollback: "surface rollback <id> <version>",
-  delete: "surface delete <id>",
-  open: "surface open [<id>] [--on <device>]",
-  exec: "surface exec <id> [--js <code>|--file <path>|--js -]",
-  actions: "surface actions [<id>]",
-  ack: "surface ack <action-id>",
-  reply: "surface reply <id> <text>",
-  notify: "surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]",
-  theme: "surface theme [<json>|-|reset]",
-  slot: [
+  ].join("\n"), { export: STR, agent: STR }),
+  versions: command("surface versions <id>"),
+  rollback: command("surface rollback <id> <version>"),
+  delete: command("surface delete <id>"),
+  open: command("surface open [<id>] [--on <device>]", { on: STR }),
+  exec: command("surface exec <id> [--js <code>|--file <path>|--js -]   (best effort: only live same-origin iframes can execute JS)", { js: STR, file: STR }),
+  actions: command("surface actions [<id>]"),
+  ack: command("surface ack <action-id>"),
+  reply: command("surface reply <id> <text>"),
+  notify: command("surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]", { style: STR, duration: NUM, on: STR }),
+  theme: command("surface theme [<json>|-|reset]"),
+  slot: command([
     "surface slot                          show current slot assignments",
     "surface slot <renderer|home|overlay> <artifact-id>   make that artifact the slot",
     "surface slot <renderer|home|overlay> --clear         vacate the slot",
-  ].join("\n"),
-  status: "surface status",
-  stream: "surface stream [--id <surface-id>]",
-  wait: "surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow]   (--follow keeps listening forever: one compact JSON line per action, acked as delivered — the persistent action terminal; --timeout becomes a lifetime cap)",
-  pair: "surface pair [--name <device-name>] [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--json] [--no-qr]",
-  devices: "surface devices [revoke <name-or-id>]",
-  auth: [
+  ].join("\n"), { clear: BOOL }),
+  status: command("surface status"),
+  stream: command("surface stream [--id <surface-id>] [--timeout <seconds>]", { id: STR, timeout: NUM }),
+  wait: command("surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow] [--heartbeat <seconds>]   (--follow keeps listening forever: one compact JSON line per action, acked as delivered; --timeout becomes a lifetime cap)", { id: STR, action: STR, event: STR, timeout: NUM, "no-ack": BOOL, follow: BOOL, heartbeat: NUM }),
+  pair: command("surface pair [--name <device-name>] [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--json] [--no-qr]", { name: STR, label: STR, "base-url": STR, "hosted-url": STR, ttl: DUR, json: BOOL, "no-qr": BOOL }),
+  devices: command("surface devices [revoke <name-or-id>]", { json: BOOL }),
+  auth: command([
     "surface auth pairing create [--ttl 5m] [--label <l>] [--base-url <url>]",
     "surface auth pairing list",
     "surface auth pairing revoke <id>",
     "surface auth session issue [--role system|device] [--ttl 30d] [--label <l>]",
     "surface auth session list",
     "surface auth session revoke <id>",
-  ].join("\n"),
-  "seed-demos": "surface seed-demos",
-  "clear-demos": "surface clear-demos",
+  ].join("\n"), { ttl: DUR, label: STR, "base-url": STR, role: STR }),
+  "seed-demos": command("surface seed-demos"),
+  "clear-demos": command("surface clear-demos"),
 };
+
+const CMD_HELP: Record<string, string> = Object.fromEntries(
+  Object.entries(COMMANDS).map(([name, spec]) => [name, spec.help]),
+);
 
 // Hand-mapped titles for the bundled example demos. Filenames are derived from
 // the file basename; everything else is the same human label the empty-state
 // gallery uses, so the same prompts the agent reads in SKILL.md still apply.
 const DEMO_TITLES: Record<string, string> = {
-  "3d-astronaut.html": "Astronaut · 3D",
-  "maps-apple-park.html": "Apple Park · Google Maps",
-  "pacman.html": "Pac-Man",
-  "spotify-rickroll.html": "Never Gonna Give You Up · Spotify",
-  "tweet-trq212.html": "Thariq · X",
-  "windy-globe.html": "Wind · Windy",
-  "yatch-problem.html": "Yatch Problem · YouTube",
+  "action-panel.html": "Action Panel",
+  "ask-approval.html": "Ask Approval",
+  "board-ops.html": "Agent Board",
+  "live-link.html": "Linked File",
+  "report-brief.html": "Report Brief",
+  "state-gauge.html": "State Gauge",
+  "stream-build.html": "Build Stream",
 };
 
 interface ParsedArgs {
@@ -194,6 +218,30 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { positional, flags, multi };
 }
 
+function validateFlagValue(name: string, kind: FlagKind, value: string | boolean): void {
+  if (kind === "boolean" && value !== true) usage(`--${name} is a boolean flag and does not take a value`);
+  if (kind !== "boolean" && value === true) usage(`--${name} expects a value`);
+  if (kind === "number" && typeof value === "string" && !Number.isFinite(Number(value))) {
+    usage(`--${name} expects a number`);
+  }
+  if (kind === "duration" && typeof value === "string") {
+    parseDurationSeconds(value);
+  }
+}
+
+function validateFlags(spec: CommandSpec, flags: Record<string, string | boolean>, multi: Record<string, string[]>): void {
+  const known = new Set([...Object.keys(spec.flags), "help"]);
+  for (const name of Object.keys(flags)) {
+    if (!known.has(name)) usage(`unknown flag --${name}`);
+    const kind = spec.flags[name];
+    if (kind) validateFlagValue(name, kind, flags[name]);
+  }
+  for (const name of Object.keys(multi)) {
+    if (!known.has(name)) usage(`unknown flag --${name}`);
+    if (spec.flags[name] !== "multi") usage(`--${name} cannot be repeated`);
+  }
+}
+
 // --param k=v pairs → params object; a value of "-" reads stdin (one max).
 async function collectParams(multi: Record<string, string[]>): Promise<Record<string, unknown> | undefined> {
   const pairs = multi.param || [];
@@ -231,25 +279,67 @@ function readStdin(): Promise<string> {
   });
 }
 
-async function readContent(flags: Record<string, string | boolean>): Promise<string | undefined> {
+interface ContentInput {
+  path?: string;
+  content?: string;
+  content_base64?: string;
+}
+
+async function readContentInput(flags: Record<string, string | boolean>): Promise<ContentInput | undefined> {
   if (typeof flags.file === "string") {
-    return fs.readFileSync(path.resolve(flags.file), "utf8");
+    const abs = path.resolve(flags.file);
+    return {
+      path: path.basename(abs),
+      content_base64: fs.readFileSync(abs).toString("base64"),
+    };
   }
-  if (flags.content === "-") return readStdin();
-  if (typeof flags.content === "string") return flags.content;
+  if (flags.content === "-") return { content: await readStdin() };
+  if (typeof flags.content === "string") return { content: flags.content };
   return undefined;
 }
 
 // Parse a human duration like "5m", "30d", "1h", "90s", or a bare number of
 // seconds into seconds. Returns undefined when the flag is absent.
 function parseDurationSeconds(raw: unknown): number | undefined {
-  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || !raw.trim()) usage(`invalid duration: ${String(raw)}`);
   const m = raw.trim().match(/^(\d+)\s*(s|m|h|d)?$/i);
   if (!m) usage(`invalid duration: ${raw} (use e.g. 90s, 5m, 1h, 30d)`);
   const n = Number(m![1]);
   const unit = (m![2] || "s").toLowerCase();
   const mult = unit === "d" ? 86400 : unit === "h" ? 3600 : unit === "m" ? 60 : 1;
   return n * mult;
+}
+
+function parseNumberFlag(flags: Record<string, string | boolean>, name: string): number | undefined {
+  const raw = flags[name];
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || !raw.trim()) usage(`--${name} expects a number`);
+  const n = Number(raw);
+  if (!Number.isFinite(n)) usage(`--${name} expects a number`);
+  return n;
+}
+
+function parseServerDate(value: unknown): Date | null {
+  if (!value) return null;
+  const raw = String(value);
+  const parsed = Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(raw) ? raw : raw + "Z");
+  return Number.isFinite(parsed) ? new Date(parsed) : null;
+}
+
+function installLifetimeGuards(timeoutSec?: number) {
+  if (timeoutSec && timeoutSec > 0) {
+    setTimeout(() => {
+      console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
+      process.exit(3);
+    }, timeoutSec * 1000).unref();
+  }
+  setInterval(() => {
+    if (process.ppid === 1) {
+      console.error(JSON.stringify({ error: "parent process exited; stopping SSE follower" }));
+      process.exit(0);
+    }
+  }, 5000).unref();
 }
 
 function parseMetadata(flags: Record<string, string | boolean>): Record<string, unknown> | undefined {
@@ -342,6 +432,11 @@ function printPairingLink(token: any, options: { baseUrl: string; hostedUrl?: st
 function fail(err: any, code = 1): never {
   const payload: Record<string, unknown> = { error: err?.message || String(err) };
   if (err?.status) payload.status = err.status;
+  if (err?.body && typeof err.body === "object") {
+    for (const [key, value] of Object.entries(err.body)) {
+      if (key !== "error") payload[key] = value;
+    }
+  }
   console.error(JSON.stringify(payload));
   process.exit(code);
 }
@@ -442,6 +537,8 @@ async function waitForAction(opts: {
         continue;
       }
       backoff = 1000;
+      const justMissed = await pollPending();
+      if (justMissed) return justMissed;
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -511,12 +608,21 @@ async function main() {
     console.log(HELP);
     return;
   }
+  const spec = COMMANDS[cmd];
+  if (!spec) {
+    console.error(`Unknown command: ${cmd}\n\n${HELP}`);
+    process.exit(2);
+  }
   const { positional, flags, multi } = parseArgs(argv.slice(1));
+  validateFlags(spec, flags, multi);
   if (flags.help) {
-    console.log(CMD_HELP[cmd] || `Unknown command: ${cmd}`);
+    console.log(spec.help);
     return;
   }
+  await spec.run({ cmd, positional, flags, multi });
+}
 
+async function runCommand({ cmd, positional, flags, multi }: CommandContext): Promise<void> {
   switch (cmd) {
     case "list": {
       const params = new URLSearchParams();
@@ -545,9 +651,9 @@ async function main() {
         const params = await collectParams(multi);
         if (params) body.params = params;
       } else {
-        const content = await readContent(flags);
+        const content = await readContentInput(flags);
         if (typeof flags.mime === "string") body.mime = flags.mime;
-        if (content !== undefined) body.content = content;
+        if (content) Object.assign(body, content);
       }
       const metadata = attributionMetadata(flags);
       if (metadata) body.metadata = metadata;
@@ -558,7 +664,7 @@ async function main() {
     case "ask": {
       const question = positional[0];
       if (!question) usage("usage: " + CMD_HELP.ask);
-      const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 0;
+      const timeoutSec = parseNumberFlag(flags, "timeout") || 0;
       let contextMd = "";
       if (flags.context === "-") contextMd = await readStdin();
       else if (typeof flags.context === "string") contextMd = flags.context;
@@ -633,12 +739,15 @@ async function main() {
       // doesn't become one HTTP request per line.
       let batch: Array<{ kind: string; content: string }> = [];
       let flushing = Promise.resolve();
+      let firstFlushError: any = null;
       const flush = () => {
         if (!batch.length) return flushing;
         const chunks = batch;
         batch = [];
         flushing = flushing.then(() =>
-          call("POST", `/artifacts/${encodeURIComponent(id)}/append`, { chunks }).then(() => {}, () => {}),
+          call("POST", `/artifacts/${encodeURIComponent(id)}/append`, { chunks }).catch((err) => {
+            if (!firstFlushError) firstFlushError = err;
+          }),
         );
         return flushing;
       };
@@ -669,6 +778,7 @@ async function main() {
       if (timer) clearTimeout(timer);
       await flush();
       await flushing;
+      if (firstFlushError) fail(firstFlushError);
       return;
     }
 
@@ -679,7 +789,8 @@ async function main() {
         usage("video expects an http(s) URL — for local video files use: surface present <path>");
       }
       const params: Record<string, unknown> = { url };
-      if (typeof flags.start === "string") params.start = Number(flags.start);
+      const start = parseNumberFlag(flags, "start");
+      if (start !== undefined) params.start = start;
       if (flags.autoplay === true) params.autoplay = true;
       if (flags.loop === true) params.loop = true;
       if (typeof flags.title === "string") params.title = flags.title;
@@ -775,11 +886,11 @@ async function main() {
     case "update": {
       const id = positional[0];
       if (!id) usage("usage: " + CMD_HELP.update);
-      const content = await readContent(flags);
+      const content = await readContentInput(flags);
       const body: Record<string, unknown> = {};
       if (typeof flags.title === "string") body.title = flags.title;
       if (typeof flags.mime === "string") body.mime = flags.mime;
-      if (content !== undefined) body.content = content;
+      if (content) Object.assign(body, content);
       const metadata = parseMetadata(flags);
       if (metadata) body.metadata = metadata;
       out(await call("PUT", `/artifacts/${encodeURIComponent(id)}`, body));
@@ -984,7 +1095,8 @@ async function main() {
       if (!text) usage("usage: " + CMD_HELP.notify);
       const body: Record<string, unknown> = { text };
       if (typeof flags.style === "string") body.style = flags.style;
-      if (typeof flags.duration === "string") body.duration = Number(flags.duration);
+      const duration = parseNumberFlag(flags, "duration");
+      if (duration !== undefined) body.duration = duration;
       if (typeof flags.on === "string") body.device = flags.on;
       out(await call("POST", "/display/notify", body));
       return;
@@ -1030,15 +1142,29 @@ async function main() {
         else delete meta.display_role;
         await call("PUT", `/artifacts/${encodeURIComponent(artifactId)}`, { metadata: meta });
       };
+      const clearRole = async () => {
+        const all: any[] = await call("GET", "/artifacts?include_hidden=1");
+        for (const surface of all) {
+          const meta = parseMetadataField(surface.metadata);
+          if (meta?.display_role === role) {
+            await mergeRole(surface.id, false);
+          }
+        }
+      };
       if (flags.clear === true) {
-        const slots = await call("GET", "/display/slots");
-        if (!slots[role]) { out({ [role]: null, note: "slot already empty" }); return; }
-        await mergeRole(slots[role], false);
-        out(await call("GET", "/display/slots"));
+        let cleared = 0;
+        while (true) {
+          const slots = await call("GET", "/display/slots");
+          if (!slots[role]) break;
+          await mergeRole(slots[role], false);
+          cleared++;
+        }
+        out({ ...(await call("GET", "/display/slots")), cleared });
         return;
       }
       const id = positional[1];
       if (!id) usage("usage:\n" + CMD_HELP.slot);
+      await clearRole();
       await mergeRole(id, true);
       out(await call("GET", "/display/slots"));
       return;
@@ -1048,13 +1174,13 @@ async function main() {
       const surfaceId = typeof flags.id === "string" ? flags.id : undefined;
       const wantAction = typeof flags.action === "string" ? flags.action : undefined;
       const wantEvent = typeof flags.event === "string" ? flags.event : "surface_action";
-      const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 0;
+      const timeoutSec = parseNumberFlag(flags, "timeout") || 0;
       const autoAck = flags["no-ack"] !== true;
 
       // Some harnesses kill foreground commands after a silent interval
       // (Gemini CLI: 300s default). A heartbeat on stderr resets those timers
       // without polluting the stdout JSON contract.
-      const heartbeatSec = typeof flags.heartbeat === "string" ? Number(flags.heartbeat) : 0;
+      const heartbeatSec = parseNumberFlag(flags, "heartbeat") || 0;
       if (heartbeatSec > 0) {
         const beat = setInterval(() => {
           process.stderr.write(`: waiting ${new Date().toISOString()}\n`);
@@ -1063,6 +1189,7 @@ async function main() {
       }
 
       if (flags.follow === true) {
+        installLifetimeGuards(timeoutSec);
         // The persistent action terminal: one compact JSON line per action,
         // forever. Built for harness watchdogs that pattern-match stdout.
         const result = await waitForAction({
@@ -1105,6 +1232,8 @@ async function main() {
 
     case "stream": {
       const id = typeof flags.id === "string" ? flags.id : undefined;
+      const timeoutSec = parseNumberFlag(flags, "timeout");
+      installLifetimeGuards(timeoutSec);
       const url = id ? `${BASE}/artifacts/${encodeURIComponent(id)}/stream` : `${BASE}/stream`;
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
@@ -1184,8 +1313,9 @@ async function main() {
         return;
       }
       const ago = (iso: string | null) => {
-        if (!iso) return "never";
-        const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+        const parsed = parseServerDate(iso);
+        if (!parsed) return "never";
+        const mins = Math.floor((Date.now() - parsed.getTime()) / 60000);
         if (mins < 2) return "just now";
         if (mins < 60) return `${mins}m ago`;
         if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
@@ -1193,7 +1323,7 @@ async function main() {
       };
       const rows = devices.map((d) => ({
         label: d.label || d.id.slice(0, 8),
-        seen: d.connected ? "live" : ago(d.last_seen_at ? d.last_seen_at + "Z" : null),
+        seen: d.connected ? "live" : ago(d.last_seen_at),
         viewing: d.viewing || "—",
         ip: d.client_ip || "",
       }));
@@ -1214,7 +1344,8 @@ async function main() {
       if (typeof flags.run === "string") body.run = flags.run;
       if (typeof flags.webhook === "string") body.webhook_url = flags.webhook;
       if (typeof flags.cwd === "string") body.cwd = path.resolve(flags.cwd);
-      if (typeof flags.timeout === "string") body.timeout_seconds = Number(flags.timeout);
+      const timeout = parseNumberFlag(flags, "timeout");
+      if (timeout !== undefined) body.timeout_seconds = timeout;
       out(await call("POST", `/artifacts/${encodeURIComponent(id)}/bindings`, body));
       return;
     }
@@ -1416,8 +1547,7 @@ async function main() {
     }
 
     default:
-      console.error(`Unknown command: ${cmd}\n\n${HELP}`);
-      process.exit(2);
+      usage(`unknown command: ${cmd}`);
   }
 }
 

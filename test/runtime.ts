@@ -55,10 +55,8 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
     setTimeout,
     clearTimeout,
   };
-  // window IS the global. The parent decides how action() routes:
-  //   self         → no parent frame; post straight to the server (standalone tab)
-  //   same-origin  → trusted system iframe; relay through the PWA postMessage bridge
-  //   cross-origin → content-plane iframe; reading parent.location throws, so post direct
+  // window IS the global. Actions post directly to the artifact origin in every
+  // mode; the PWA postMessage bridge only remains for legacy surfaces.
   sandbox.window = sandbox;
   const parentMode = cfg.parent || "self";
   if (parentMode === "self") {
@@ -188,14 +186,14 @@ await test("cross-origin (content-plane) parent → action posts DIRECT, never v
   assert.equal(postMessages.length, 0, "it must NOT relay through the trusted parent");
 });
 
-await test("same-origin (system) parent → action uses the bridge, no direct POST", async () => {
+await test("same-origin (system) parent → action posts DIRECT, never via the bridge", async () => {
   const { Surface, fetchCalls, postMessages } = loadRuntime({ parent: "same-origin" });
   await Surface.action("tap", { x: 1 });
-  assert.equal(actionsPosts(fetchCalls).length, 0, "system surface relays, does not POST itself");
-  assert.equal(postMessages.length, 1, "exactly one bridge message");
-  assert.equal(postMessages[0].type, "surface_action");
-  assert.equal(postMessages[0].action, "tap");
-  assert.deepEqual(plain(postMessages[0].data), { x: 1 });
+  const posts = actionsPosts(fetchCalls);
+  assert.equal(posts.length, 1, "system surface posts its own action");
+  assert.equal(posts[0].body.action, "tap");
+  assert.deepEqual(plain(posts[0].body.data), { x: 1 });
+  assert.equal(postMessages.length, 0, "it must NOT relay through the legacy bridge");
 });
 
 console.log("\nRuntime tests passed\n");

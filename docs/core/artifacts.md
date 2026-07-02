@@ -49,7 +49,7 @@ One row per file in a version.
 - `ON DELETE CASCADE` from `artifact_versions`.
 
 ### `surface_actions`
-User → agent action queue. Each row is `{id, surface_id, action, data (JSON), status, created_at, handled_at}`. `status` is `pending` until `ackAction` flips it to `handled` and stamps `handled_at`; a TTL sweep deletes `handled` rows after 7 days and `pending` rows after 30 (`cleanupActions`, `server/db.ts`). See [../interaction/actions-inbox.md](../interaction/actions-inbox.md).
+User → agent action queue. Each row is `{id, surface_id, action, data (JSON), status, created_at, handled_at}`. `status` is `pending` until `ackAction` flips it to `handled` and stamps `handled_at`; a TTL sweep deletes `handled` rows after 7 days and `pending` rows after 30 (`cleanupActions`, `server/actionsStore.ts`). See [../interaction/actions-inbox.md](../interaction/actions-inbox.md).
 
 ### `surface_state`
 One JSON state document per surface (`artifact_id` PK, `state_json`, `state_version`, `updated_at`). `state_version` bumps on every patch; `ON DELETE CASCADE` from `artifacts`. See [../state/stateful-surfaces.md](../state/stateful-surfaces.md).
@@ -61,7 +61,7 @@ Append-only chunks for [`stream`](../templates/stream.md) surfaces: `(artifact_i
 Pre-registered command/webhook reactions to actions: `{id, surface_id, action_pattern, kind, run, webhook_url, cwd, enabled, timeout_seconds, last_run_at, last_status, last_error, created_at, updated_at}`. See [../interaction/bindings.md](../interaction/bindings.md).
 
 ### `display_config`
-Single-row key/value store. Only the `theme` key is used; it holds the merged display theme JSON blob (`getDisplayConfig`/`setDisplayConfig`, `server/db.ts`). The renderer/home/overlay slots are **not** stored here — they are ordinary artifacts carrying `metadata.display_role` (see [../display/theming.md](../display/theming.md)).
+Single-row key/value store. Only the `theme` key is used; it holds the merged display theme JSON blob (`getDisplayConfig`/`setDisplayConfig`, `server/displayConfig.ts`). The renderer/home/overlay slots are **not** stored here — they are ordinary artifacts carrying `metadata.display_role` (see [../display/theming.md](../display/theming.md)).
 
 ### `auth_pairing_tokens` / `auth_sessions`
 Hashed one-time pairing tokens (role defaults to `device`) and durable sessions (`role`, `label`, `ttl_seconds`, rolling `expires_at`, `last_seen_at`, `revoked_at`). See [../auth/device-pairing.md](../auth/device-pairing.md).

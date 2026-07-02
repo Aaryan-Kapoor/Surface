@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
-import { spawn, ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
 
 // End-to-end verification of the wake-binding revival path (the "tap a button
 // at 11pm and the offline agent's session is respawned" flow). We boot a real
@@ -14,13 +13,13 @@ import { fileURLToPath } from "node:url";
 // fire. The bound command stands in for `claude -p --resume <session>`; we
 // assert the contract that revival relies on, without burning a real session.
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.join(__dirname, "..");
-const PORT = 34000 + (process.pid % 1000);
-const BASE = `http://127.0.0.1:${PORT}`;
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-bind-data-"));
-const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "surface-bind-proj-")));
+let PORT = 0;
+let BASE = "";
+const dataDir = tmpDir("surface-bind-data-");
+const projectRoot = fs.realpathSync(tmpDir("surface-bind-proj-"));
+fs.mkdirSync(path.join(projectRoot, ".surface"), { recursive: true });
+fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: true } }, null, 2));
+const noConsentRoot = fs.realpathSync(tmpDir("surface-bind-no-consent-"));
 const captureOut = path.join(dataDir, "capture-out.json");
 
 // The stand-in for the revived harness: read the action batch on stdin and
@@ -41,41 +40,21 @@ fs.writeFileSync(process.argv[2], JSON.stringify({
 );
 
 let server: ChildProcess | null = null;
-let serverErr = "";
+let call: ReturnType<typeof makeClient>;
 
-async function call(method: string, p: string, body?: unknown): Promise<{ status: number; json: any }> {
-  const res = await fetch(BASE + p, {
-    method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  let json: any = null;
-  try { json = await res.json(); } catch {}
-  return { status: res.status, json };
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function waitForServer(timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(BASE + "/artifacts");
-      if (res.ok) return;
-    } catch {}
-    await sleep(150);
-  }
-  throw new Error(`server did not come up on ${BASE}\n--- server stderr ---\n${serverErr}`);
+async function api(method: string, p: string, body?: unknown): Promise<{ status: number; json: any }> {
+  const res = await call(method, p, { body });
+  return { status: res.status, json: res.body };
 }
 
 async function listening(id: string): Promise<boolean> {
-  const { json } = await call("GET", "/artifacts");
+  const { json } = await api("GET", "/artifacts");
   const card = Array.isArray(json) ? json.find((c: any) => c.id === id) : null;
   return !!(card && card.listening);
 }
 
 async function pendingCount(id: string): Promise<number> {
-  const { json } = await call("GET", `/artifacts/${id}/actions`);
+  const { json } = await api("GET", `/artifacts/${id}/actions`);
   return Array.isArray(json) ? json.length : -1;
 }
 
@@ -95,31 +74,18 @@ function test(name: string, fn: () => Promise<void>) {
 }
 
 async function main() {
-  server = spawn(path.join(repoRoot, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      SURFACE_DATA_DIR: dataDir,
-      PORT: String(PORT),
-      // Unique content port so the (now mandatory) second listener never
-      // collides with another test server or the live service on the default 3100.
-      SURFACE_CONTENT_PORT: String(PORT + 1000),
-      SURFACE_BIND: "127.0.0.1",
-      SURFACE_PAIR_ON_START: "0",
-      NODE_ENV: "test",
-    },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  server.stderr!.setEncoding("utf8");
-  server.stderr!.on("data", (c: string) => { serverErr += c; });
-
-  await waitForServer(15000);
+  const ports = await isolatedPorts();
+  PORT = ports.port;
+  BASE = `http://127.0.0.1:${PORT}`;
+  call = makeClient(BASE);
+  server = spawnServer(PORT, dataDir, {}, ports.contentPort);
+  await waitForReady(BASE, "/artifacts");
   console.log("\n=== Wake-binding (revival path) Tests ===\n");
 
   const id = "wake-test-surface";
 
   await test("setup: create surface + register a wake binding", async () => {
-    const created = await call("POST", "/artifacts", {
+    const created = await api("POST", "/artifacts", {
       id,
       title: "Wake test",
       mime: "text/html",
@@ -128,20 +94,39 @@ async function main() {
     });
     assert.equal(created.status, 201, "artifact created");
 
-    const bind = await call("POST", `/artifacts/${id}/bindings`, {
+    const bind = await api("POST", `/artifacts/${id}/bindings`, {
       action_pattern: "wake",
       run: `node "${capturePath}" "${captureOut}"`,
     });
     assert.equal(bind.status, 201, "binding registered");
     assert.equal(bind.json.kind, "command");
 
-    const list = await call("GET", `/artifacts/${id}/bindings`);
+    const list = await api("GET", `/artifacts/${id}/bindings`);
     assert.equal(list.json.length, 1, "one binding listed");
+  });
+
+  await test("binding registration is fail-closed without recorded project consent", async () => {
+    const noConsentId = "wake-no-consent";
+    const created = await api("POST", "/artifacts", {
+      id: noConsentId,
+      title: "No consent",
+      mime: "text/html",
+      content: "<h1>no consent</h1>",
+      project_root: noConsentRoot,
+    });
+    assert.equal(created.status, 201, "artifact created");
+
+    const bind = await api("POST", `/artifacts/${noConsentId}/bindings`, {
+      action_pattern: "wake",
+      run: `node "${capturePath}" "${captureOut}"`,
+    });
+    assert.equal(bind.status, 403, "binding registration requires consent");
+    assert.match(String(bind.json.hint || bind.json.error || ""), /bindings\.enabled/i);
   });
 
   await test("click with NO waiter spawns the command with the batch on stdin", async () => {
     if (fs.existsSync(captureOut)) fs.rmSync(captureOut);
-    const act = await call("POST", `/artifacts/${id}/actions`, { action: "wake", data: { foo: 1 } });
+    const act = await api("POST", `/artifacts/${id}/actions`, { action: "wake", data: { foo: 1 } });
     assert.equal(act.status, 201, "action accepted");
 
     await waitFor(() => Promise.resolve(fs.existsSync(captureOut)), 10000, "bound command to run");
@@ -165,13 +150,13 @@ async function main() {
 
   await test("successful run acks the batch and records status ok", async () => {
     await waitFor(async () => (await pendingCount(id)) === 0, 5000, "inbox drained after run");
-    const list = await call("GET", `/artifacts/${id}/bindings`);
+    const list = await api("GET", `/artifacts/${id}/bindings`);
     assert.equal(list.json[0].last_status, "ok", "binding status is ok");
   });
 
   await test("a non-matching action does NOT fire the binding (stays in inbox)", async () => {
     fs.rmSync(captureOut, { force: true });
-    const act = await call("POST", `/artifacts/${id}/actions`, { action: "ignored", data: {} });
+    const act = await api("POST", `/artifacts/${id}/actions`, { action: "ignored", data: {} });
     assert.equal(act.status, 201);
     await sleep(1200);
     assert.ok(!fs.existsSync(captureOut), "binding did not run for non-matching action");
@@ -185,7 +170,7 @@ async function main() {
     try {
       await waitFor(() => listening(id), 5000, "waiter to register");
       fs.rmSync(captureOut, { force: true });
-      const act = await call("POST", `/artifacts/${id}/actions`, { action: "wake", data: { foo: 2 } });
+      const act = await api("POST", `/artifacts/${id}/actions`, { action: "wake", data: { foo: 2 } });
       assert.equal(act.status, 201);
       await sleep(1200);
       assert.ok(!fs.existsSync(captureOut), "binding suppressed while a waiter is connected");
@@ -201,11 +186,12 @@ async function main() {
 }
 
 main()
-  .then(() => { cleanup(); process.exit(0); })
-  .catch((err) => { console.error(err); cleanup(); process.exit(1); });
+  .then(async () => { await cleanup(); process.exit(0); })
+  .catch(async (err) => { console.error(err); await cleanup(); process.exit(1); });
 
-function cleanup() {
-  try { server?.kill("SIGKILL"); } catch {}
-  try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(projectRoot, { recursive: true, force: true }); } catch {}
+async function cleanup() {
+  await killServer(server, PORT).catch(() => {});
+  cleanupDir(dataDir);
+  cleanupDir(projectRoot);
+  cleanupDir(noConsentRoot);
 }

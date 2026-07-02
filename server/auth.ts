@@ -10,6 +10,7 @@ import { getDataDir } from "./paths.js";
 // so a leaked DB (see SECURITY.md) does not directly yield usable credentials.
 
 const SECRET_FILE = "auth-secret";
+const SESSION_TOUCH_INTERVAL_SECONDS = 5 * 60;
 let secretCache: string | null = null;
 
 export function getServerSecret(): string {
@@ -227,14 +228,18 @@ export function verifySession(token: string): SessionRow | null {
     )
     .get(hashToken(token)) as SessionRow | undefined;
   if (!row) return null;
-  getDb()
-    .prepare(
-      `UPDATE auth_sessions
-       SET last_seen_at = datetime('now'),
-           expires_at = datetime('now', '+' || ttl_seconds || ' seconds')
-       WHERE id = ?`,
-    )
-    .run(row.id);
+  const shouldTouch = !row.last_seen_at ||
+    Date.now() - Date.parse(`${row.last_seen_at}Z`) >= SESSION_TOUCH_INTERVAL_SECONDS * 1000;
+  if (shouldTouch) {
+    getDb()
+      .prepare(
+        `UPDATE auth_sessions
+         SET last_seen_at = datetime('now'),
+             expires_at = datetime('now', '+' || ttl_seconds || ' seconds')
+         WHERE id = ?`,
+      )
+      .run(row.id);
+  }
   return row;
 }
 

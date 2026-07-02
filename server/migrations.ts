@@ -158,6 +158,16 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 11,
+    description: "add global pending-action index",
+    up: (db) => {
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_surface_actions_status_created
+        ON surface_actions(status, created_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

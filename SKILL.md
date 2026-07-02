@@ -34,6 +34,7 @@ Most content has a purpose-built verb — reach for it. But when the user is ser
 |---|---|
 | A question you need answered | `surface ask` (see below) — not a hand-written form |
 | **An interactive tool, chart, map, or custom UI** | **`surface create <title> --mime text/html --content -` — full HTML; wire it two-way with `Surface.action()` + state bindings** |
+| A polished explanation, review, research brief, or final report | `surface create <title> --template report --param title="..." --param body_md=-` |
 | A long-running log / narration | `surface create <t> --id <slug> --template stream`, then `surface append <id> [text\|-] [--md]` |
 | A YouTube/web video | `surface video <url> [--start <s>] [--autoplay] [--loop]` |
 | A markdown file in the repo | `surface doc <path> [--toc] [--width narrow\|default\|wide]` |
@@ -46,6 +47,19 @@ Most content has a purpose-built verb — reach for it. But when the user is ser
 Always pass `--agent <your-harness-name>` (e.g. `claude-code`, `codex`, `openclaw`) so the dashboard can attribute your surfaces, and `--id <slug>` for recurring purposes so updates target the same card. Surfaces are automatically owned by the git project you run the CLI from.
 
 **Templates.** Before building the same UI a second time, promote it: `surface template create <name> --from <artifact-id>` scaffolds `template.json` + `index.html` — then edit the contract (declare params/state/actions, replace hard-coded values with `{{param}}` slots) or the description stays a useless placeholder. Project templates live in `.surface/templates/` (committed, shadow user templates, which shadow built-ins); `--user` writes to `~/.surface/templates/` instead. `surface template list` shows every template with its source; `surface template show <name>` prints the full contract — read it before instantiating a template you didn't write.
+
+## Explanations and reports
+
+When the user asks for a substantial explanation, a code review summary, a research brief, or the wrap-up from a long task, prefer a **report surface** over a wall of terminal markdown:
+
+```bash
+surface create "Release review" --template report \
+  --param title="Release review" \
+  --param subtitle="What changed, what passed, and what still needs watching" \
+  --param body_md=-
+```
+
+The `report` template supplies the reading layout; you supply markdown. Keep quick answers in chat, but move anything the user may scan, revisit, print, or compare into a surface.
 
 ## Reading and the artifact lifecycle
 
@@ -91,10 +105,13 @@ EOF
    |---|---|
    | Claude Code | the `Monitor` tool, `persistent: true`, command `surface wait --follow` — each printed line wakes you. (Expecting exactly one answer? Bash `run_in_background` + one-shot `surface wait --id <id>` wakes you when it exits.) |
    | Codex CLI | a backgrounded one-shot `surface wait --id <id>` — you're woken when it exits with the action JSON; **re-arm immediately after handling** |
-   | An always-on daemon (OpenClaw, a gateway) | no terminal needed — register a `--webhook` binding (rung 2); you're never offline |
+   | Gemini CLI | foreground one-shot `surface wait --id <id> --heartbeat 60 --timeout <under-the-harness-cap>`; exit 3 means no action yet, so re-arm the loop |
+   | Cline | `surface wait --follow` in a terminal; unread output appears in the next model turn, so handle and keep it running |
+   | Cursor / Windsurf / Copilot CLI / Aider | foreground or background one-shot waits under the harness timeout; exit 3 means "idle, re-arm" |
+   | OpenClaw / always-on gateway | no terminal needed — register a `--webhook` binding (rung 2); you're never offline |
    | Anything else | per-line watchdog available → `wait --follow` and pattern-match stdout on `"action":"`; completion notifications only → one-shot `wait`, re-arm after each; no background support → rely on rungs 2–3 |
 
-   One-shot details: `surface wait --id <id> [--action <name>] [--timeout <s>]` exits 0 with the first matching action (exit 3 on timeout; `--event <name>` waits on any SSE event). The surface is unguarded between exit and re-arm — prefer `--follow` wherever your harness can watch it.
+   One-shot details: `surface wait --id <id> [--action <name>] [--timeout <s>] [--heartbeat <s>]` exits 0 with the first matching action (exit 3 on timeout; `--event <name>` waits on any SSE event). The surface is unguarded between exit and re-arm — prefer `--follow` wherever your harness can watch it.
 
    **The terminal dies with your session — re-arm on return.** A restarted harness never inherits background processes: when the user comes back after ending a session, the surfaces are still live but your terminal is gone and the card has silently stopped showing "listening". That's why re-arming is step 4 of the session start ritual — the inbox drain (step 1) covers everything clicked while you were dead, the fresh terminal covers everything after.
 2. **Binding (wake-me-when-offline).** `surface bind <id> --action <pattern> --run '<command>'` makes Surface spawn the command when a click arrives and *no* waiter is connected. The command gets the full pending-action batch as JSON on stdin, runs with cwd = the project root (`--cwd` overrides), and is argv-tokenized (never shelled). Recipes:
@@ -103,7 +120,8 @@ EOF
    |---|---|
    | Claude Code | `--run 'claude -p --resume <your-session-id> "Read the Surface action batch on stdin and handle it."'` — wakes the session that has the context |
    | Codex CLI | `--run 'codex exec "Handle the Surface action batch on stdin (cwd is the project)."'` |
-   | OpenClaw / daemon | `--webhook http://127.0.0.1:18789/hooks/agent` — push straight into the gateway |
+   | OpenClaw / daemon | `--webhook http://127.0.0.1:18789/hooks/wake` — push straight into the gateway |
+   | Amp | `--run 'amp -x "Handle the Surface action batch on stdin."'` |
    | Anything | `--run './scripts/on-click.sh'` — it's just a command |
 
    `surface bindings [<id>]` lists registered bindings with last-run status and error — check it first when a wake didn't fire. `surface unbind <binding-id>` removes one.
@@ -117,7 +135,7 @@ Respond to the user with `surface reply <id> "text"` (toast attributed to that s
 
 - `surface status` — live presence: which displays are connected right now, what each is viewing, viewport size, last activity. Check it before `ask --on phone` (is the phone awake?) or before deciding whether a notify will even be seen.
 - `surface devices` — the user's paired screens and their live state; `surface devices revoke <name>` cuts one off (lost phone, stale tablet).
-- `surface stream [--id <id>]` — tail the SSE firehose as JSONL until interrupted (auto-reconnects): `surface_created`/`surface_updated`, `state_patch`, `surface_action`, theme changes. This is the watch-everything primitive under `wait`; pipe it into a loop when you need to react to more than one kind of event.
+- `surface stream [--id <id>] [--timeout <s>]` — tail the SSE firehose as JSONL until interrupted or timed out (auto-reconnects): `surface_created`/`surface_updated`, `state_patch`, `surface_action`, theme changes. This is the watch-everything primitive under `wait`; pipe it into a loop when you need to react to more than one kind of event.
 
 ## The board: tell the user what you're doing
 

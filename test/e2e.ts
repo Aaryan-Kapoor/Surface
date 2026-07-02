@@ -4,6 +4,16 @@ const SURFACE_URL = process.env.SURFACE_URL || "http://localhost:3000";
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "anthropic/claude-sonnet-4";
 
+if (process.env.SURFACE_TEST_E2E !== "1") {
+  console.log("Skipping paid OpenRouter e2e test (set SURFACE_TEST_E2E=1 to run).");
+  process.exit(0);
+}
+
+if (/^https?:\/\/(?:localhost|127\.0\.0\.1):3000\b/.test(SURFACE_URL) && process.env.SURFACE_TEST_ALLOW_LIVE !== "1") {
+  console.error("Refusing to run test:e2e against the default live service. Set SURFACE_URL to an isolated server or SURFACE_TEST_ALLOW_LIVE=1.");
+  process.exit(1);
+}
+
 if (!OPENROUTER_API_KEY) {
   console.error("OPENROUTER_API_KEY is required in .env");
   process.exit(1);

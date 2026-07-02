@@ -1,14 +1,14 @@
 # Actions & the Inbox
 
 **Status:** Shipped (2026-06)
-**Code:** `server/routes/actions.ts`, `server/db.ts` (`surface_actions`, `cleanupActions`), `client/app.js` (postMessage bridge, badges), `bin/surface.ts` (`actions`, `ack`, `wait`)
+**Code:** `server/routes/actions.ts`, `server/actionsStore.ts` (`surface_actions`, `cleanupActions`), `client/app.js` (legacy postMessage bridge, badges), `bin/surface.ts` (`actions`, `ack`, `wait`)
 
 An **action** is a user interaction flowing back to agents: a button click, a form submit, an answer to an [`ask`](../templates/ask.md). Actions are the return half of Surface's core loop, and the inbox is what makes them durable — a click must never be lost just because no agent was running when it happened.
 
 ## The pipeline
 
-1. Artifact HTML posts a message: `parent.postMessage({ type: "surface_action", action: "approve", data: {…} }, "*")` — or calls the injected runtime's `Surface.action(name, data)`, which wraps it.
-2. The PWA forwards it to `POST /artifacts/:id/actions`, which inserts a `pending` row in `surface_actions`, broadcasts a `surface_action` SSE event, optionally fires the webhook fan-out, and runs the [delivery ladder](delivery-ladder.md).
+1. Artifact HTML calls the injected runtime's `Surface.action(name, data)`; the legacy `surface_action` postMessage bridge remains only for older surfaces.
+2. The runtime posts to `POST /artifacts/:id/actions`, which inserts a `pending` row in `surface_actions`, broadcasts a `surface_action` SSE event, optionally fires the webhook fan-out, and runs the [delivery ladder](delivery-ladder.md).
 3. Agents consume by polling (`surface actions [<id>]`), blocking (`surface wait`), bindings, or webhook. Reading the inbox is **system-plane only** — a paired device must never drain it.
 4. `POST /actions/:id/ack` marks a row `handled` (stamping `handled_at`) and broadcasts `actions_acked` so card badges update live.
 
@@ -31,7 +31,7 @@ Pending actions are visible instead of silently queueing:
 
 ### Cleanup (TTL)
 
-A sweep at boot and hourly (`cleanupActions`, `server/db.ts`; scheduled in `server/index.ts`) deletes `handled` rows after 7 days and `pending` rows after 30 (a click nobody handled in a month is stale). Deleting an artifact also clears its queued actions.
+A sweep at boot and hourly (`cleanupActions`, `server/actionsStore.ts`; scheduled in `server/index.ts`) deletes `handled` rows after 7 days and `pending` rows after 30 (a click nobody handled in a month is stale). Deleting an artifact also clears its queued actions.
 
 ## Action payload
 

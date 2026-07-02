@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
 import fs from "fs";
-import { v4 as uuidv4 } from "uuid";
 import { bootstrapDataDir, getDbPath } from "./paths.js";
 import { isPreBaseline, runMigrations } from "./migrations.js";
 
@@ -42,81 +41,7 @@ export function getDb(): Database.Database {
   return db;
 }
 
-// ── Actions (surface → agent) ──
-
-export interface SurfaceAction {
-  id: string;
-  surface_id: string;
-  action: string;
-  data: string;
-  status: string;
-  created_at: string;
-  handled_at: string | null;
-}
-
-export function createAction(params: {
-  surface_id: string;
-  action: string;
-  data?: Record<string, unknown>;
-}): SurfaceAction {
-  const id = uuidv4();
-  const data = JSON.stringify(params.data || {});
-  db.prepare(
-    `INSERT INTO surface_actions (id, surface_id, action, data) VALUES (?, ?, ?, ?)`
-  ).run(id, params.surface_id, params.action, data);
-  return db.prepare(`SELECT * FROM surface_actions WHERE id = ?`).get(id) as SurfaceAction;
-}
-
-export function getAction(id: string): SurfaceAction | undefined {
-  return db.prepare(`SELECT * FROM surface_actions WHERE id = ?`).get(id) as SurfaceAction | undefined;
-}
-
-export function getPendingActions(surfaceId?: string): SurfaceAction[] {
-  if (surfaceId) {
-    return db
-      .prepare(`SELECT * FROM surface_actions WHERE surface_id = ? AND status = 'pending' ORDER BY created_at ASC`)
-      .all(surfaceId) as SurfaceAction[];
-  }
-  return db
-    .prepare(`SELECT * FROM surface_actions WHERE status = 'pending' ORDER BY created_at ASC`)
-    .all() as SurfaceAction[];
-}
-
-export function ackAction(id: string): boolean {
-  const result = db.prepare(
-    `UPDATE surface_actions SET status = 'handled', handled_at = datetime('now') WHERE id = ? AND status = 'pending'`
-  ).run(id);
-  return result.changes > 0;
-}
-
-// Inbox TTL (docs/interaction/actions-inbox.md): handled actions are kept 7
-// days for inspection; pending ones expire after 30 — by then "nothing is
-// ever lost" has lost to "nobody is coming".
-export function cleanupActions(): { handled: number; pending: number } {
-  const handled = db.prepare(
-    `DELETE FROM surface_actions WHERE status = 'handled' AND handled_at < datetime('now', '-7 days')`
-  ).run().changes;
-  const pending = db.prepare(
-    `DELETE FROM surface_actions WHERE status = 'pending' AND created_at < datetime('now', '-30 days')`
-  ).run().changes;
-  return { handled, pending };
-}
-
-// ── Display Config ──
-
-export function getDisplayConfig(): Record<string, any> {
-  const row = db.prepare(`SELECT value FROM display_config WHERE key = 'theme'`).get() as { value: string } | undefined;
-  if (!row) return {};
-  try { return JSON.parse(row.value); } catch { return {}; }
-}
-
-export function resetDisplayConfig(): void {
-  db.prepare(`DELETE FROM display_config WHERE key = 'theme'`).run();
-}
-
-export function setDisplayConfig(config: Record<string, any>): Record<string, any> {
-  const existing = getDisplayConfig();
-  const merged = { ...existing, ...config };
-  db.prepare(`INSERT OR REPLACE INTO display_config (key, value) VALUES ('theme', ?)`).run(JSON.stringify(merged));
-  return merged;
+export function closeDb(): void {
+  if (!db) return;
+  db.close();
 }

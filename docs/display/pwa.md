@@ -30,7 +30,7 @@ A global `keydown` listener opens `openSurfaceFinder()` on Cmd/Ctrl+K (`client/a
 
 ### Empty state
 
-When there are no surfaces and no home widget (`client/app.js`), the grid shows the empty state: a "What should I make?" prompt, a typewriter cycle of suggestions (`cycleEmptySuggestions` / `EMPTY_SUGGESTIONS`, `client/app.js`), a "Start Tutorial" button that opens a modal handing the user a copy-paste prompt for `docs/TUTORIAL.md` (`showTutorialModal`, `client/app.js`), and the **demo idea portal** — a revolving vertical carousel of seven real demo surfaces served from `/demos/` (`SURFACE_IDEAS` / `mountGallery`, `client/app.js`). Each portal card embeds the demo in an iframe and has a copy-prompt button; clicking opens `showIdeaModal` with the user-voice prompt (`client/app.js`).
+When there are no surfaces and no home widget (`client/app.js`), the grid shows the empty state: a "What should I make?" prompt, a typewriter cycle of suggestions (`cycleEmptySuggestions` / `EMPTY_SUGGESTIONS`, `client/app.js`), a "Start Tutorial" button that opens a modal handing the user a copy-paste prompt for `docs/TUTORIAL.md` (`showTutorialModal`, `client/app.js`), and the **demo idea portal** — a revolving vertical carousel of product-native demo surfaces served from `/demos/` (`SURFACE_IDEAS` / `mountGallery`, `client/app.js`). Each portal card embeds the demo in an iframe and has a copy-prompt button; clicking opens `showIdeaModal` with the user-voice prompt (`client/app.js`).
 
 ## Surface detail view
 
@@ -38,16 +38,16 @@ When there are no surfaces and no home widget (`client/app.js`), the grid shows 
 
 - **`surface_updated`**: on `reload`/`version_id`, reloads the iframe with a fresh `?v=<now>` and adds a `refreshing` blur-fade class; on `title`/`updated_at`, patches the nav text in place.
 - **`agent_reply`**: shows the reply text as a toast.
-- **`surface_exec`**: calls `iframe.contentWindow.eval(data.js)` — agent-pushed JavaScript runs inside the surface iframe (same-origin, so this works). Errors are caught and logged.
+- **`surface_exec`**: best-effort JS injection into the open iframe. It works for same-origin frames the PWA can access; device/browser isolation can make it a no-op, and errors are caught and logged.
 
 (`state_patch` and `stream_append` are consumed by the injected `surface.js` runtime inside the iframe itself, not by the PWA shell.)
 
-## iframe postMessage bridge
+## iframe actions and postMessage bridge
 
-A top-level `message` listener accepts two message types from surface/renderer iframes:
+Modern artifacts use the injected `surface.js` runtime: `Surface.action(name, data)` posts directly to the artifact's origin so actions are attributed to the artifact that emitted them. A top-level `message` listener remains for older surface/renderer iframes and accepts two message types:
 
 - **`surface_navigate`** — navigate to a surface id or home (used by custom renderers/overlays).
-- **`surface_action`** — `POST /artifacts/:currentSurfaceId/actions` with `{ action, data }`. This is how a surface's HTML reports a user click back to the agent (the body example in `README.md`).
+- **`surface_action`** — `POST /artifacts/:id/actions` with `{ action, data }`, preferring an explicit `surface_id` in the message and falling back to the currently viewed surface.
 
 ## Global SSE
 

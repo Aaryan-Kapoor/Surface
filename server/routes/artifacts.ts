@@ -1,12 +1,15 @@
 import { Router } from "express";
+import type { Request, Response } from "express";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { getDb } from "../db.js";
 import {
+  type ArtifactFile,
   createArtifact,
   deleteArtifact,
   getArtifact,
+  getArtifactCard,
   getArtifactFile,
   getCurrentArtifactVersion,
   artifactAuthorPlane,
@@ -35,7 +38,7 @@ import { planeOf, requireSystem, targetOf } from "./helpers.js";
 // mutate system-authored ones: a system artifact can hold a display_role slot
 // or trusted JS that runs in the host display. Returns true if the request may
 // proceed; writes a 403 and returns false otherwise.
-function canMutateArtifact(req: any, res: any, existing: { metadata: string } | undefined): boolean {
+function canMutateArtifact(req: Request, res: Response, existing: { metadata: string } | undefined): boolean {
   if (!existing) return true; // not-found is handled downstream
   if (req.auth?.role === "system") return true;
   if (artifactAuthorPlane(existing) === "system") {
@@ -51,12 +54,25 @@ export const artifactsRouter = Router();
 // a hidden=true update and remove the card themselves (the default list
 // filters them out).
 export function cardPayload(id: string) {
-  const card = listArtifactCards(getDb(), { includeHidden: true }).find((item) => item.id === id);
+  const card = getArtifactCard(getDb(), id);
   return card || { id };
 }
 
+function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string): void {
+  const contentType = file.mime || inferMime(file.path);
+  const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
+  res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
+  res.setHeader("ETag", `"${file.sha256}"`);
+  if (contentType === "text/html") {
+    const bytes = injectSurfaceRuntime(readArtifactFileContent(file), artifactId);
+    res.send(bytes);
+    return;
+  }
+  res.sendFile(file.storage_path);
+}
+
 // Per-surface SSE stream
-artifactsRouter.get("/artifacts/:id/stream", (req: any, res) => {
+artifactsRouter.get("/artifacts/:id/stream", (req, res) => {
   if (!getArtifact(getDb(), req.params.id)) {
     res.status(404).json({ error: "Artifact not found" });
     return;
@@ -76,7 +92,7 @@ artifactsRouter.get("/artifacts", (req, res) => {
   })));
 });
 
-artifactsRouter.post("/artifacts/present-file", (req: any, res) => {
+artifactsRouter.post("/artifacts/present-file", (req, res) => {
   if (!requireSystem(req, res)) return; // reads the host filesystem
   const { path: filePath, title, metadata, copy, open, project_root } = req.body;
   if (!filePath) {
@@ -94,7 +110,7 @@ artifactsRouter.post("/artifacts/present-file", (req: any, res) => {
   }
 });
 
-artifactsRouter.post("/artifacts/link", (req: any, res) => {
+artifactsRouter.post("/artifacts/link", (req, res) => {
   if (!requireSystem(req, res)) return; // serves files straight off the disk
   const { path: linkPath, entry, title, metadata, open, project_root, template, params } = req.body;
   if (!linkPath) {
@@ -141,13 +157,13 @@ artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
 
 // ── Templates ──
 
-artifactsRouter.get("/api/templates", (req: any, res) => {
+artifactsRouter.get("/api/templates", (req, res) => {
   if (!requireSystem(req, res)) return; // reads .surface/templates from a caller-supplied project root
   const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
   res.json(listTemplates(project));
 });
 
-artifactsRouter.get("/api/templates/:name", (req: any, res) => {
+artifactsRouter.get("/api/templates/:name", (req, res) => {
   if (!requireSystem(req, res)) return; // reads template files from a caller-supplied project root
   const project = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
   try {
@@ -160,7 +176,7 @@ artifactsRouter.get("/api/templates/:name", (req: any, res) => {
 
 // Instantiate a template into normal artifact files. Re-running with the same
 // id updates params and re-renders (docs/templates/overview.md).
-function instantiateTemplate(req: any, res: any): void {
+function instantiateTemplate(req: Request, res: Response): void {
   const { id, title, metadata, project_root, template, params } = req.body;
   try {
     const tpl = resolveTemplate(template, project_root);
@@ -215,8 +231,8 @@ function instantiateTemplate(req: any, res: any): void {
   }
 }
 
-artifactsRouter.post("/artifacts", (req: any, res) => {
-  const { id, title, kind, mime, source_type, metadata, files, content, path: filePath, template } = req.body;
+artifactsRouter.post("/artifacts", (req, res) => {
+  const { id, title, kind, mime, source_type, metadata, files, content, content_base64, path: filePath, template } = req.body;
   if (template) {
     // Template instantiation renders server-side template files from disk.
     if (!requireSystem(req, res)) return;
@@ -233,8 +249,8 @@ artifactsRouter.post("/artifacts", (req: any, res) => {
   }
   const inputFiles = Array.isArray(files)
     ? files
-    : content !== undefined
-      ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
+    : content !== undefined || content_base64 !== undefined
+      ? [{ path: filePath || defaultPathForMime(mime), content, content_base64, mime }]
       : [];
   try {
     const result = createArtifact(getDb(), {
@@ -267,7 +283,7 @@ artifactsRouter.get("/artifacts/:id/chunks", (req, res) => {
   res.json({ chunks: getChunks(getDb(), req.params.id) });
 });
 
-artifactsRouter.post("/artifacts/:id/append", (req: any, res) => {
+artifactsRouter.post("/artifacts/:id/append", (req, res) => {
   if (!requireSystem(req, res)) return;
   const artifact = getArtifact(getDb(), req.params.id);
   if (!artifact) {
@@ -319,7 +335,7 @@ artifactsRouter.get("/artifacts/:id/versions", (req, res) => {
   res.json(listArtifactVersions(getDb(), req.params.id));
 });
 
-artifactsRouter.post("/artifacts/:id/rollback", (req: any, res) => {
+artifactsRouter.post("/artifacts/:id/rollback", (req, res) => {
   const { version } = req.body;
   if (version === undefined) {
     res.status(400).json({ error: "version is required" });
@@ -349,12 +365,12 @@ artifactsRouter.post("/artifacts/:id/rollback", (req: any, res) => {
   res.json(result);
 });
 
-artifactsRouter.put("/artifacts/:id", (req: any, res) => {
-  const { title, kind, mime, metadata, files, content, path: filePath, reason } = req.body;
+artifactsRouter.put("/artifacts/:id", (req, res) => {
+  const { title, kind, mime, metadata, files, content, content_base64, path: filePath, reason } = req.body;
   const inputFiles = Array.isArray(files)
     ? files
-    : content !== undefined
-      ? [{ path: filePath || defaultPathForMime(mime), content, mime }]
+    : content !== undefined || content_base64 !== undefined
+      ? [{ path: filePath || defaultPathForMime(mime), content, content_base64, mime }]
       : undefined;
   const existing = getArtifact(getDb(), req.params.id);
   if (!canMutateArtifact(req, res, existing)) return;
@@ -407,7 +423,7 @@ artifactsRouter.put("/artifacts/:id", (req: any, res) => {
   }
 });
 
-artifactsRouter.delete("/artifacts/:id", (req: any, res) => {
+artifactsRouter.delete("/artifacts/:id", (req, res) => {
   const existing = getArtifact(getDb(), req.params.id);
   if (!canMutateArtifact(req, res, existing)) return; // devices can't delete system-authored artifacts
   const deleted = deleteArtifact(getDb(), req.params.id);
@@ -431,7 +447,7 @@ artifactsRouter.get("/artifacts/:id/state", (req, res) => {
   res.json(getState(getDb(), req.params.id));
 });
 
-artifactsRouter.patch("/artifacts/:id/state", (req: any, res) => {
+artifactsRouter.patch("/artifacts/:id/state", (req, res) => {
   if (!requireSystem(req, res)) return;
   if (!getArtifact(getDb(), req.params.id)) {
     // The default global board materializes on first write
@@ -577,7 +593,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
   if (hasThumb(req.params.id)) {
     try {
       res.setHeader("Content-Type", "image/png");
-      res.send(fs.readFileSync(getThumbPath(req.params.id)));
+      res.sendFile(getThumbPath(req.params.id));
       return;
     } catch {}
   }
@@ -589,9 +605,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
       result.files[0];
     if (preferred) {
       try {
-        const bytes = readArtifactFileContent(preferred);
-        res.setHeader("Content-Type", preferred.mime || mime);
-        res.send(bytes);
+        sendArtifactFile(res, preferred, req.params.id);
         return;
       } catch {}
     }
@@ -611,12 +625,7 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
   try {
     const file = getArtifactFile(getDb(), artifactId, filePath);
     if (file) {
-      const contentType = file.mime || inferMime(file.path);
-      const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
-      res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
-      let bytes = readArtifactFileContent(file);
-      if (contentType === "text/html") bytes = injectSurfaceRuntime(bytes, artifactId);
-      res.send(bytes);
+      sendArtifactFile(res, file, artifactId);
       return;
     }
     // Linked-artifact fallback: serve any file under workspace_path that wasn't pre-registered.
@@ -659,9 +668,11 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
       const mime = inferMime(realAbs);
       const charset = mime.startsWith("text/") || mime === "application/json" || mime === "image/svg+xml";
       res.setHeader("Content-Type", charset ? `${mime}; charset=utf-8` : mime);
-      let bytes: Buffer = fs.readFileSync(realAbs);
-      if (mime === "text/html") bytes = injectSurfaceRuntime(bytes, artifactId);
-      res.send(bytes);
+      if (mime === "text/html") {
+        res.send(injectSurfaceRuntime(fs.readFileSync(realAbs), artifactId));
+      } else {
+        res.sendFile(realAbs);
+      }
       return;
     }
     res.status(404).send("Artifact file not found");

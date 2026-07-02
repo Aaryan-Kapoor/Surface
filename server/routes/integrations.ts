@@ -1,7 +1,7 @@
 import { Router } from "express";
-import dns from "node:dns/promises";
-import net from "node:net";
+import type { Request, Response } from "express";
 import { requireSystem } from "./helpers.js";
+import { OutboundBlockedError, safeHttpRequest } from "../outbound.js";
 
 // Third-party proxies quarantined behind one router: the Nexlayer deployment
 // API, the OpenRouter chat proxy, and the PDF X-Frame-Options bypass. None of
@@ -16,7 +16,7 @@ export const integrationsRouter = Router();
 
 const NEXLAYER_API = "https://app.nexlayer.io";
 
-integrationsRouter.post("/api/nexlayer/deploy", async (req: any, res) => {
+integrationsRouter.post("/api/nexlayer/deploy", async (req: Request, res: Response) => {
   if (!requireSystem(req, res)) return;
   try {
     const yaml = req.body.yaml;
@@ -36,7 +36,7 @@ integrationsRouter.post("/api/nexlayer/deploy", async (req: any, res) => {
   }
 });
 
-integrationsRouter.post("/api/nexlayer/extend", async (req: any, res) => {
+integrationsRouter.post("/api/nexlayer/extend", async (req: Request, res: Response) => {
   if (!requireSystem(req, res)) return;
   try {
     const { applicationName, sessionToken } = req.body;
@@ -52,7 +52,7 @@ integrationsRouter.post("/api/nexlayer/extend", async (req: any, res) => {
   }
 });
 
-integrationsRouter.get("/api/nexlayer/status", async (req: any, res) => {
+integrationsRouter.get("/api/nexlayer/status", async (req: Request, res: Response) => {
   if (!requireSystem(req, res)) return;
   try {
     const token = req.query.sessionToken as string;
@@ -87,7 +87,7 @@ function chatRateAllow(): { ok: true } | { ok: false; retryAfter: number } {
   return { ok: true };
 }
 
-integrationsRouter.post("/api/chat", async (req: any, res) => {
+integrationsRouter.post("/api/chat", async (req: Request, res: Response) => {
   if (!requireSystem(req, res)) return;
   const gate = chatRateAllow();
   if (!gate.ok) {
@@ -104,6 +104,8 @@ integrationsRouter.post("/api/chat", async (req: any, res) => {
     res.status(400).json({ error: "messages is required" });
     return;
   }
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
   try {
     const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -116,6 +118,7 @@ integrationsRouter.post("/api/chat", async (req: any, res) => {
         messages,
         stream: stream || false,
       }),
+      signal: abort.signal,
     });
     if (!upstream.ok) {
       const err = await upstream.text();
@@ -130,7 +133,9 @@ integrationsRouter.post("/api/chat", async (req: any, res) => {
         while (true) {
           const { done, value } = await reader.read();
           if (done) { res.end(); return; }
-          res.write(Buffer.from(value));
+          if (!res.write(Buffer.from(value))) {
+            await new Promise((resolve) => res.once("drain", resolve));
+          }
         }
       };
       pump().catch(() => res.end());
@@ -143,52 +148,10 @@ integrationsRouter.post("/api/chat", async (req: any, res) => {
   }
 });
 
-// Returns true if the IP literal is loopback, private (RFC1918), link-local,
-// IPv4-mapped IPv6, ULA, or otherwise off-limits for outbound SSRF.
-function isPrivateIp(ip: string): boolean {
-  const v = net.isIP(ip);
-  if (v === 4) {
-    const parts = ip.split(".").map(Number);
-    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return true;
-    const [a, b] = parts;
-    if (a === 0 || a === 127) return true;
-    if (a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;
-    if (a >= 224) return true; // multicast + reserved
-    return false;
-  }
-  if (v === 6) {
-    const lower = ip.toLowerCase();
-    if (lower === "::" || lower === "::1") return true;
-    if (lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return true; // fe80::/10
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7
-    if (lower.startsWith("ff")) return true; // multicast
-    if (lower.startsWith("::ffff:")) {
-      const v4 = lower.slice(7);
-      if (net.isIP(v4) === 4) return isPrivateIp(v4);
-    }
-    return false;
-  }
-  return true; // not an IP literal: caller should resolve first
-}
-
-async function resolvesPrivate(hostname: string): Promise<boolean> {
-  if (net.isIP(hostname) !== 0) return isPrivateIp(hostname);
-  try {
-    const addresses = await dns.lookup(hostname, { all: true });
-    if (addresses.length === 0) return true;
-    return addresses.some((a) => isPrivateIp(a.address));
-  } catch {
-    return true; // fail-closed
-  }
-}
-
 // PDF proxy — bypasses X-Frame-Options so surfaces can embed PDFs.
 // Refuses URLs that resolve to loopback / RFC1918 / link-local / metadata IPs
 // to defeat trivial SSRF through this endpoint.
-integrationsRouter.get("/proxy/pdf", async (req: any, res) => {
+integrationsRouter.get("/proxy/pdf", async (req: Request, res: Response) => {
   if (!requireSystem(req, res)) return;
   const url = req.query.url as string;
   if (!url || !/^https?:\/\//.test(url)) {
@@ -202,14 +165,10 @@ integrationsRouter.get("/proxy/pdf", async (req: any, res) => {
     res.status(400).json({ error: "invalid url" });
     return;
   }
-  if (await resolvesPrivate(parsed.hostname)) {
-    res.status(403).json({ error: "host resolves to a private or loopback address" });
-    return;
-  }
   try {
-    const upstream = await fetch(url, {
+    const upstream = await safeHttpRequest(url, {
       headers: { "User-Agent": "Surface/1.0" },
-      redirect: "manual",
+      timeoutMs: 30_000,
     });
     if (upstream.status >= 300 && upstream.status < 400) {
       // Don't follow redirects automatically — a redirect could bounce us into
@@ -217,16 +176,19 @@ integrationsRouter.get("/proxy/pdf", async (req: any, res) => {
       res.status(502).json({ error: "upstream redirected; pass the final URL directly" });
       return;
     }
-    if (!upstream.ok) {
+    if (upstream.status < 200 || upstream.status >= 300) {
       res.status(upstream.status).send(`Upstream ${upstream.status}`);
       return;
     }
-    const ct = upstream.headers.get("content-type") || "application/pdf";
-    res.setHeader("Content-Type", ct);
+    const ct = upstream.headers["content-type"];
+    res.setHeader("Content-Type", Array.isArray(ct) ? ct[0] : ct || "application/pdf");
     res.setHeader("Cache-Control", "public, max-age=3600");
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    res.send(buf);
+    res.send(upstream.body);
   } catch (err: any) {
+    if (err instanceof OutboundBlockedError) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
     res.status(502).json({ error: err.message });
   }
 });

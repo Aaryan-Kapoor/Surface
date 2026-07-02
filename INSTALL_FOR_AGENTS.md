@@ -48,6 +48,10 @@ If not, ask the user before installing:
 
 If yes: `./scripts/install-systemd-user-service.sh`, then re-run the HTTP check. If still failing, set `service: "failed"` and `notes: <reason>` and stop — surface the failure to the user.
 
+Surface also binds a mandatory content listener on `SURFACE_CONTENT_PORT`
+(default `3100`). If startup fails with a content-origin bind error, free that
+port or set a unique `SURFACE_CONTENT_PORT`; it must differ from `PORT`.
+
 If the user declines: set `service: "not_installed"` and stop. Don't proceed without a running service.
 
 > **Note (fresh-start schema, 2026-06):** the first boot of a current build archives any pre-existing database to `~/.surface/db.sqlite.bak` and starts clean. Surfaces from older versions are not migrated — re-link or re-create them (`surface sync` recreates anything a project declared in `.surface/`).
@@ -80,7 +84,7 @@ Ask the user:
 If yes:
 
 1. Set `tutorial: "in_progress"`.
-2. Run `surface seed-demos` — links the seven example surfaces from `examples/demos/` (or unhides them if a previous tour left them archived). Each row is tagged `metadata.demo = true` so it's identifiable.
+2. Run `surface seed-demos` — links the bundled example surfaces from `examples/demos/` (or unhides them if a previous tour left them archived). Each row is tagged `metadata.demo = true` so it's identifiable.
 3. Walk the user through `docs/TUTORIAL.md` step by step.
 4. At the end, run `surface clear-demos` — flips `metadata.hidden = true` on every demo-tagged row so they vanish from the dashboard. The artifact records are kept; running `surface seed-demos` again revives them in place rather than re-creating. Set `tutorial: "complete"`.
 
@@ -121,11 +125,11 @@ If `surface` is not on PATH:
 
 ```bash
 cd /path/to/Surface
-npm install             # also builds the single-file CLI bundle (dist/surface.cjs)
+npm install             # also builds the single-file CLI bundle (dist/surface.mjs)
 npm link
 ```
 
-Alternative without `npm link`: invoke via `node /path/to/Surface/dist/surface.cjs` or `npx tsx /path/to/Surface/bin/surface.ts`.
+Alternative without `npm link`: invoke via `node /path/to/Surface/dist/surface.mjs` or `npx tsx /path/to/Surface/bin/surface.ts`.
 
 ## What to use the CLI for
 
@@ -168,6 +172,9 @@ npx tsc --noEmit
 npm run test:artifacts
 systemctl --user restart surface.service
 ```
+
+If `SKILL.md` changed, re-copy it to the path recorded in `skill_saved_to`
+before restarting your work.
 
 Ask before restarting if the user has active work on the display.
 
