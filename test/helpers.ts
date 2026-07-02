@@ -71,8 +71,8 @@ export function spawnServer(
   env: Record<string, string>,
   contentPort: number,
 ): ChildProcess {
-  const tsxBin = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-  const child = spawn(tsxBin, ["server/index.ts"], {
+  const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  const child = spawn(process.execPath, [tsxCli, "server/index.ts"], {
     cwd: REPO_ROOT,
     detached: true,
     env: {
@@ -136,7 +136,17 @@ export function cleanupDir(dir: string): void {
 }
 
 export async function assertNoLeakedTestServers(): Promise<void> {
-  const out = spawn("pgrep", ["-af", "server/index.ts"], { stdio: ["ignore", "pipe", "ignore"] });
+  const out = process.platform === "win32"
+    ? spawn("powershell.exe", [
+      "-NoProfile",
+      "-Command",
+      [
+        "Get-CimInstance Win32_Process",
+        "Where-Object { $_.CommandLine -like '*server/index.ts*' }",
+        "ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }",
+      ].join(" | "),
+    ], { stdio: ["ignore", "pipe", "ignore"] })
+    : spawn("pgrep", ["-af", "server/index.ts"], { stdio: ["ignore", "pipe", "ignore"] });
   let text = "";
   out.stdout?.setEncoding("utf8");
   out.stdout?.on("data", (chunk) => { text += chunk; });

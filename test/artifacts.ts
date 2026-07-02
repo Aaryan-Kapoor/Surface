@@ -173,6 +173,12 @@ async function main() {
 
     const singleBytes = await api("GET", `/artifacts/${single.artifact.id}/files/single.html`);
     assert(singleBytes.includes("linked-single"), "Single-file link did not serve bytes");
+    const singleViewRedirect = await req()("GET", `/artifacts/${single.artifact.id}/view?v=touch-test`);
+    assert(singleViewRedirect.status === 302, `HTML view should redirect to file route (got ${singleViewRedirect.status})`);
+    assert(
+      singleViewRedirect.headers.get("location") === `/artifacts/${single.artifact.id}/files/single.html?v=touch-test`,
+      "HTML view redirect dropped cache-busting query params",
+    );
 
     // Directory link with entry + sibling
     const dirPath = path.join(tmpRoot, "projdir");
@@ -222,13 +228,21 @@ async function main() {
     // Symlink escape — symlink inside the linked dir pointing outside it
     const secretPath = path.join(tmpRoot, "secret.txt");
     fs.writeFileSync(secretPath, "SHOULD-NOT-LEAK");
-    fs.symlinkSync(secretPath, path.join(dirPath, "leak"));
-    const leak = await raw("GET", `/artifacts/${dir.artifact.id}/files/leak`);
-    assert(
-      leak.status === 403 || leak.status === 404,
-      `Symlink escape must be blocked (got ${leak.status}, body: ${leak.body.slice(0, 120)})`,
-    );
-    assert(!leak.body.includes("SHOULD-NOT-LEAK"), "Symlink escape leaked the target's bytes");
+    let symlinkCreated = true;
+    try {
+      fs.symlinkSync(secretPath, path.join(dirPath, "leak"));
+    } catch (err: any) {
+      if (process.platform !== "win32" || err?.code !== "EPERM") throw err;
+      symlinkCreated = false;
+    }
+    if (symlinkCreated) {
+      const leak = await raw("GET", `/artifacts/${dir.artifact.id}/files/leak`);
+      assert(
+        leak.status === 403 || leak.status === 404,
+        `Symlink escape must be blocked (got ${leak.status}, body: ${leak.body.slice(0, 120)})`,
+      );
+      assert(!leak.body.includes("SHOULD-NOT-LEAK"), "Symlink escape leaked the target's bytes");
+    }
   } finally {
     for (const id of linkedFileIds) await optionalDelete(`/artifacts/${id}`);
     fs.rmSync(tmpRoot, { recursive: true, force: true });

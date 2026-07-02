@@ -1,8 +1,10 @@
 # Surface Tutorial
 
-> **For agents:** narrate each step to the user. Run the commands shown. Wait for visual confirmation before advancing. Update the `tutorial` field in `~/.surface/install-state.json` to `in_progress` after Step 1 and `complete` after Step 7. If the user wants to stop, set it to `skipped`.
+> **For agents:** narrate each step to the user. Run the commands shown. Wait for visual confirmation before advancing. Update the `tutorial` field in `~/.surface/install-state.json` to `in_progress` after Step 1 and `complete` after Step 7. If the user wants to stop, set it to `skipped`. Do not edit `INSTALL_FOR_AGENTS.md` for tutorial state; it documents the state file only.
 
 This is a five-minute tour. By the end the user has a card on their display, has watched a hot reload, and has clicked a button you reacted to.
+
+Commands are shown for Bash first. When the user's shell is PowerShell, use the PowerShell blocks instead.
 
 ---
 
@@ -45,6 +47,17 @@ surface create "Hello" --mime text/html --content - <<'EOF'
 EOF
 ```
 
+PowerShell:
+
+```powershell
+@'
+<!doctype html>
+<html><body style="background:#0a0a0a;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <h1>Hello from Surface 👋</h1>
+</body></html>
+'@ | surface create "Hello" --mime text/html --content -
+```
+
 **Expect:** a new card on the grid within a second. Note the returned `artifact.id` — you'll reuse it.
 
 ---
@@ -66,6 +79,19 @@ EOF
 surface link "$(pwd)/demo.html" --title "Demo"
 ```
 
+PowerShell:
+
+```powershell
+@'
+<!doctype html>
+<html><body style="background:#101820;color:#fee715;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+  <h1 id="t">Linked demo</h1>
+</body></html>
+'@ | Set-Content -Path .\demo.html -Encoding UTF8
+
+surface link (Resolve-Path .\demo.html).Path --title "Demo"
+```
+
 **Expect:** a second card titled "Demo". Click it. The page renders from your file on disk, not a copy. Note this artifact's `id` for the next step.
 
 ---
@@ -79,6 +105,16 @@ surface link "$(pwd)/demo.html" --title "Demo"
 ```bash
 # Edit demo.html in place — flip yellow text to neon green
 sed -i 's/#fee715/#39ff14/' demo.html
+
+surface touch <id-from-step-4>
+```
+
+PowerShell:
+
+```powershell
+# Edit demo.html in place - flip yellow text to neon green
+(Get-Content -Raw .\demo.html).Replace('#fee715','#39ff14') |
+  Set-Content -Path .\demo.html -Encoding UTF8
 
 surface touch <id-from-step-4>
 ```
@@ -114,6 +150,32 @@ surface set <id-from-step-4> message "Click me"
 surface wait --id <id-from-step-4> --action pinged --timeout 600 > /tmp/ping.json &
 ```
 
+PowerShell:
+
+```powershell
+@'
+<!doctype html>
+<html><body style="background:#101820;color:#39ff14;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:24px">
+  <h1 data-surface-bind="message">Click me</h1>
+  <button id="ping" style="padding:12px 24px;background:#39ff14;color:#101820;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:bold">Ping the agent</button>
+  <script>
+    document.getElementById("ping").addEventListener("click", () => {
+      Surface.action("pinged", { ts: Date.now() });
+    });
+  </script>
+</body></html>
+'@ | Set-Content -Path .\demo.html -Encoding UTF8
+
+surface touch <id-from-step-4>
+surface set <id-from-step-4> message "Click me"
+
+$pingPath = Join-Path $env:TEMP "ping.json"
+Start-Process surface.cmd `
+  -ArgumentList @("wait","--id","<id-from-step-4>","--action","pinged","--timeout","600") `
+  -RedirectStandardOutput $pingPath `
+  -WindowStyle Hidden
+```
+
 User clicks the button.
 
 **Expect:** the background `surface wait` exits 0; the agent's harness sees the background task complete. The agent reads `/tmp/ping.json`:
@@ -131,6 +193,13 @@ User clicks the button.
 
 ```bash
 surface reply <id-from-step-4> "Got your ping at $(date +%H:%M:%S)"
+surface set <id-from-step-4> message "Ping received"
+```
+
+PowerShell:
+
+```powershell
+surface reply <id-from-step-4> "Got your ping at $(Get-Date -Format HH:mm:ss)"
 surface set <id-from-step-4> message "Ping received"
 ```
 
@@ -153,6 +222,14 @@ Use `surface wait` when you want the *user's click* to be the event that wakes y
 
 ```bash
 surface theme '{"background":"linear-gradient(135deg,#0a0012,#1a0028)","colors":{"accent":"#ff0080"}}'
+```
+
+PowerShell:
+
+```powershell
+@'
+{"background":"linear-gradient(135deg,#0a0012,#1a0028)","colors":{"accent":"#ff0080"}}
+'@ | surface theme -
 ```
 
 **Expect:** the grid background shifts to purple. Reset with `surface theme reset`.

@@ -530,7 +530,9 @@ artifactsRouter.get("/artifacts/:id/view", (req, res) => {
   const fileUrl = `/artifacts/${encodeURIComponent(result.artifact.id)}/files/${preferred.path.split("/").map(encodeURIComponent).join("/")}`;
 
   if (preferred.mime === "text/html") {
-    res.redirect(fileUrl);
+    const queryStart = req.originalUrl.indexOf("?");
+    const query = queryStart === -1 ? "" : req.originalUrl.slice(queryStart);
+    res.redirect(fileUrl + query);
     return;
   }
 
