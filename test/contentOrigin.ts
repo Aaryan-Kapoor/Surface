@@ -3,7 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { cleanupDir, isolatedPorts, killServer, makeClient, REPO_ROOT, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import { cleanupDir, freePort, isolatedPorts, killServer, makeClient, REPO_ROOT, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
 
 // End-to-end verification of content-origin isolation. We boot one server with
 // two listeners — the app port (:PORT, loopback = system) and the content port
@@ -127,8 +127,8 @@ async function main() {
   await test("server refuses to boot when the content port is taken (content plane is mandatory)", async () => {
     // The content plane is the isolation boundary; a server with a dead content
     // listener must not run (it would break or mis-route device surfaces).
-    const appPort = PORT + 10;
-    const takenContentPort = PORT + 11;
+    const appPort = await freePort();
+    const takenContentPort = await freePort();
     const squatter = net.createServer();
     await new Promise<void>((resolve) => squatter.listen(takenContentPort, "127.0.0.1", () => resolve()));
     const guardDataDir = tmpDir("surface-bindfail-");
@@ -159,7 +159,7 @@ async function main() {
     // A collision would make the content gate match the app port too, forcing
     // every request — including the agent plane's own — to `device`. The server
     // must fail fast instead of booting into a fully de-privileged state.
-    const samePort = PORT + 5; // exits before any listen, so the value need only collide
+    const samePort = await freePort(); // exits before any listen, so the value need only collide
     const guardDataDir = tmpDir("surface-guard-");
     const proc = spawn(path.join(REPO_ROOT, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
       cwd: REPO_ROOT,

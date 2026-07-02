@@ -55,11 +55,11 @@ function safeWrite(client: SSEClient, payload: string, onFailure?: () => void): 
 }
 
 setInterval(() => {
-  for (const client of globalClients) {
+  for (const client of [...globalClients]) {
     safeWrite(client, ":hb\n\n", () => removeGlobalClient(client.id));
   }
-  for (const [surfaceId, clients] of surfaceClients) {
-    for (const client of clients) {
+  for (const [surfaceId, clients] of [...surfaceClients.entries()]) {
+    for (const client of [...clients]) {
       safeWrite(client, ":hb\n\n", () => removeSurfaceClient(surfaceId, client.id));
     }
   }
@@ -117,7 +117,7 @@ function sendEvent(client: SSEClient, event: string, data: unknown, onFailure?: 
 // Broadcast to every global client, or — when `onlyTarget` is set — to just
 // the connections belonging to that device session (or "local").
 export function broadcastGlobal(event: string, data: unknown, onlyTarget?: string): void {
-  for (const client of globalClients) {
+  for (const client of [...globalClients]) {
     if (onlyTarget && client.target !== onlyTarget) continue;
     sendEvent(client, event, data, () => removeGlobalClient(client.id));
   }
@@ -130,7 +130,7 @@ export function broadcastToSurface(
 ): void {
   const clients = surfaceClients.get(surfaceId);
   if (clients) {
-    for (const client of clients) {
+    for (const client of [...clients]) {
       sendEvent(client, event, data, () => removeSurfaceClient(surfaceId, client.id));
     }
   }

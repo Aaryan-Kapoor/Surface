@@ -16,7 +16,7 @@ import {
 } from "../auth.js";
 import { getPresence } from "../presence.js";
 import { connectedTargets } from "../sse.js";
-import { baseUrlFor, clientIp, isSecureRequest, requireSystem, resolveDeviceTarget } from "./helpers.js";
+import { baseUrlFor, clientIp, isSecureRequest, requireSystem } from "./helpers.js";
 
 export const authRouter = Router();
 
@@ -57,6 +57,24 @@ function sessionPayload(sessionId: string) {
     expiresAt: s.expires_at,
     client: { label: s.label, userAgent: s.user_agent, ip: s.client_ip },
   };
+}
+
+function resolveRevocableDevice(res: Response, device: string): { id: string; label: string } | null {
+  const query = device.trim().toLowerCase();
+  const candidates = listSessions({ role: "device" }).map((s) => ({ id: s.id, label: s.label || s.id }));
+  let matches = candidates.filter((c) => c.label.toLowerCase() === query || c.id === device.trim());
+  if (matches.length === 0) {
+    matches = candidates.filter((c) => c.label.toLowerCase().startsWith(query));
+  }
+  if (matches.length === 0) {
+    res.status(404).json({ error: `No device matches "${device}"`, devices: candidates.map((c) => c.label) });
+    return null;
+  }
+  if (matches.length > 1) {
+    res.status(400).json({ error: `"${device}" is ambiguous`, matches: matches.map((c) => c.label) });
+    return null;
+  }
+  return matches[0];
 }
 
 authRouter.get("/api/auth/session", (req, res) => {
@@ -208,7 +226,7 @@ authRouter.post("/api/auth/devices/revoke", (req, res) => {
     res.status(400).json({ error: "Missing device (id or label)" });
     return;
   }
-  const resolved = resolveDeviceTarget(res, target);
+  const resolved = resolveRevocableDevice(res, target);
   if (!resolved) return;
-  res.json({ revoked: revokeSession(resolved), device: target });
+  res.json({ revoked: revokeSession(resolved.id), device: resolved });
 });

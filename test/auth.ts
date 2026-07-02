@@ -356,8 +356,15 @@ async function main() {
     const deviceLabels = Array.isArray(devices.body) ? devices.body.map((d: any) => d.label) : [];
     check("devices list shows the paired phone", devices.status === 200 && deviceLabels.includes("phone"), deviceLabels);
 
+    const revokeLocal = await req("POST", "/api/auth/devices/revoke", { token: SYS, body: { device: "local" } });
+    check("device revoke rejects the local system target", revokeLocal.status === 404, revokeLocal.body);
+
     const revAmbig = await req("POST", "/api/auth/devices/revoke", { token: SYS, body: { device: "ph" } });
-    check("revoke by unambiguous label prefix works", revAmbig.status === 200 && revAmbig.body?.revoked === true, revAmbig.body);
+    check(
+      "revoke by unambiguous label prefix works",
+      revAmbig.status === 200 && revAmbig.body?.revoked === true && revAmbig.body?.device?.label === "phone",
+      revAmbig.body,
+    );
 
     const afterRevoke = await req("GET", "/artifacts", { cookie: sessionCookie! });
     check("revoked device immediately loses access", afterRevoke.status === 401, afterRevoke.status);

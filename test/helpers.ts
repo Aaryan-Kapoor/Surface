@@ -68,8 +68,8 @@ export function makeClient(base: string) {
 export function spawnServer(
   port: number,
   dataDir: string,
-  env: Record<string, string> = {},
-  contentPort?: number,
+  env: Record<string, string>,
+  contentPort: number,
 ): ChildProcess {
   const tsxBin = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
   const child = spawn(tsxBin, ["server/index.ts"], {
@@ -81,7 +81,7 @@ export function spawnServer(
       SURFACE_BIND: "127.0.0.1",
       SURFACE_PAIR_ON_START: "0",
       PORT: String(port),
-      SURFACE_CONTENT_PORT: String(contentPort ?? port + 1000),
+      SURFACE_CONTENT_PORT: String(contentPort),
       NODE_ENV: "test",
       ...env,
     },
