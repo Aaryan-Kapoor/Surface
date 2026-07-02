@@ -71,7 +71,8 @@ export interface SurfaceCard {
 
 export interface ArtifactInputFile {
   path?: string;
-  content: string | Buffer;
+  content?: string | Buffer;
+  content_base64?: string;
   mime?: string;
 }
 
@@ -294,10 +295,43 @@ export function listArtifactCards(
   });
 }
 
-export function listArtifacts(db: Database.Database): Artifact[] {
-  return db
-    .prepare(`SELECT * FROM artifacts WHERE deleted_at IS NULL ORDER BY updated_at DESC`)
-    .all() as Artifact[];
+export function getArtifactCard(db: Database.Database, id: string): SurfaceCard | undefined {
+  const row = db
+    .prepare(
+      `SELECT
+        a.id,
+        a.title,
+        a.metadata,
+        a.project_root,
+        json_extract(a.metadata, '$.agent') AS agent,
+        a.template,
+        a.created_at,
+        a.updated_at,
+        a.id AS artifact_id,
+        a.kind AS artifact_kind,
+        a.mime AS artifact_mime,
+        a.current_version_id AS current_version_id,
+        (
+          SELECT af.path
+          FROM artifact_files af
+          WHERE af.artifact_version_id = a.current_version_id
+          ORDER BY CASE WHEN af.path = 'index.html' THEN 0 ELSE 1 END, af.path
+          LIMIT 1
+        ) AS first_file_path,
+        (
+          SELECT count(*)
+          FROM surface_actions sa
+          WHERE sa.surface_id = a.id AND sa.status = 'pending'
+        ) AS pending_actions
+       FROM artifacts a
+       WHERE a.deleted_at IS NULL AND a.id = ?`,
+    )
+    .get(id) as SurfaceCard | undefined;
+  return row ? {
+    ...row,
+    preview_url: `/artifacts/${row.id}/view?preview=1`,
+    view_url: `/artifacts/${row.id}/view`,
+  } : undefined;
 }
 
 export function readArtifact(db: Database.Database, id: string) {
@@ -346,6 +380,7 @@ export function createArtifact(
       throw new Error(`Artifact already exists: ${id}`);
     }
     if (existingAny?.deleted_at) {
+      removeArtifactWorkspace(id);
       db.prepare(`DELETE FROM artifacts WHERE id = ?`).run(id);
     }
     db.prepare(
@@ -425,15 +460,24 @@ export function updateArtifact(
 }
 
 export function deleteArtifact(db: Database.Database, id: string): boolean {
-  const result = db.prepare(`UPDATE artifacts SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`).run(id);
-  // Clear any pending user actions queued against this surface so they don't
-  // accumulate forever or wake `surface wait` listeners after the surface
-  // is gone.
-  db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
-  db.prepare(`DELETE FROM surface_state WHERE artifact_id = ?`).run(id);
-  db.prepare(`DELETE FROM surface_bindings WHERE surface_id = ?`).run(id);
-  db.prepare(`DELETE FROM surface_stream_chunks WHERE artifact_id = ?`).run(id);
-  return result.changes > 0;
+  let changed = 0;
+  const tx = db.transaction(() => {
+    const result = db.prepare(`UPDATE artifacts SET deleted_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL`).run(id);
+    changed = result.changes;
+    if (!changed) return;
+    // Clear any pending user actions queued against this surface so they don't
+    // accumulate forever or wake `surface wait` listeners after the surface
+    // is gone.
+    db.prepare(`DELETE FROM surface_actions WHERE surface_id = ?`).run(id);
+    db.prepare(`DELETE FROM surface_state WHERE artifact_id = ?`).run(id);
+    db.prepare(`DELETE FROM surface_bindings WHERE surface_id = ?`).run(id);
+    db.prepare(`DELETE FROM surface_stream_chunks WHERE artifact_id = ?`).run(id);
+    db.prepare(`DELETE FROM artifact_files WHERE artifact_version_id IN (SELECT id FROM artifact_versions WHERE artifact_id = ?)`).run(id);
+    db.prepare(`DELETE FROM artifact_versions WHERE artifact_id = ?`).run(id);
+  });
+  tx();
+  if (changed) removeArtifactWorkspace(id);
+  return changed > 0;
 }
 
 export function presentFile(
@@ -632,7 +676,8 @@ function createArtifactVersion(
 
   const fileRows = inputFiles.map((file) => {
     const artifactPath = normalizeArtifactPath(file.path || "index.html");
-    const data = Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content);
+    const mime = file.mime || inferMime(artifactPath);
+    const data = decodeInputFile(file, mime);
     const sha256 = crypto.createHash("sha256").update(data).digest("hex");
     const diskPath = path.join(filesDir, ...artifactPath.split("/"));
     const resolvedDiskPath = path.resolve(diskPath);
@@ -646,7 +691,7 @@ function createArtifactVersion(
       id: uuidv4(),
       artifact_version_id: versionId,
       path: artifactPath,
-      mime: file.mime || inferMime(artifactPath),
+      mime,
       size_bytes: data.length,
       sha256,
       storage_kind: "workspace" as const,
@@ -687,6 +732,73 @@ function createArtifactVersion(
   }
 
   return getArtifactVersion(db, versionId)!;
+}
+
+function isTextLikeMime(mime: string): boolean {
+  return mime.startsWith("text/") ||
+    mime === "application/json" ||
+    mime === "application/javascript" ||
+    mime === "text/javascript" ||
+    mime === "image/svg+xml" ||
+    mime.endsWith("+json") ||
+    mime.endsWith("+xml");
+}
+
+function decodeInputFile(file: ArtifactInputFile, mime: string): Buffer {
+  if (typeof file.content_base64 === "string") {
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(file.content_base64.replace(/\s+/g, ""))) {
+      throw new Error("content_base64 must be valid base64");
+    }
+    return Buffer.from(file.content_base64, "base64");
+  }
+  if (Buffer.isBuffer(file.content)) return file.content;
+  if (typeof file.content === "string") {
+    if (!isTextLikeMime(mime)) {
+      throw new Error(`Binary MIME ${mime} requires content_base64 in JSON artifact APIs`);
+    }
+    return Buffer.from(file.content, "utf8");
+  }
+  throw new Error(`content or content_base64 is required for ${file.path || "index.html"}`);
+}
+
+function removeArtifactWorkspace(id: string): void {
+  try {
+    assertSafeArtifactId(id);
+    fs.rmSync(path.join(getWorkspaceDir(), "artifacts", id), { recursive: true, force: true, maxRetries: 3 });
+  } catch {}
+}
+
+export function gcArtifactStorage(db: Database.Database): void {
+  const root = path.join(getWorkspaceDir(), "artifacts");
+  let artifactDirs: string[];
+  try { artifactDirs = fs.readdirSync(root); } catch { return; }
+  const liveRows = db
+    .prepare(`SELECT id FROM artifacts WHERE deleted_at IS NULL`)
+    .all() as Array<{ id: string }>;
+  const live = new Set(liveRows.map((r) => r.id));
+  for (const id of artifactDirs) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || !live.has(id)) {
+      try { fs.rmSync(path.join(root, id), { recursive: true, force: true, maxRetries: 3 }); } catch {}
+      continue;
+    }
+    const versionRoot = path.join(root, id, "versions");
+    let versionDirs: string[];
+    try { versionDirs = fs.readdirSync(versionRoot); } catch { continue; }
+    const referenced = db
+      .prepare(
+        `SELECT av.version
+         FROM artifact_versions av
+         WHERE av.artifact_id = ?
+           AND EXISTS (SELECT 1 FROM artifact_files af WHERE af.artifact_version_id = av.id AND af.storage_kind = 'workspace')`,
+      )
+      .all(id) as Array<{ version: number }>;
+    const keep = new Set(referenced.map((r) => String(r.version)));
+    for (const v of versionDirs) {
+      if (!keep.has(v)) {
+        try { fs.rmSync(path.join(versionRoot, v), { recursive: true, force: true, maxRetries: 3 }); } catch {}
+      }
+    }
+  }
 }
 
 function iconForMime(mime: string): string {

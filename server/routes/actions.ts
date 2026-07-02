@@ -1,10 +1,12 @@
 import { Router } from "express";
-import { ackAction, createAction, getAction, getDb, getPendingActions } from "../db.js";
+import type { Request } from "express";
+import { getDb } from "../db.js";
+import { ackAction, createAction, getAction, getPendingActions } from "../actionsStore.js";
 import { getArtifact } from "../artifacts.js";
 import { patchState } from "../state.js";
 import { broadcastGlobal, broadcastToSurface } from "../sse.js";
-import { createBinding, deleteBinding, dispatchAction, listBindings, setBindingEnabled } from "../bindings.js";
-import { deviceNameOf, requireSystem } from "./helpers.js";
+import { createBinding, deleteBinding, dispatchAction, listBindings, projectAllowsBindings, setBindingEnabled } from "../bindings.js";
+import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
 
 export const actionsRouter = Router();
 
@@ -20,6 +22,24 @@ const WEBHOOK_PATH = process.env.SURFACE_WEBHOOK_PATH || "/hooks/agent";
 // webhook doesn't flood the display with toasts.
 let lastWebhookNotifyAt = 0;
 const WEBHOOK_NOTIFY_THROTTLE_MS = 60_000;
+const ACTION_RATE_LIMIT = Math.max(1, Number(process.env.SURFACE_ACTION_RATE_LIMIT || 120));
+const ACTION_RATE_WINDOW_MS = 60_000;
+const actionRate = new Map<string, { count: number; windowStart: number }>();
+
+function actionRateAllowed(req: Request): { ok: true } | { ok: false; retryAfter: number } {
+  if (req.auth?.role === "system") return { ok: true };
+  const key = targetOf(req);
+  const now = Date.now();
+  const state = actionRate.get(key) || { count: 0, windowStart: now };
+  if (now - state.windowStart >= ACTION_RATE_WINDOW_MS) {
+    state.windowStart = now;
+    state.count = 0;
+  }
+  state.count++;
+  actionRate.set(key, state);
+  if (state.count <= ACTION_RATE_LIMIT) return { ok: true };
+  return { ok: false, retryAfter: Math.max(1, Math.ceil((state.windowStart + ACTION_RATE_WINDOW_MS - now) / 1000)) };
+}
 
 function notifyWebhookFailure(reason: string) {
   const now = Date.now();
@@ -61,18 +81,24 @@ async function fanOutWebhook(payload: {
 }
 
 // Display posts a user action (iframe postMessage → PWA → here).
-actionsRouter.post("/artifacts/:id/actions", (req: any, res) => {
+actionsRouter.post("/artifacts/:id/actions", (req, res) => {
   const artifact = getArtifact(getDb(), req.params.id);
   if (!artifact) {
     res.status(404).json({ error: "Artifact not found" });
     return;
   }
+  const gate = actionRateAllowed(req);
+  if (!gate.ok) {
+    res.setHeader("Retry-After", String(gate.retryAfter));
+    res.status(429).json({ error: `action rate limit exceeded (${ACTION_RATE_LIMIT}/min)`, retry_after: gate.retryAfter });
+    return;
+  }
   const { action, data } = req.body;
-  if (!action) {
+  if (typeof action !== "string" || !action.trim()) {
     res.status(400).json({ error: "action is required" });
     return;
   }
-  const act = createAction({ surface_id: req.params.id, action, data });
+  const act = createAction(getDb(), { surface_id: req.params.id, action, data });
 
   // An ask surface flips to answered server-side the moment the answer action
   // lands, so the card can never be answered twice — independent of whether a
@@ -113,10 +139,18 @@ actionsRouter.post("/artifacts/:id/actions", (req: any, res) => {
 
 // ── Bindings (layer 2 registration — system plane only) ──
 
-actionsRouter.post("/artifacts/:id/bindings", (req: any, res) => {
+actionsRouter.post("/artifacts/:id/bindings", (req, res) => {
   if (!requireSystem(req, res)) return;
-  if (!getArtifact(getDb(), req.params.id)) {
+  const artifact = getArtifact(getDb(), req.params.id);
+  if (!artifact) {
     res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  if (!projectAllowsBindings(artifact.project_root)) {
+    res.status(403).json({
+      error: "Wake bindings require recorded project consent",
+      hint: "Set .surface/config.json bindings.enabled to true after asking the user.",
+    });
     return;
   }
   try {
@@ -134,17 +168,17 @@ actionsRouter.post("/artifacts/:id/bindings", (req: any, res) => {
   }
 });
 
-actionsRouter.get("/artifacts/:id/bindings", (req: any, res) => {
+actionsRouter.get("/artifacts/:id/bindings", (req, res) => {
   if (!requireSystem(req, res)) return;
   res.json(listBindings(getDb(), req.params.id));
 });
 
-actionsRouter.get("/bindings", (req: any, res) => {
+actionsRouter.get("/bindings", (req, res) => {
   if (!requireSystem(req, res)) return;
   res.json(listBindings(getDb()));
 });
 
-actionsRouter.delete("/bindings/:id", (req: any, res) => {
+actionsRouter.delete("/bindings/:id", (req, res) => {
   if (!requireSystem(req, res)) return;
   if (!deleteBinding(getDb(), req.params.id)) {
     res.status(404).json({ error: "Binding not found" });
@@ -153,7 +187,7 @@ actionsRouter.delete("/bindings/:id", (req: any, res) => {
   res.json({ deleted: true });
 });
 
-actionsRouter.patch("/bindings/:id", (req: any, res) => {
+actionsRouter.patch("/bindings/:id", (req, res) => {
   if (!requireSystem(req, res)) return;
   if (typeof req.body?.enabled !== "boolean") {
     res.status(400).json({ error: "enabled (boolean) is required" });
@@ -168,21 +202,21 @@ actionsRouter.patch("/bindings/:id", (req: any, res) => {
 
 // Agent reads pending actions — the inbox belongs to the agent plane; a device
 // must never drain it.
-actionsRouter.get("/actions", (req: any, res) => {
+actionsRouter.get("/actions", (req, res) => {
   if (!requireSystem(req, res)) return;
-  res.json(getPendingActions());
+  res.json(getPendingActions(getDb()));
 });
 
-actionsRouter.get("/artifacts/:id/actions", (req: any, res) => {
+actionsRouter.get("/artifacts/:id/actions", (req, res) => {
   if (!requireSystem(req, res)) return;
-  res.json(getPendingActions(req.params.id));
+  res.json(getPendingActions(getDb(), req.params.id));
 });
 
 // Agent acknowledges an action
-actionsRouter.post("/actions/:id/ack", (req: any, res) => {
+actionsRouter.post("/actions/:id/ack", (req, res) => {
   if (!requireSystem(req, res)) return;
-  const row = getAction(req.params.id);
-  const acked = ackAction(req.params.id);
+  const row = getAction(getDb(), req.params.id);
+  const acked = ackAction(getDb(), req.params.id);
   if (!acked) {
     res.status(404).json({ error: "Action not found" });
     return;
@@ -190,14 +224,14 @@ actionsRouter.post("/actions/:id/ack", (req: any, res) => {
   if (row) {
     broadcastGlobal("actions_acked", {
       surface_id: row.surface_id,
-      pending_actions: getPendingActions(row.surface_id).length,
+      pending_actions: getPendingActions(getDb(), row.surface_id).length,
     });
   }
   res.json({ acknowledged: true });
 });
 
 // Agent replies to a surface (shown as toast in the PWA)
-actionsRouter.post("/artifacts/:id/reply", (req: any, res) => {
+actionsRouter.post("/artifacts/:id/reply", (req, res) => {
   if (!requireSystem(req, res)) return;
   if (!getArtifact(getDb(), req.params.id)) {
     res.status(404).json({ error: "Artifact not found" });
@@ -214,7 +248,7 @@ actionsRouter.post("/artifacts/:id/reply", (req: any, res) => {
 });
 
 // Execute JS in a surface iframe — code execution, system plane only.
-actionsRouter.post("/artifacts/:id/exec", (req: any, res) => {
+actionsRouter.post("/artifacts/:id/exec", (req, res) => {
   if (!requireSystem(req, res)) return;
   if (!getArtifact(getDb(), req.params.id)) {
     res.status(404).json({ error: "Artifact not found" });
@@ -226,5 +260,5 @@ actionsRouter.post("/artifacts/:id/exec", (req: any, res) => {
     return;
   }
   broadcastToSurface(req.params.id, "surface_exec", { js });
-  res.json({ executed: true });
+  res.json({ executed: true, delivered: "unknown", note: "exec is delivered only to live same-origin surface iframes" });
 });

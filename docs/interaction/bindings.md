@@ -9,12 +9,14 @@ A **binding** is a pre-registered reaction to a surface action: a command Surfac
 
 ```bash
 surface bind deploy-panel --action "approve|hold" --run 'claude -p "Surface action batch on stdin. Handle it."'
-surface bind report --action regenerate --webhook https://gateway.local/hooks/agent
+surface bind report --action regenerate --webhook http://127.0.0.1:18789/hooks/wake
 surface bindings deploy-panel          # list (id, pattern, kind, enabled, last run/status)
 surface unbind <binding-id>
 ```
 
 Registration requires the `system` role — a binding is arbitrary command execution, so device sessions can never create or edit one; clicking from a phone can only **fire** what was pre-registered from the machine. See [../auth/trust-model.md](../auth/trust-model.md).
+
+Registration also requires recorded project consent: the surface's project must have `.surface/config.json` with `bindings.enabled: true`. Missing config, `null`, or `false` is fail-closed and returns a 403 with the consent hint.
 
 ## Schema
 
@@ -37,7 +39,7 @@ surface_bindings(
 - **Single-flight + coalescing:** one execution per surface at a time; the spawned command receives all pending actions as a batch; clicks landing mid-run trigger one follow-up pass (see [delivery-ladder.md](delivery-ladder.md)).
 - **Timeout** (default 10 min, `--timeout`) and captured stdout/stderr under `~/.surface/logs/bindings/`. `last_status`/`last_error` surface in `surface bindings` and via a `binding_status` SSE event (`running` → `ok`/`failed`).
 - Ack: the delivered batch is marked handled after a successful run; a failed run leaves it pending (inbox catches it).
-- **Per-project kill switch:** `.surface/config.json → bindings.enabled: false` suppresses all binding dispatch for that project's surfaces.
+- **Per-project consent gate:** `.surface/config.json → bindings.enabled: true` is required before registration or dispatch. Missing config, `null`, or `false` suppresses bindings for that project's surfaces.
 
 ## Webhook bindings
 
@@ -55,7 +57,8 @@ With 3 retries on a backoff schedule of 1s/5s/25s (the global fan-out is fire-an
 |---|---|---|
 | **Claude Code** | `--run 'claude --resume <session-id> -p "Handle the Surface action batch on stdin."'` | `<session-id>` is the **creating session's id**, which the agent bakes into the command when it registers the binding (the harness exposes it, e.g. via hooks; Surface does no placeholder templating). Resuming maps the click back to the session with full context. Headless spawns consume usage — which is why the ladder prefers layer 1. |
 | **Codex** | `--run 'codex exec "Handle the Surface action batch on stdin."'` (resume variant where supported) | Same stdin contract. |
-| **OpenClaw** | `--webhook http://127.0.0.1:<port>/hooks/agent` | The easy case: OpenClaw already runs 24/7 with an HTTP gateway, so the webhook *is* the wake-up. No spawn, no usage cost. |
+| **OpenClaw** | `--webhook http://127.0.0.1:<port>/hooks/wake` | The easy case: OpenClaw already runs 24/7 with an HTTP gateway, so the webhook *is* the wake-up. No spawn, no usage cost. |
+| **Amp** | `--run 'amp -x "Handle the Surface action batch on stdin."'` | Starts a new headless Amp turn only when no waiter is connected. |
 | **Anything** | `--run './scripts/on-click.sh'` | A binding is just a command; cron jobs, tmux send-keys, notify-send all work. |
 
 SKILL.md ships these recipes verbatim so each harness's agents register the right binding without rediscovering the pattern.

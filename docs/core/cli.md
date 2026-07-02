@@ -113,12 +113,12 @@ See [../interaction/actions-inbox.md](../interaction/actions-inbox.md).
 ## Streaming & waiting
 
 ```bash
-surface stream [--id <surface-id>]             # tail SSE as JSONL until interrupted
-surface wait [--id <id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack]
+surface stream [--id <surface-id>] [--timeout <seconds>]  # tail SSE as JSONL until interrupted
+surface wait [--id <id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow] [--heartbeat <seconds>]
 ```
 
-- `stream` connects to `/stream` (or `/artifacts/:id/stream`) and writes one `{event,data}` JSON line per SSE event, reconnecting with exponential backoff on drops (it only gives up on 401/403/404).
-- `wait` blocks until a matching event, prints the action, and exits `0`. Defaults to `--event surface_action`; filters by `--id`/`--action`; first drains the pending-actions endpoint (oldest first), then listens on the **global** stream (per-surface streams don't carry `surface_action`), re-polling after each reconnect. The connection registers as a layer-1 **waiter** (`/stream?wait_for=<id|*>`), which suppresses bindings while it lives. Matching actions are auto-acked unless `--no-ack`. `--timeout` exits `3` on expiry. See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
+- `stream` connects to `/stream` (or `/artifacts/:id/stream`) and writes one `{event,data}` JSON line per SSE event. `--timeout` is a lifetime cap; orphaned followers exit when their parent process is gone.
+- `wait` blocks until a matching event, prints the action, and exits `0`. Defaults to `--event surface_action`; filters by `--id`/`--action`; first drains the pending-actions endpoint (oldest first), then listens on the **global** stream (per-surface streams don't carry `surface_action`), re-polling after connect and reconnect. The connection registers as a layer-1 **waiter** (`/stream?wait_for=<id|*>`), which suppresses bindings while it lives. Matching actions are auto-acked unless `--no-ack`. `--follow` prints one compact JSON line per action until interrupted or `--timeout`; `--heartbeat` writes waiting pings to stderr for harnesses with silence timers. See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
 
 ## Bindings (delivery-ladder layer 2)
 

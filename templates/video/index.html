@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 100%; height: 100%; background: #050505; color: #f4f4f1; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  header { min-height: 46px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid rgba(255,255,255,.1); background: rgba(0,0,0,.76); }
+  header:empty { display: none; }
+  h1 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 750; letter-spacing: 0; }
+  main { flex: 1; min-height: 0; display: grid; place-items: center; background: #000; }
+  iframe { width: 100%; height: 100%; border: 0; background: #000; }
+  .error { max-width: 58ch; padding: 24px; color: rgba(244,244,241,.72); line-height: 1.5; }
+</style>
+</head>
+<body>
+<header><h1>{{title}}</h1></header>
+<main id="player"></main>
+<script>
+  const params = window.__TEMPLATE_PARAMS || {};
+  const player = document.getElementById("player");
+
+  function youtubeId(url) {
+    const u = new URL(url);
+    if (u.hostname === "youtu.be") return u.pathname.slice(1).split("/")[0];
+    if (u.hostname.endsWith("youtube.com")) {
+      if (u.pathname === "/watch") return u.searchParams.get("v");
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (["embed", "shorts", "live"].includes(parts[0])) return parts[1];
+    }
+    return null;
+  }
+
+  function buildSrc(raw) {
+    const id = youtubeId(raw);
+    const start = Math.max(0, Number(params.start || 0) || 0);
+    const autoplay = !!params.autoplay;
+    const loop = !!params.loop;
+    if (id) {
+      const q = new URLSearchParams();
+      q.set("rel", "0");
+      q.set("modestbranding", "1");
+      q.set("playsinline", "1");
+      if (start) q.set("start", String(start));
+      if (autoplay) { q.set("autoplay", "1"); q.set("mute", "1"); }
+      if (loop) { q.set("loop", "1"); q.set("playlist", id); }
+      return "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(id) + "?" + q.toString();
+    }
+    return raw;
+  }
+
+  try {
+    const src = buildSrc(String(params.url || ""));
+    const iframe = document.createElement("iframe");
+    iframe.src = src;
+    iframe.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    iframe.allowFullscreen = true;
+    player.appendChild(iframe);
+  } catch (err) {
+    const div = document.createElement("div");
+    div.className = "error";
+    div.textContent = "Could not render video: " + err.message;
+    player.appendChild(div);
+  }
+</script>
+</body>
+</html>

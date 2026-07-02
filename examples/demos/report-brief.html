@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #f7f3e8; color: #171917; font-family: Georgia, "Times New Roman", serif; }
+  main { max-width: 82ch; margin: 0 auto; padding: 44px 24px 80px; }
+  h1 { margin: 0; font-size: clamp(34px, 8vw, 78px); line-height: .9; letter-spacing: 0; }
+  .summary { margin: 26px 0; padding: 18px; border: 1px solid #8aa384; border-radius: 8px; background: #edf4e9; font-family: ui-sans-serif, system-ui, sans-serif; }
+  h2 { margin-top: 34px; font-family: ui-sans-serif, system-ui, sans-serif; }
+  p, li { font-size: 18px; line-height: 1.7; }
+  code { background: rgba(23,25,23,.08); border-radius: 4px; padding: 2px 5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Readable reports beat terminal walls.</h1>
+  <section class="summary">The built-in report template turns markdown into a self-contained surface with stable typography, tables, and print-friendly layout.</section>
+  <h2>Why this exists</h2>
+  <p>Agents can ship substantial explanations as surfaces instead of dumping long markdown into the chat transcript.</p>
+  <h2>How to make one</h2>
+  <p><code>surface create "Review" --template report --param title="Review" --param body_md=-</code></p>
+</main>
+</body>
+</html>

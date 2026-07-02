@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response } from "express";
 import {
   DEFAULT_SESSION_TTL_SECONDS,
   SESSION_COOKIE,
@@ -19,7 +20,16 @@ import { baseUrlFor, clientIp, isSecureRequest, requireSystem } from "./helpers.
 
 export const authRouter = Router();
 
-function setSessionCookie(req: any, res: any, token: string, ttlSeconds: number) {
+function cleanLabel(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const label = value.trim();
+  if (!label) return null;
+  if (label.length > 80) throw new Error("label must be 80 characters or fewer");
+  if (/[\u0000-\u001f\u007f]/.test(label)) throw new Error("label contains control characters");
+  return label;
+}
+
+function setSessionCookie(req: Request, res: Response, token: string, ttlSeconds: number) {
   const parts = [
     `${SESSION_COOKIE}=${token}`,
     "Path=/",
@@ -31,7 +41,7 @@ function setSessionCookie(req: any, res: any, token: string, ttlSeconds: number)
   res.append("Set-Cookie", parts.join("; "));
 }
 
-function clearSessionCookie(req: any, res: any) {
+function clearSessionCookie(req: Request, res: Response) {
   const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
   if (isSecureRequest(req)) parts.push("Secure");
   res.append("Set-Cookie", parts.join("; "));
@@ -49,7 +59,25 @@ function sessionPayload(sessionId: string) {
   };
 }
 
-authRouter.get("/api/auth/session", (req: any, res) => {
+function resolveRevocableDevice(res: Response, device: string): { id: string; label: string } | null {
+  const query = device.trim().toLowerCase();
+  const candidates = listSessions({ role: "device" }).map((s) => ({ id: s.id, label: s.label || s.id }));
+  let matches = candidates.filter((c) => c.label.toLowerCase() === query || c.id === device.trim());
+  if (matches.length === 0) {
+    matches = candidates.filter((c) => c.label.toLowerCase().startsWith(query));
+  }
+  if (matches.length === 0) {
+    res.status(404).json({ error: `No device matches "${device}"`, devices: candidates.map((c) => c.label) });
+    return null;
+  }
+  if (matches.length > 1) {
+    res.status(400).json({ error: `"${device}" is ambiguous`, matches: matches.map((c) => c.label) });
+    return null;
+  }
+  return matches[0];
+}
+
+authRouter.get("/api/auth/session", (req, res) => {
   const auth = req.auth;
   if (!auth) {
     res.json({ authenticated: false, bootstrapMethods: ["one-time-token"] });
@@ -66,9 +94,11 @@ authRouter.get("/api/auth/session", (req: any, res) => {
   res.json({ authenticated: true, role: auth.role, via: auth.via });
 });
 
-authRouter.post("/api/auth/bootstrap", (req: any, res) => {
+authRouter.post("/api/auth/bootstrap", (req, res) => {
   const credential = typeof req.body?.credential === "string" ? req.body.credential.trim() : "";
-  const label = typeof req.body?.label === "string" ? req.body.label : null;
+  let label: string | null;
+  try { label = cleanLabel(req.body?.label); }
+  catch (err: any) { res.status(400).json({ error: err.message }); return; }
   if (!credential) {
     res.status(400).json({ error: "Missing credential" });
     return;
@@ -89,9 +119,11 @@ authRouter.post("/api/auth/bootstrap", (req: any, res) => {
   res.json(sessionPayload(session.id));
 });
 
-authRouter.post("/api/auth/pairing-token", (req: any, res) => {
+authRouter.post("/api/auth/pairing-token", (req, res) => {
   if (!requireSystem(req, res)) return;
-  const label = typeof req.body?.label === "string" ? req.body.label : null;
+  let label: string | null;
+  try { label = cleanLabel(req.body?.label); }
+  catch (err: any) { res.status(400).json({ error: err.message }); return; }
   const ttlSeconds = Number.isFinite(req.body?.ttlSeconds) ? Number(req.body.ttlSeconds) : undefined;
   const token = createPairingToken({ label, ttlSeconds });
   res.json({
@@ -103,12 +135,12 @@ authRouter.post("/api/auth/pairing-token", (req: any, res) => {
   });
 });
 
-authRouter.get("/api/auth/pairing-tokens", (req: any, res) => {
+authRouter.get("/api/auth/pairing-tokens", (req, res) => {
   if (!requireSystem(req, res)) return;
   res.json(listPairingTokens());
 });
 
-authRouter.post("/api/auth/pairing-tokens/revoke", (req: any, res) => {
+authRouter.post("/api/auth/pairing-tokens/revoke", (req, res) => {
   if (!requireSystem(req, res)) return;
   const id = typeof req.body?.id === "string" ? req.body.id : "";
   if (!id) {
@@ -118,9 +150,11 @@ authRouter.post("/api/auth/pairing-tokens/revoke", (req: any, res) => {
   res.json({ revoked: revokePairingToken(id) });
 });
 
-authRouter.post("/api/auth/sessions", (req: any, res) => {
+authRouter.post("/api/auth/sessions", (req, res) => {
   if (!requireSystem(req, res)) return;
-  const label = typeof req.body?.label === "string" ? req.body.label : null;
+  let label: string | null;
+  try { label = cleanLabel(req.body?.label); }
+  catch (err: any) { res.status(400).json({ error: err.message }); return; }
   const ttlSeconds = Number.isFinite(req.body?.ttlSeconds) ? Number(req.body.ttlSeconds) : undefined;
   // The one legitimate remote-agent path: mint a system bearer from the system
   // plane (e.g. loopback) and carry it to the SSH box / container.
@@ -135,12 +169,12 @@ authRouter.post("/api/auth/sessions", (req: any, res) => {
   res.json({ id: session.id, token: session.token, role: session.role, expiresAt: session.expiresAt });
 });
 
-authRouter.get("/api/auth/clients", (req: any, res) => {
+authRouter.get("/api/auth/clients", (req, res) => {
   if (!requireSystem(req, res)) return;
   res.json(listSessions());
 });
 
-authRouter.post("/api/auth/clients/revoke", (req: any, res) => {
+authRouter.post("/api/auth/clients/revoke", (req, res) => {
   if (!requireSystem(req, res)) return;
   const id = typeof req.body?.id === "string" ? req.body.id : "";
   if (!id) {
@@ -150,7 +184,7 @@ authRouter.post("/api/auth/clients/revoke", (req: any, res) => {
   res.json({ revoked: revokeSession(id) });
 });
 
-authRouter.post("/api/auth/logout", (req: any, res) => {
+authRouter.post("/api/auth/logout", (req, res) => {
   const cookieToken = readCookie(req.header("Cookie"), SESSION_COOKIE);
   const bearer = (req.header("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
   let revoked = false;
@@ -162,7 +196,7 @@ authRouter.post("/api/auth/logout", (req: any, res) => {
 
 // ── Devices (paired display sessions) ──
 
-authRouter.get("/api/auth/devices", (req: any, res) => {
+authRouter.get("/api/auth/devices", (req, res) => {
   if (!requireSystem(req, res)) return;
   const live = connectedTargets();
   res.json(listSessions({ role: "device" }).map((s) => {
@@ -185,26 +219,14 @@ authRouter.get("/api/auth/devices", (req: any, res) => {
 
 // Revoke by exact id, exact label, or unambiguous case-insensitive label
 // prefix. Ambiguity errors out with the candidate list rather than guessing.
-authRouter.post("/api/auth/devices/revoke", (req: any, res) => {
+authRouter.post("/api/auth/devices/revoke", (req, res) => {
   if (!requireSystem(req, res)) return;
   const target = typeof req.body?.device === "string" ? req.body.device.trim() : "";
   if (!target) {
     res.status(400).json({ error: "Missing device (id or label)" });
     return;
   }
-  const devices = listSessions({ role: "device" });
-  const lower = target.toLowerCase();
-  let matches = devices.filter((d) => d.id === target || (d.label || "").toLowerCase() === lower);
-  if (matches.length === 0) {
-    matches = devices.filter((d) => (d.label || "").toLowerCase().startsWith(lower));
-  }
-  if (matches.length === 0) {
-    res.status(404).json({ error: `No device matches "${target}"`, devices: devices.map((d) => d.label || d.id) });
-    return;
-  }
-  if (matches.length > 1) {
-    res.status(400).json({ error: `"${target}" is ambiguous`, matches: matches.map((d) => d.label || d.id) });
-    return;
-  }
-  res.json({ revoked: revokeSession(matches[0].id), device: matches[0].label || matches[0].id });
+  const resolved = resolveRevocableDevice(res, target);
+  if (!resolved) return;
+  res.json({ revoked: revokeSession(resolved.id), device: resolved });
 });

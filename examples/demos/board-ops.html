@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Board Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: #101012; color: #f5f4ef; font-family: Inter, ui-sans-serif, system-ui, sans-serif; display: grid; place-items: center; }
+  main { width: min(980px, calc(100vw - 32px)); }
+  h1 { margin: 0 0 20px; font-size: clamp(34px, 8vw, 78px); line-height: .9; letter-spacing: 0; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  article { min-height: 180px; border: 1px solid rgba(245,244,239,.16); border-radius: 8px; padding: 18px; background: rgba(255,255,255,.05); }
+  .name { color: #91d7ff; font: 700 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-transform: uppercase; letter-spacing: .12em; }
+  .status { margin-top: 34px; font-size: 22px; line-height: 1.2; }
+  .age { margin-top: 18px; color: rgba(245,244,239,.56); font-size: 13px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>One board, many agents.</h1>
+  <section class="grid">
+    <article><div class="name">codex</div><div class="status" data-surface-bind="codex.status">Running tests</div><div class="age">updated just now</div></article>
+    <article><div class="name">claude-code</div><div class="status" data-surface-bind="claude.status">Waiting on review</div><div class="age">updated 2m ago</div></article>
+    <article><div class="name">openclaw</div><div class="status" data-surface-bind="openclaw.status">Watching deploy</div><div class="age">updated 6m ago</div></article>
+  </section>
+</main>
+</body>
+</html>

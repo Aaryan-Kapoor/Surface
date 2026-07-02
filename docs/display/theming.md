@@ -1,13 +1,13 @@
 # Display Theming
 
 **Status:** Shipped (2026-06)
-**Code:** `client/app.js` (`applyTheme`, `renderOverlay`), `server/routes/display.ts` (`/display/config`, `/display/reset`, `/display/slots`, `/display/renderer/html`, `/display/home/html`, `/display/overlay/html`), `server/db.ts` (`getDisplayConfig`/`setDisplayConfig`/`resetDisplayConfig`), `bin/surface.ts` (`theme`, `slot`)
+**Code:** `client/app.js` (`applyTheme`, `renderOverlay`), `server/routes/display.ts` (`/display/config`, `/display/reset`, `/display/slots`, `/display/renderer/html`, `/display/home/html`, `/display/overlay/html`), `server/displayConfig.ts` (`getDisplayConfig`/`setDisplayConfig`/`resetDisplayConfig`), `bin/surface.ts` (`theme`, `slot`)
 
 Agents own the look of the display. A single JSON config object holds the cosmetic customization — colors, fonts, background, raw CSS, card radius, starfield toggle, title — while the three display extension points (home widget, full renderer, persistent overlay) are **slot artifacts** (see below). The config is set with `PUT /display/config`, persisted in the `display_config` table, broadcast to every connected browser over SSE, and applied client-side by `applyTheme`.
 
 ## The config object
 
-`PUT /display/config` merges its JSON body into the stored config (`setDisplayConfig` does `{ ...existing, ...body }`, `server/db.ts`) and broadcasts a `display_theme` event with the merged result (`server/routes/display.ts`). Recognized keys (consumed by `applyTheme`, `client/app.js`):
+`PUT /display/config` merges its JSON body into the stored config (`setDisplayConfig` does `{ ...existing, ...body }`, `server/displayConfig.ts`) and broadcasts a `display_theme` event with the merged result (`server/routes/display.ts`). Recognized keys (consumed by `applyTheme`, `client/app.js`):
 
 | Key | Effect |
 | --- | --- |
@@ -60,11 +60,11 @@ The argument must be valid JSON or the CLI exits with a usage error. Because `se
 
 ## Reset
 
-`POST /display/reset` deletes the `theme` row (`resetDisplayConfig`, `server/db.ts`) and broadcasts `display_theme` with `{}`. On the client, `applyTheme({})` strips all inline styles, removes the injected `theme-css`, overlay, and home-widget elements, and clears `displayConfig`.
+`POST /display/reset` deletes the `theme` row (`resetDisplayConfig`, `server/displayConfig.ts`) and broadcasts `display_theme` with `{}`. On the client, `applyTheme({})` strips all inline styles, removes the injected `theme-css`, overlay, and home-widget elements, and clears `displayConfig`.
 
 ## Persistence and live propagation
 
-The config is a single row in the `display_config` table keyed `theme`, holding the JSON blob (`server/db.ts`). `getDisplayConfig` reads and parses it. Every mutating route (`PUT /display/config`, `POST /display/reset`) broadcasts a global `display_theme` SSE event so all open browsers re-apply the theme immediately without a reload — `connectGlobalSSE` listens for it and calls `applyTheme`, re-rendering when the renderer slot changed.
+The config is a single row in the `display_config` table keyed `theme`, holding the JSON blob (`server/displayConfig.ts`). `getDisplayConfig` reads and parses it. Every mutating route (`PUT /display/config`, `POST /display/reset`) broadcasts a global `display_theme` SSE event so all open browsers re-apply the theme immediately without a reload — `connectGlobalSSE` listens for it and calls `applyTheme`, re-rendering when the renderer slot changed.
 
 ## Related
 - [pwa.md](pwa.md) — the dashboard that consumes the theme

@@ -306,7 +306,7 @@ export function renderThumbPlaceholder(params: { title: string; mime: string }):
 // tag goes just before </body> (or at the end), keeping byte offsets of the
 // author's own markup untouched.
 export function injectSurfaceRuntime(html: Buffer, artifactId: string): Buffer {
-  const tag = `<script src="/surface.js?id=${encodeURIComponent(artifactId)}"></script>`;
+  const tag = `<script src="/surface.js?id=${encodeURIComponent(artifactId)}&v=62"></script>`;
   const text = html.toString("utf8");
   if (text.includes('src="/surface.js')) return html;
   const idx = text.toLowerCase().lastIndexOf("</body>");

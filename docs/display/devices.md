@@ -25,7 +25,7 @@ The presence report (current view, surface id, viewport) is **session-keyed**: e
 
 ## Targeting
 
-Display-control verbs take `--on <device>`:
+System-plane display-control verbs take `--on <device>`:
 
 ```bash
 surface open build-status --on desk-monitor   # navigate one display
@@ -40,7 +40,7 @@ surface open board --on desk-monitor          # ambient fleet view
 
 ## Security note
 
-Targeting is display control, available to the `system` plane and to devices (a device may navigate another device — they're all the same user's screens; see the [capability matrix](../auth/trust-model.md#roles-and-capability-matrix)). Revocation and pairing stay system-only.
+Targeting is display control and is available only to the `system` plane. Paired devices report presence, view surfaces, and click inside surfaces, but they cannot navigate other displays, push notifications, or change theme. Revocation and pairing also stay system-only.
 
 ## Related
 

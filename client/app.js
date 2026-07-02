@@ -4,6 +4,7 @@ let globalSSE = null;
 let surfaceSSE = null;
 let currentSurfaceId = null;
 let displayConfig = {};
+let renderFailed = false;
 // Display slots are artifacts (metadata.display_role) — ids resolved by the
 // server at GET /display/slots.
 let displaySlots = { renderer: null, home: null, overlay: null };
@@ -64,10 +65,10 @@ window.addEventListener("message", (e) => {
 
   // Surface action bridge (iframe → server)
   if (e.data.type !== "surface_action") return;
-  const surfaceId = currentSurfaceId;
+  const surfaceId = e.data.surface_id || currentSurfaceId;
   if (!surfaceId) return;
 
-  fetch(`/artifacts/${surfaceId}/actions`, {
+  fetch(`/artifacts/${encodeURIComponent(surfaceId)}/actions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -250,53 +251,52 @@ window.showTutorialModal = showTutorialModal;
 // with a fleshed-out prompt the user can hand to their agent.
 
 // Each idea has a `src` field — URL of a real surface served from
-// /demos/ (the server serves the `surfaces/` directory there). The
-// portal iframe loads it directly via src; the demos are real, not
-// hand-stubbed. Clicking the disc opens the prompt-modal that shows
-// the user-voice prompt that produced the surface.
+// /demos/ (the server serves examples/demos/ there). The portal iframe
+// loads it directly; `surface seed-demos` links the same files as live
+// artifacts with surface.js injection.
 
 const SURFACE_IDEAS = [
   {
-    title: "Yatch Problem · YouTube",
-    sub: "ThePrimeTimeagen",
-    src: "/demos/yatch-problem.html",
-    prompt: "Surface Yatch Problem by ThePrimeTimeagen",
+    title: "Ask Approval",
+    sub: "Choice -> Surface.action",
+    src: "/demos/ask-approval.html",
+    prompt: "Surface an approval question I can answer from any display",
   },
   {
-    title: "Never Gonna Give You Up · Spotify",
-    sub: "Rick Astley",
-    src: "/demos/spotify-rickroll.html",
-    prompt: "Surface Never Gonna Give You Up by Rick Astley",
+    title: "State Gauge",
+    sub: "Live bound progress",
+    src: "/demos/state-gauge.html",
+    prompt: "Surface a live progress gauge and keep it updated with state",
   },
   {
-    title: "Apple Park · Google Maps",
-    sub: "Cupertino, California",
-    src: "/demos/maps-apple-park.html",
-    prompt: "Surface Apple Park on Google Maps",
+    title: "Action Panel",
+    sub: "Buttons wake the agent",
+    src: "/demos/action-panel.html",
+    prompt: "Surface a command panel whose buttons wake you with actions",
   },
   {
-    title: "Thariq · X",
-    sub: "@trq212",
-    src: "/demos/tweet-trq212.html",
-    prompt: "Surface this post from @trq212 on X",
+    title: "Build Stream",
+    sub: "Append-only output",
+    src: "/demos/stream-build.html",
+    prompt: "Surface a build log that streams as the command runs",
   },
   {
-    title: "Pac-Man",
-    sub: "1980 · Namco",
-    src: "/demos/pacman.html",
-    prompt: "Surface a game of Pac-Man",
+    title: "Agent Board",
+    sub: "Shared fleet status",
+    src: "/demos/board-ops.html",
+    prompt: "Surface a shared board for multiple agents working in this repo",
   },
   {
-    title: "Astronaut · 3D",
-    sub: "Drag to rotate",
-    src: "/demos/3d-astronaut.html",
-    prompt: "Surface a rotating 3D astronaut",
+    title: "Report Brief",
+    sub: "Readable long-form output",
+    src: "/demos/report-brief.html",
+    prompt: "Surface a polished report instead of printing a long terminal summary",
   },
   {
-    title: "Wind · Windy",
-    sub: "Live atmospheric currents",
-    src: "/demos/windy-globe.html",
-    prompt: "Surface live wind currents on Windy",
+    title: "Linked File",
+    sub: "Edit disk, touch display",
+    src: "/demos/live-link.html",
+    prompt: "Surface a linked HTML file and hot-reload it after edits",
   },
 ];
 
@@ -403,7 +403,11 @@ function mountGallery(root) {
   };
 
   const tick = (now) => {
-    if (!track.isConnected) return;
+    if (!track.isConnected) {
+      window.removeEventListener("resize", measure);
+      if (resumeTimer) clearTimeout(resumeTimer);
+      return;
+    }
     const dt = lastTime ? Math.min(now - lastTime, 50) : 16;
     lastTime = now;
     if (!manualOverride) {
@@ -483,54 +487,6 @@ function mountGallery(root) {
     });
   }
 }
-
-function showIdeaModal(idea) {
-  if (document.getElementById("idea-modal")) return;
-
-  const overlay = document.createElement("div");
-  overlay.id = "idea-modal";
-  overlay.className = "modal-overlay";
-  overlay.innerHTML = `
-    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="idea-title">
-      <button type="button" class="modal-close" aria-label="Close">×</button>
-      <div class="modal-eyebrow">A surface you could make</div>
-      <h2 id="idea-title" class="modal-title">${escapeHtml(idea.title)}</h2>
-      <p class="modal-lede">${escapeHtml(idea.sub)}</p>
-      <pre class="modal-prompt">${escapeHtml(idea.prompt)}</pre>
-      <div class="modal-actions">
-        <button type="button" class="modal-copy-btn" id="idea-copy-btn">Copy prompt</button>
-      </div>
-      <div class="modal-sub">Paste into your agent's chat and let it build.</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  const close = () => {
-    overlay.classList.remove("modal-overlay--visible");
-    overlay.addEventListener("transitionend", () => overlay.remove(), { once: true });
-    document.removeEventListener("keydown", onKey);
-  };
-  const onKey = (e) => { if (e.key === "Escape") close(); };
-
-  overlay.querySelector(".modal-close").addEventListener("click", close);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  document.addEventListener("keydown", onKey);
-
-  const copyBtn = overlay.querySelector("#idea-copy-btn");
-  const setBtnLabel = (label, done) => {
-    copyBtn.textContent = label;
-    copyBtn.classList.toggle("modal-copy-btn--done", !!done);
-  };
-  copyBtn.addEventListener("click", async () => {
-    const ok = await copyToClipboard(idea.prompt);
-    setBtnLabel(ok ? "Copied" : "Copy failed", ok);
-    setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
-  });
-
-  requestAnimationFrame(() => overlay.classList.add("modal-overlay--visible"));
-}
-
-window.showIdeaModal = showIdeaModal;
 
 // ── Theme system ──
 
@@ -646,6 +602,7 @@ function renderOverlay() {
     if (!overlay) {
       overlay = document.createElement("iframe");
       overlay.id = "display-overlay";
+      overlay.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
       overlay.src = "/display/overlay/html";
       document.body.appendChild(overlay);
     } else {
@@ -982,7 +939,9 @@ function bindCardTilt(card) {
 // ── Helpers ──
 
 function timeAgo(dateStr) {
-  const diff = Date.now() - new Date(dateStr + "Z").getTime();
+  const parsed = parseServerDate(dateStr);
+  if (!parsed) return "unknown";
+  const diff = Date.now() - parsed.getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return mins + "m ago";
@@ -990,6 +949,13 @@ function timeAgo(dateStr) {
   if (hrs < 24) return hrs + "h ago";
   const days = Math.floor(hrs / 24);
   return days + "d ago";
+}
+
+function parseServerDate(value) {
+  if (!value) return null;
+  const raw = String(value);
+  const parsed = Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(raw) ? raw : raw + "Z");
+  return Number.isFinite(parsed) ? new Date(parsed) : null;
 }
 
 function parseMetadata(meta) {
@@ -1039,6 +1005,7 @@ function renderGrid() {
     const iframe = document.createElement("iframe");
     iframe.id = "renderer-frame";
     iframe.src = "/display/renderer/html?" + Date.now();
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
     iframe.style.cssText = "position:absolute;inset:0;width:100%;height:100%;border:none;background:transparent;";
     app.innerHTML = "";
     app.appendChild(iframe);
@@ -1079,6 +1046,7 @@ function renderGrid() {
     widget.id = "home-widget";
     widget.className = "home-widget";
     widget.src = "/display/home/html";
+    widget.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
     gridView.appendChild(widget);
     // Auto-size: listen for content height
     widget.onload = () => {
@@ -1205,7 +1173,10 @@ function applyGridFilters(list) {
     if (q && !(s.title || "").toLowerCase().includes(q)) return false;
     return true;
   });
-  const ts = (s) => new Date((s.updated_at || s.created_at || "1970-01-01") + "Z").getTime();
+  const ts = (s) => {
+    const d = parseServerDate(s.updated_at || s.created_at);
+    return d ? d.getTime() : 0;
+  };
   const cmp = {
     newest: (a, b) => ts(b) - ts(a),
     oldest: (a, b) => ts(a) - ts(b),
@@ -1263,7 +1234,8 @@ function createCard(s, index) {
   disc.appendChild(img);
 
   if (s.updated_at) {
-    const ageMs = Date.now() - new Date(s.updated_at + "Z").getTime();
+    const updatedAt = parseServerDate(s.updated_at);
+    const ageMs = updatedAt ? Date.now() - updatedAt.getTime() : Number.POSITIVE_INFINITY;
     if (ageMs < 60000) {
       const live = document.createElement("div");
       live.className = "card-live";
@@ -1534,18 +1506,42 @@ async function renderSurface(id) {
 
 // ── Global SSE ──
 
+async function reconcileAfterReconnect() {
+  try {
+    const [cards] = await Promise.all([
+      fetch("/artifacts").then((r) => r.ok ? r.json() : surfaces),
+      refreshSlots(),
+    ]);
+    if (Array.isArray(cards)) surfaces = cards;
+    if (getRoute().view === "grid") renderGrid();
+  } catch {
+    // The next successful SSE open or route render will retry.
+  }
+}
+
 function connectGlobalSSE() {
   if (globalSSE) globalSSE.close();
   globalSSE = new EventSource("/stream");
+  let hadError = false;
 
   // Connection state → "STATION" indicator in the grid header.
   const setOnline = (on) => {
     const meta = document.getElementById("grid-meta");
     if (meta) meta.classList.toggle("online", on);
   };
-  globalSSE.addEventListener("open", () => setOnline(true));
-  globalSSE.onopen = () => setOnline(true);
-  globalSSE.onerror = () => setOnline(false);
+  globalSSE.addEventListener("open", async () => {
+    setOnline(true);
+    if (renderFailed) {
+      renderFailed = false;
+      await render();
+      return;
+    }
+    if (hadError) {
+      hadError = false;
+      await reconcileAfterReconnect();
+    }
+  });
+  globalSSE.onerror = () => { hadError = true; setOnline(false); };
   // EventSource is open as soon as it's instantiated and the
   // browser has the connection — set online optimistically.
   setTimeout(() => {
@@ -1765,16 +1761,24 @@ function updateGridMeta() {
 // ── Main Render ──
 
 async function render() {
-  const route = getRoute();
-  if (route.view === "surface") {
-    await renderSurface(route.id);
-  } else {
-    // One fetch: the card list carries everything the grid renders.
-    const res = await fetch("/artifacts");
-    surfaces = await res.json();
-    renderGrid();
+  try {
+    const route = getRoute();
+    if (route.view === "surface") {
+      await renderSurface(route.id);
+    } else {
+      // One fetch: the card list carries everything the grid renders.
+      const res = await fetch("/artifacts");
+      if (!res.ok) throw new Error(`GET /artifacts ${res.status}`);
+      surfaces = await res.json();
+      renderGrid();
+    }
+    renderFailed = false;
+    reportPresence();
+  } catch {
+    renderFailed = true;
+    app.innerHTML = `<div class="grid-empty">Surface is reconnecting…</div>`;
+    connectGlobalSSE();
   }
-  reportPresence();
 }
 
 // ── Init ──

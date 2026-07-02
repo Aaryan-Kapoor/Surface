@@ -5,9 +5,11 @@ import os from "os";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { getDataDir } from "./paths.js";
-import { getDb, getPendingActions, ackAction } from "./db.js";
+import { getDb } from "./db.js";
+import { getPendingActions, ackAction } from "./actionsStore.js";
 import { getArtifact } from "./artifacts.js";
 import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
+import { OutboundBlockedError, safeHttpRequest } from "./outbound.js";
 
 // Layer 2 of the delivery ladder (docs/interaction/bindings.md): pre-registered
 // commands/webhooks Surface fires when an action arrives and no live waiter is
@@ -116,16 +118,17 @@ export function tokenizeCommand(command: string): string[] {
   return argv;
 }
 
-// Per-project kill switch: .surface/config.json → bindings.enabled === false.
-// null/missing means "not asked yet" — bindings registered explicitly still
-// fire (registration itself was the consent).
-function projectAllowsBindings(projectRoot: string | null): boolean {
-  if (!projectRoot) return true;
+// Per-project consent gate: .surface/config.json → bindings.enabled === true.
+// null/missing/unreadable means "not asked yet", so command/webhook wake
+// bindings must fail closed rather than allowing a system-plane agent to
+// self-approve unattended process launches.
+export function projectAllowsBindings(projectRoot: string | null): boolean {
+  if (!projectRoot) return false;
   try {
     const config = JSON.parse(fs.readFileSync(path.join(projectRoot, ".surface", "config.json"), "utf8"));
-    return config?.bindings?.enabled !== false;
+    return config?.bindings?.enabled === true;
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -178,7 +181,7 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
     const artifact = getArtifact(db, surfaceId);
     if (!artifact) return;
     // The batch: every pending action for this surface, not just the trigger.
-    const pending = getPendingActions(surfaceId);
+    const pending = getPendingActions(db, surfaceId);
     if (!pending.length) return;
     const payload = {
       type: "surface_action_batch",
@@ -198,10 +201,10 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
         ? await runCommandBinding(binding, artifact.project_root, payload)
         : await runWebhookBinding(binding, payload);
       if (ok) {
-        for (const a of pending) ackAction(a.id);
+        for (const a of pending) ackAction(db, a.id);
         broadcastGlobal("actions_acked", {
           surface_id: surfaceId,
-          pending_actions: getPendingActions(surfaceId).length,
+          pending_actions: getPendingActions(db, surfaceId).length,
         });
         break; // first successful binding handles the batch
       }
@@ -213,7 +216,7 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
     if (rerunRequested.delete(surfaceId)) {
       // Coalesced clicks from during the run: one follow-up pass.
       const db = getDb();
-      const stillPending = getPendingActions(surfaceId);
+      const stillPending = getPendingActions(db, surfaceId);
       if (stillPending.length && !hasWaiter(surfaceId)) {
         const again = listBindings(db, surfaceId).filter(
           (b) => b.enabled && stillPending.some((a) => patternMatches(b.action_pattern, a.action)),
@@ -260,7 +263,8 @@ function runCommandBinding(
         resolve(true);
       }
     });
-    child.stdin?.write(JSON.stringify(payload));
+    child.stdin?.on("error", () => {});
+    child.stdin?.write(JSON.stringify(payload), () => {});
     child.stdin?.end();
   });
 }
@@ -272,19 +276,20 @@ async function runWebhookBinding(binding: BindingRow, payload: unknown): Promise
   for (let attempt = 0; attempt < delays.length; attempt++) {
     if (delays[attempt]) await new Promise((r) => setTimeout(r, delays[attempt]));
     try {
-      const res = await fetch(binding.webhook_url!, {
+      const res = await safeHttpRequest(binding.webhook_url!, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(Math.min(binding.timeout_seconds, 60) * 1000),
+        timeoutMs: Math.min(binding.timeout_seconds, 60) * 1000,
+        maxBytes: 1024 * 1024,
       });
-      if (res.ok) {
+      if (res.status >= 200 && res.status < 300) {
         setStatus(getDb(), binding, "ok");
         return true;
       }
       lastError = `${res.status} ${res.statusText}`;
     } catch (err: any) {
-      lastError = err?.message || "network error";
+      lastError = err instanceof OutboundBlockedError ? err.message : err?.message || "network error";
     }
   }
   setStatus(getDb(), binding, "failed", lastError);

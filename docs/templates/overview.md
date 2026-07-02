@@ -68,6 +68,7 @@ surface template show <name>      # the contract: params, state, actions
 | [`video`](video.md) | `surface video` | YouTube/embed player done right |
 | [`board`](board.md) | — | Multi-agent status board with per-agent sections |
 | [`doc`](doc.md) | `surface doc` | A markdown file from the repo, rendered, with live reload |
+| [`report`](report.md) | `surface create --template report` | Long-form explanations and reports |
 
 ## Related
 

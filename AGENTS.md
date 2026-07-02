@@ -35,7 +35,7 @@ For first-time setup, follow `INSTALL_FOR_AGENTS.md` (state lives in `~/.surface
 - **Templates** instantiate to normal artifacts (`--template/--param`); re-running with the same id re-renders (no-op when unchanged — `surface sync` relies on it).
 - **Delivery ladder** for clicks: live waiter (`surface wait`, suppresses lower layers) → binding (`surface bind`, argv-safe spawn with the action batch on stdin, single-flight + coalesced) → inbox (pending badge; TTL 7d handled / 30d pending).
 - Display slots (renderer/home/overlay) are artifacts with `metadata.display_role`.
-- Auth: two planes — loopback = `system` (full power), paired displays = `device` (view/click/workspace-CRUD/display control). `SURFACE_TOKEN` is gone; remote agents use `SURFACE_SESSION` bearers.
+- Auth: two planes — loopback/app origin = `system` (full power), paired displays/content origin = `device` (view/click/device-authored workspace CRUD/presence). Display control stays system-only. Device-authored surfaces render on `SURFACE_CONTENT_PORT`/`SURFACE_CONTENT_ORIGIN`. `SURFACE_TOKEN` is gone; remote agents use `SURFACE_SESSION` bearers.
 
 ## Agent Contract
 

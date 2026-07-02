@@ -91,7 +91,7 @@ See [../auth/device-pairing.md](../auth/device-pairing.md) and [../auth/trust-mo
 | DELETE | `/bindings/:id` | — | `{deleted:true}` | **system** |
 | PATCH | `/bindings/:id` | `{enabled}` | `{updated:true}` | **system** |
 | POST | `/artifacts/:id/reply` | `{text}` | `{sent:true}` | **system**; broadcasts `agent_reply` (toast) |
-| POST | `/artifacts/:id/exec` | `{js}` | `{executed:true}` | **system**; broadcasts `surface_exec` |
+| POST | `/artifacts/:id/exec` | `{js}` | `{executed:true, delivered:"unknown", note}` | **system**; broadcasts `surface_exec`; browser execution is best-effort |
 
 Optional webhook fan-out on `surface_action` posts to `SURFACE_WEBHOOK_URL + SURFACE_WEBHOOK_PATH` with `SURFACE_WEBHOOK_TOKEN` (legacy `OPENCLAW_*` aliases), throttling failure toasts to one/minute (`server/routes/actions.ts`). See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
 

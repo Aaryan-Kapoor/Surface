@@ -10,7 +10,7 @@ This page summarizes Surface's security posture and points at the relevant code.
 Surface is a single-user, self-hosted local service. It trusts three things by design:
 
 - **The local user** — anyone with shell access to the host has the same authority as Surface.
-- **Every system-plane agent** — anything on loopback (or carrying a system bearer) has full authority over content, display, and proxies. There is **no per-agent capability scoping** within the system plane ([../auth/project-ownership.md](../auth/project-ownership.md)); the role split that does exist is `system` vs `device` — paired displays can view, click, do workspace-artifact CRUD, and drive the display, but cannot touch the filesystem, execute code, drain the inbox, or mint credentials ([../auth/trust-model.md](../auth/trust-model.md)).
+- **Every system-plane agent** — anything on loopback (or carrying a system bearer) has full authority over content, display, and proxies. There is **no per-agent capability scoping** within the system plane ([../auth/project-ownership.md](../auth/project-ownership.md)); the role split that does exist is `system` vs `device` — paired displays can view, click, and do device-authored workspace-artifact CRUD, but cannot drive display control, touch the filesystem, execute code, drain the inbox, or mint credentials ([../auth/trust-model.md](../auth/trust-model.md)).
 - **Every artifact's HTML/JS** — surfaces run in iframes loaded from the Surface origin (`/artifacts/:id/view`, `/artifacts/:id/files/*`). Surface code can call any Surface endpoint, read every other artifact, and hit the LLM proxy. Treat artifact authors like agents.
 
 ## Auth resolution

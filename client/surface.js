@@ -143,18 +143,9 @@
   }
 
   function action(name, data) {
-    if (window.parent && window.parent !== window) {
-      // Cross-origin (content-plane) iframe: the parent can't be trusted to
-      // relay, and same-origin bridge access would throw — post directly.
-      var sameOriginParent = true;
-      try { void window.parent.location.origin; } catch (e) { sameOriginParent = false; }
-      if (!sameOriginParent) return postDirect(name, data);
-      // Same-origin (system) iframe: use the PWA bridge so it can update the
-      // "agent listening" UI and route through its own connection.
-      window.parent.postMessage({ type: "surface_action", action: name, data: data || {} }, "*");
-      return Promise.resolve({ delivered: "bridge" });
-    }
-    // Standalone tab (no PWA bridge): post straight to the server.
+    // Post straight to the artifact's own origin. This keeps commit() honest:
+    // the returned promise resolves only after the server accepts the action,
+    // so staged intent is not cleared on a parent bridge failure.
     return postDirect(name, data);
   }
 

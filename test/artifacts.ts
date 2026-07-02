@@ -1,30 +1,25 @@
 import fs from "fs";
-import os from "os";
 import path from "path";
+import { cleanupDir, isolatedPorts, killServer, makeClient, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import type { ChildProcess } from "node:child_process";
 
-const SURFACE_URL = process.env.SURFACE_URL || "http://127.0.0.1:3000";
+let SURFACE_URL = "";
+let server: ChildProcess | null = null;
+let serverPort = 0;
+const dataDir = tmpDir("surface-artifacts-data-");
+const req = () => makeClient(SURFACE_URL);
 
 async function api(method: string, path: string, body?: unknown): Promise<any> {
-  const res = await fetch(`${SURFACE_URL}${path}`, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    throw new Error(`${method} ${path} failed ${res.status}: ${await res.text()}`);
+  const res = await req()(method, path, { body });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`${method} ${path} failed ${res.status}: ${typeof res.body === "string" ? res.body : JSON.stringify(res.body)}`);
   }
-  const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return res.json();
-  return res.text();
+  return res.body;
 }
 
 async function raw(method: string, path: string, body?: unknown): Promise<{ status: number; body: string }> {
-  const res = await fetch(`${SURFACE_URL}${path}`, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return { status: res.status, body: await res.text() };
+  const res = await req()(method, path, { body });
+  return { status: res.status, body: typeof res.body === "string" ? res.body : JSON.stringify(res.body) };
 }
 
 async function optionalDelete(path: string): Promise<void> {
@@ -39,17 +34,16 @@ function assert(condition: unknown, message: string): asserts condition {
 
 let tmpRoot2Cache: string | null = null;
 function tmpRoot2(): string {
-  if (!tmpRoot2Cache) tmpRoot2Cache = fs.mkdtempSync(path.join(os.tmpdir(), "surface-doc-test-"));
+  if (!tmpRoot2Cache) tmpRoot2Cache = tmpDir("surface-doc-test-");
   return tmpRoot2Cache;
 }
 
 async function main() {
-  try {
-    await api("GET", "/artifacts");
-  } catch {
-    console.error("Surface server not running. Start it with: npm run dev");
-    process.exit(1);
-  }
+  const ports = await isolatedPorts();
+  serverPort = ports.port;
+  SURFACE_URL = `http://127.0.0.1:${serverPort}`;
+  server = spawnServer(serverPort, dataDir, {}, ports.contentPort);
+  await waitForReady(SURFACE_URL, "/artifacts");
 
   const suffix = Date.now().toString(36);
   const htmlId = `artifact-test-html-${suffix}`;
@@ -95,6 +89,23 @@ async function main() {
 
   const fileText = await api("GET", `/artifacts/${mdId}/files/notes.md`);
   assert(fileText.includes("First"), "Artifact file route did not reflect rolled back version");
+
+  const binaryId = `artifact-test-binary-${suffix}`;
+  const binary = await api("POST", "/artifacts", {
+    id: binaryId,
+    title: "Binary",
+    mime: "application/octet-stream",
+    path: "bytes.bin",
+    content_base64: Buffer.from([0, 127, 128, 255]).toString("base64"),
+  });
+  assert(binary.files[0].size_bytes === 4, "base64 binary artifact size mismatch");
+  const rejectedBinary = await raw("POST", "/artifacts", {
+    title: "Bad Binary",
+    mime: "application/octet-stream",
+    path: "bad.bin",
+    content: "\u00ff",
+  });
+  assert(rejectedBinary.status === 400, "binary JSON string should be rejected");
 
   const cards = await api("GET", "/artifacts");
   assert(cards.some((card: any) => card.id === htmlId && card.preview_url), "HTML artifact missing from surface cards");
@@ -148,7 +159,7 @@ async function main() {
 
   // ── Linked artifacts ──
 
-  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "surface-link-test-"));
+  const tmpRoot = tmpDir("surface-link-test-");
   const linkedFileIds: string[] = [];
   try {
     // Single-file link
@@ -162,6 +173,12 @@ async function main() {
 
     const singleBytes = await api("GET", `/artifacts/${single.artifact.id}/files/single.html`);
     assert(singleBytes.includes("linked-single"), "Single-file link did not serve bytes");
+    const singleViewRedirect = await req()("GET", `/artifacts/${single.artifact.id}/view?v=touch-test`);
+    assert(singleViewRedirect.status === 302, `HTML view should redirect to file route (got ${singleViewRedirect.status})`);
+    assert(
+      singleViewRedirect.headers.get("location") === `/artifacts/${single.artifact.id}/files/single.html?v=touch-test`,
+      "HTML view redirect dropped cache-busting query params",
+    );
 
     // Directory link with entry + sibling
     const dirPath = path.join(tmpRoot, "projdir");
@@ -211,13 +228,21 @@ async function main() {
     // Symlink escape — symlink inside the linked dir pointing outside it
     const secretPath = path.join(tmpRoot, "secret.txt");
     fs.writeFileSync(secretPath, "SHOULD-NOT-LEAK");
-    fs.symlinkSync(secretPath, path.join(dirPath, "leak"));
-    const leak = await raw("GET", `/artifacts/${dir.artifact.id}/files/leak`);
-    assert(
-      leak.status === 403 || leak.status === 404,
-      `Symlink escape must be blocked (got ${leak.status}, body: ${leak.body.slice(0, 120)})`,
-    );
-    assert(!leak.body.includes("SHOULD-NOT-LEAK"), "Symlink escape leaked the target's bytes");
+    let symlinkCreated = true;
+    try {
+      fs.symlinkSync(secretPath, path.join(dirPath, "leak"));
+    } catch (err: any) {
+      if (process.platform !== "win32" || err?.code !== "EPERM") throw err;
+      symlinkCreated = false;
+    }
+    if (symlinkCreated) {
+      const leak = await raw("GET", `/artifacts/${dir.artifact.id}/files/leak`);
+      assert(
+        leak.status === 403 || leak.status === 404,
+        `Symlink escape must be blocked (got ${leak.status}, body: ${leak.body.slice(0, 120)})`,
+      );
+      assert(!leak.body.includes("SHOULD-NOT-LEAK"), "Symlink escape leaked the target's bytes");
+    }
   } finally {
     for (const id of linkedFileIds) await optionalDelete(`/artifacts/${id}`);
     fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -225,7 +250,7 @@ async function main() {
 
   // ── Template engine (project-local template) ──
 
-  const tplRoot = fs.mkdtempSync(path.join(os.tmpdir(), "surface-tpl-test-"));
+  const tplRoot = tmpDir("surface-tpl-test-");
   const tplId = `tpl-test-${suffix}`;
   try {
     const tplDir = path.join(tplRoot, ".surface", "templates", "test-card");
@@ -365,11 +390,22 @@ async function main() {
 
   await optionalDelete(`/artifacts/${htmlId}`);
   await optionalDelete(`/artifacts/${mdId}`);
+  await optionalDelete(`/artifacts/${binaryId}`);
 
   console.log("Artifact HTTP tests passed");
 }
 
-main().catch((err) => {
+main().then(async () => {
+  await cleanup();
+  process.exit(0);
+}).catch(async (err) => {
   console.error(err);
+  await cleanup();
   process.exit(1);
 });
+
+async function cleanup() {
+  await killServer(server, serverPort).catch(() => {});
+  cleanupDir(dataDir);
+  if (tmpRoot2Cache) cleanupDir(tmpRoot2Cache);
+}

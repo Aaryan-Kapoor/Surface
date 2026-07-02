@@ -2,10 +2,12 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { initDb, getDb, cleanupActions } from "./db.js";
+import { initDb, getDb, closeDb } from "./db.js";
+import { cleanupActions } from "./actionsStore.js";
 import { router } from "./routes/index.js";
-import { listArtifactCards } from "./artifacts.js";
+import { gcArtifactStorage, listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
+import { jsonErrorMiddleware, sendError } from "./errors.js";
 import {
   buildPairingUrl,
   formatHeadlessAccessOutput,
@@ -13,6 +15,7 @@ import {
   resolveListeningPort,
 } from "./startupAccess.js";
 import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
+import { closeSSEClients } from "./sse.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -68,11 +71,12 @@ const TRUST_LOOPBACK = !["0", "false", "no"].includes(
 const PUBLIC_BASE_URL = process.env.SURFACE_PUBLIC_URL?.replace(/\/$/, "");
 
 initDb();
+gcArtifactStorage(getDb());
 
 // Inbox TTL sweep: at boot and hourly.
 const sweep = () => {
   try {
-    const { handled, pending } = cleanupActions();
+    const { handled, pending } = cleanupActions(getDb());
     if (handled || pending) console.log(`[actions] TTL sweep removed ${handled} handled, ${pending} expired pending`);
   } catch (err) {
     console.error("[actions] TTL sweep failed:", err);
@@ -82,6 +86,87 @@ sweep();
 setInterval(sweep, 60 * 60 * 1000).unref();
 
 const app = express();
+
+function normalizeHost(value: string): string {
+  const raw = value.trim().toLowerCase();
+  if (!raw) return "";
+  const withoutPort = raw.startsWith("[")
+    ? raw.slice(1, raw.indexOf("]"))
+    : raw.split(":")[0];
+  return withoutPort.replace(/^::ffff:/, "");
+}
+
+function hostFromUrl(value: string | undefined): string {
+  if (!value) return "";
+  try { return normalizeHost(new URL(value).hostname); } catch { return ""; }
+}
+
+function originFromUrl(value: string | undefined): string {
+  if (!value || value === "null") return "";
+  try { return new URL(value).origin; } catch { return ""; }
+}
+
+function allowedHosts(req: express.Request): Set<string> {
+  const hosts = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (BIND && !["0.0.0.0", "::", "[::]"].includes(BIND)) hosts.add(normalizeHost(BIND));
+  const local = normalizeHost(req.socket.localAddress || "");
+  if (local) hosts.add(local);
+  const publicHost = hostFromUrl(PUBLIC_BASE_URL);
+  if (publicHost) hosts.add(publicHost);
+  const contentHost = hostFromUrl(process.env.SURFACE_CONTENT_ORIGIN);
+  if (contentHost) hosts.add(contentHost);
+  for (const h of (process.env.SURFACE_ALLOWED_HOSTS || "").split(",")) {
+    const normalized = normalizeHost(h);
+    if (normalized) hosts.add(normalized);
+  }
+  return hosts;
+}
+
+function allowedOrigins(req: express.Request): Set<string> {
+  const origins = new Set<string>();
+  const host = req.headers.host;
+  if (host) origins.add(`http://${host}`);
+  const port = req.socket.localPort;
+  origins.add(`http://127.0.0.1:${port}`);
+  origins.add(`http://localhost:${port}`);
+  origins.add(`http://[::1]:${port}`);
+  if (port === PORT) {
+    const publicOrigin = originFromUrl(PUBLIC_BASE_URL);
+    if (publicOrigin) origins.add(publicOrigin);
+  }
+  if (port === CONTENT_PORT) {
+    const contentOrigin = originFromUrl(process.env.SURFACE_CONTENT_ORIGIN);
+    if (contentOrigin) origins.add(contentOrigin);
+  }
+  for (const raw of (process.env.SURFACE_ALLOWED_ORIGINS || "").split(",")) {
+    const origin = originFromUrl(raw.trim());
+    if (origin) origins.add(origin);
+  }
+  return origins;
+}
+
+// Host/Origin validation must run before loopback auth. Without it, a DNS
+// rebinding page can arrive over a loopback socket and inherit system trust.
+app.use((req, res, next) => {
+  const host = normalizeHost(req.headers.host || "");
+  if (!host || !allowedHosts(req).has(host)) {
+    sendError(res, 403, "Host header is not allowed");
+    return;
+  }
+  const origins = allowedOrigins(req);
+  const origin = originFromUrl(req.headers.origin);
+  if (req.headers.origin && (!origin || !origins.has(origin))) {
+    sendError(res, 403, "Origin is not allowed");
+    return;
+  }
+  const referer = originFromUrl(req.headers.referer);
+  if (req.headers.referer && (!referer || !origins.has(referer))) {
+    sendError(res, 403, "Referer is not allowed");
+    return;
+  }
+  next();
+});
+
 app.use(express.json({ limit: "10mb" }));
 
 // Unauthenticated browsers can only load the bootstrap shell and exchange a
@@ -115,13 +200,13 @@ app.use((req, res, next) => {
   // `device` so the surface runtime (state/stream/actions) still works; every
   // system-only endpoint stays 403.
   if (req.socket.localPort === CONTENT_PORT) {
-    (req as any).auth = { role: "device", via: "content-port" };
+    req.auth = { role: "device", via: "content-port" };
     return next();
   }
 
   const remote = req.socket.remoteAddress || "";
   if (TRUST_LOOPBACK && LOOPBACK_ADDRS.has(remote)) {
-    (req as any).auth = { role: "system", via: "loopback" };
+    req.auth = { role: "system", via: "loopback" };
     return next();
   }
 
@@ -129,7 +214,7 @@ app.use((req, res, next) => {
   if (cookieToken) {
     const session = verifySession(cookieToken);
     if (session) {
-      (req as any).auth = { role: session.role, sessionId: session.id, label: session.label, via: "cookie" };
+      req.auth = { role: session.role, sessionId: session.id, label: session.label, via: "cookie" };
       return next();
     }
   }
@@ -138,7 +223,7 @@ app.use((req, res, next) => {
   if (bearer) {
     const session = verifySession(bearer);
     if (session) {
-      (req as any).auth = { role: session.role, sessionId: session.id, label: session.label, via: "bearer" };
+      req.auth = { role: session.role, sessionId: session.id, label: session.label, via: "bearer" };
       return next();
     }
   }
@@ -155,6 +240,7 @@ app.get("/pair", (_req, res) => {
 app.use(router);
 app.use("/demos", express.static(path.join(__dirname, "..", "examples", "demos")));
 app.use(express.static(path.join(__dirname, "..", "client")));
+app.use(jsonErrorMiddleware);
 
 const httpServer = app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
@@ -197,6 +283,10 @@ const httpServer = app.listen(PORT, BIND, () => {
     console.error("[thumbs] backfill scan failed:", err);
   }
 });
+httpServer.on("error", (err: any) => {
+  console.error(`[startup] could not bind ${BIND}:${PORT} (${err?.code || err?.message}). Free the port or set PORT.`);
+  process.exit(1);
+});
 
 // Content plane: same app, separate origin, never granted system (see the auth
 // middleware above). Device-authored surfaces are embedded from here.
@@ -214,3 +304,23 @@ contentServer.on("error", (err: any) => {
   );
   process.exit(1);
 });
+
+let shuttingDown = false;
+function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[startup] ${signal} received; shutting down`);
+  closeSSEClients();
+  contentServer.close(() => {});
+  httpServer.close(() => {
+    closeDb();
+    process.exit(0);
+  });
+  setTimeout(() => {
+    try { closeDb(); } catch {}
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

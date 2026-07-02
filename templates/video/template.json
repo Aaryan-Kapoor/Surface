@@ -1,0 +1,13 @@
+{
+  "name": "video",
+  "description": "Responsive YouTube/privacy-nocookie or generic web video embed",
+  "params": {
+    "url": { "type": "url", "required": true, "description": "HTTP(S) video or embeddable page URL" },
+    "title": { "type": "string", "required": false, "default": "", "description": "Optional title shown above the player" },
+    "start": { "type": "number", "required": false, "default": 0, "description": "Start offset in seconds" },
+    "autoplay": { "type": "boolean", "required": false, "default": false, "description": "Autoplay the video muted when supported" },
+    "loop": { "type": "boolean", "required": false, "default": false, "description": "Loop the video when supported" }
+  },
+  "state": {},
+  "actions": []
+}

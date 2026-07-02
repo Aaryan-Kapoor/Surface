@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linked File Demo</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #11131a; color: #f0f3ff; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  main { width: min(820px, calc(100vw - 32px)); }
+  h1 { margin: 0 0 18px; font-size: clamp(32px, 8vw, 74px); line-height: .92; letter-spacing: 0; }
+  .file { border: 1px solid rgba(240,243,255,.18); border-radius: 8px; background: rgba(255,255,255,.06); padding: 18px; }
+  .path { color: #a7c4ff; }
+  .line { color: rgba(240,243,255,.72); margin-top: 12px; }
+  button { margin-top: 18px; border: 0; border-radius: 6px; padding: 12px 16px; background: #a7c4ff; color: #11131a; font: inherit; font-weight: 800; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Link once. Edit forever.</h1>
+  <section class="file">
+    <div class="path">examples/demos/live-link.html</div>
+    <div class="line">When this file changes, <code>surface touch</code> reloads the display without copying bytes into Surface.</div>
+    <button>Simulate touch</button>
+  </section>
+</main>
+<script>
+  document.querySelector("button").addEventListener("click", async () => {
+    if (window.Surface && Surface.action) await Surface.action("touch_demo", { path: "examples/demos/live-link.html" });
+    document.querySelector(".line").textContent = "Touch event emitted. Linked artifacts still read from disk.";
+  });
+</script>
+</body>
+</html>

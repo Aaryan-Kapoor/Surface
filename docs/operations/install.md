@@ -17,7 +17,7 @@ Surface is a single long-running Node service plus a vanilla-JS PWA, with a `sur
 git clone https://github.com/Aaryan-Kapoor/Surface.git
 cd Surface
 npm install
-npm run dev        # tsx server/index.ts → http://127.0.0.1:3000
+npm run dev        # tsx server/index.ts → app :3000, content :3100
 ```
 
 `npm run service` is the same entrypoint (`tsx server/index.ts`), used by the systemd unit. Make the CLI available on `$PATH` with `npm link` — the npm `bin` entry points at the single-file bundle `dist/surface.mjs`, built automatically by the `prepare` hook (`npm run build:cli`). The bundle runs with plain `node`, so the installed `surface` command needs no repo toolchain; `npm run cli` still runs straight from source.
@@ -41,6 +41,8 @@ Read from `process.env` (via `dotenv/config`, so a repo-root `.env` works):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | Listen port (`server/index.ts`). |
+| `SURFACE_CONTENT_PORT` | `3100` | Mandatory second listener for device-authored surface HTML. Must differ from `PORT`; isolated tests should set a unique value. |
+| `SURFACE_CONTENT_ORIGIN` | — | External content origin used by the PWA when `host:SURFACE_CONTENT_PORT` is not directly reachable. |
 | `SURFACE_BIND` | `127.0.0.1` | Bind host. A non-loopback bind triggers startup pairing output. |
 | `SURFACE_TOKEN` | — | **Removed.** No longer accepted as a credential; a set variable is ignored and logs a startup warning. Remote agents use a `SURFACE_SESSION` bearer instead (`surface auth session issue --role system`). See [../auth/trust-model.md](../auth/trust-model.md). |
 | `SURFACE_TRUST_LOOPBACK` | `1` | Trust requests from `127.0.0.1`/`::1` unconditionally. **Set `0` behind a same-host reverse proxy** (`server/index.ts`). See [security.md](security.md). |
@@ -89,7 +91,7 @@ The flow: check the service (offer to install the systemd unit), copy `SKILL.md`
 
 ## Demo seeding
 
-The tutorial uses seven example surfaces in `examples/demos/` (`3d-astronaut.html`, `maps-apple-park.html`, `pacman.html`, `spotify-rickroll.html`, `tweet-trq212.html`, `windy-globe.html`, `yatch-problem.html`):
+The tutorial uses the bundled example surfaces in `examples/demos/`:
 
 - `surface seed-demos` — links each demo as a linked artifact tagged `metadata.demo = true`. Idempotent: if a previous `clear-demos` left a row archived, it un-hides it in place rather than re-linking.
 - `surface clear-demos` — flips `metadata.hidden = true` on every demo-tagged row so they vanish from the dashboard. The artifact records are kept, so `seed-demos` can revive them.

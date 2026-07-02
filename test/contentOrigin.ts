@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn, ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
-import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { cleanupDir, freePort, isolatedPorts, killServer, makeClient, REPO_ROOT, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
 
 // End-to-end verification of content-origin isolation. We boot one server with
 // two listeners — the app port (:PORT, loopback = system) and the content port
@@ -14,38 +13,33 @@ import { fileURLToPath } from "node:url";
 // device-authored surface served from the content origin therefore can't reach
 // any system-only endpoint, which closes the device→system escalation.
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.join(__dirname, "..");
-const PORT = 35000 + (process.pid % 800);
-const CONTENT_PORT = PORT + 1;
-const APP = `http://127.0.0.1:${PORT}`;
-const CONTENT = `http://127.0.0.1:${CONTENT_PORT}`;
-
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-content-data-"));
+let PORT = 0;
+let CONTENT_PORT = 0;
+let APP = "";
+let CONTENT = "";
+const dataDir = tmpDir("surface-content-data-");
 let server: ChildProcess | null = null;
-let serverErr = "";
+let appReq: ReturnType<typeof makeClient>;
+let contentReq: ReturnType<typeof makeClient>;
 
-async function call(base: string, method: string, p: string, body?: unknown) {
-  const res = await fetch(base + p, {
-    method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    redirect: "manual",
-  });
-  let json: any = null;
-  try { json = await res.clone().json(); } catch {}
-  return { status: res.status, json };
+async function call(base: string, method: string, p: string, body?: unknown, headers?: Record<string, string>) {
+  const req = base === APP ? appReq : contentReq;
+  const res = await req(method, p, { body, headers });
+  return { status: res.status, json: res.body };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function waitForServer(base: string, timeoutMs: number) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try { const res = await fetch(base + "/display/config"); if (res.ok) return; } catch {}
-    await sleep(150);
-  }
-  throw new Error(`server did not come up on ${base}\n--- stderr ---\n${serverErr}`);
+function rawHttp(port: number, request: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => socket.write(request));
+    let raw = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => { raw += chunk; });
+    socket.on("error", reject);
+    socket.on("end", () => {
+      const status = Number(raw.match(/^HTTP\/1\.[01]\s+(\d+)/)?.[1] || 0);
+      resolve({ status, body: raw });
+    });
+  });
 }
 
 function test(name: string, fn: () => Promise<void>) {
@@ -55,26 +49,19 @@ function test(name: string, fn: () => Promise<void>) {
 }
 
 async function main() {
-  server = spawn(path.join(repoRoot, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
-    cwd: repoRoot,
-    env: {
-      ...process.env,
-      SURFACE_DATA_DIR: dataDir,
-      PORT: String(PORT),
-      SURFACE_CONTENT_PORT: String(CONTENT_PORT),
-      // A pinned content origin for the proxy-deploy path; advertised verbatim.
-      SURFACE_CONTENT_ORIGIN: "http://content.test:4555",
-      SURFACE_BIND: "127.0.0.1",
-      SURFACE_PAIR_ON_START: "0",
-      NODE_ENV: "test",
-    },
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  server.stderr!.setEncoding("utf8");
-  server.stderr!.on("data", (c: string) => { serverErr += c; });
+  const ports = await isolatedPorts();
+  PORT = ports.port;
+  CONTENT_PORT = ports.contentPort;
+  APP = `http://127.0.0.1:${PORT}`;
+  CONTENT = `http://127.0.0.1:${CONTENT_PORT}`;
+  appReq = makeClient(APP);
+  contentReq = makeClient(CONTENT);
+  server = spawnServer(PORT, dataDir, {
+    SURFACE_CONTENT_ORIGIN: "http://content.test:4555",
+  }, CONTENT_PORT);
 
-  await waitForServer(APP, 15000);
-  await waitForServer(CONTENT, 15000); // the second listener must be up too
+  await waitForReady(APP, "/display/config");
+  await waitForReady(CONTENT, "/display/config"); // the second listener must be up too
   console.log("\n=== Content-origin isolation Tests ===\n");
 
   const id = "content-test-surface";
@@ -102,6 +89,19 @@ async function main() {
     assert.equal(present.status, 403, "file-reading present-file is 403 on the content port");
   });
 
+  await test("app port rejects DNS-rebinding Host and content-origin pivots", async () => {
+    const badHost = await rawHttp(PORT, [
+      "GET /api/auth/session HTTP/1.1",
+      `Host: evil.test:${PORT}`,
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n"));
+    assert.equal(badHost.status, 403, "unexpected Host is rejected before loopback trust");
+    const badOrigin = await call(APP, "POST", "/display/reset", {}, { Origin: CONTENT });
+    assert.equal(badOrigin.status, 403, "content origin cannot drive app-port system endpoints");
+  });
+
   await test("content port still serves the surface runtime (state / actions)", async () => {
     const state = await call(CONTENT, "GET", `/artifacts/${id}/state`);
     assert.equal(state.status, 200, "state readable on content port");
@@ -127,13 +127,13 @@ async function main() {
   await test("server refuses to boot when the content port is taken (content plane is mandatory)", async () => {
     // The content plane is the isolation boundary; a server with a dead content
     // listener must not run (it would break or mis-route device surfaces).
-    const appPort = PORT + 10;
-    const takenContentPort = PORT + 11;
+    const appPort = await freePort();
+    const takenContentPort = await freePort();
     const squatter = net.createServer();
     await new Promise<void>((resolve) => squatter.listen(takenContentPort, "127.0.0.1", () => resolve()));
-    const guardDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-bindfail-"));
-    const proc = spawn(path.join(repoRoot, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
-      cwd: repoRoot,
+    const guardDataDir = tmpDir("surface-bindfail-");
+    const proc = spawn(path.join(REPO_ROOT, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         SURFACE_DATA_DIR: guardDataDir,
@@ -150,7 +150,7 @@ async function main() {
     proc.stderr!.on("data", (c: string) => { err += c; });
     const code: number = await new Promise((resolve) => proc.on("exit", (c) => resolve(c ?? -1)));
     await new Promise<void>((resolve) => squatter.close(() => resolve()));
-    fs.rmSync(guardDataDir, { recursive: true, force: true });
+    cleanupDir(guardDataDir);
     assert.notEqual(code, 0, "process must exit non-zero when the content port can't bind");
     assert.match(err, /could not bind|content plane/i, "logs why it refused to run");
   });
@@ -159,10 +159,10 @@ async function main() {
     // A collision would make the content gate match the app port too, forcing
     // every request — including the agent plane's own — to `device`. The server
     // must fail fast instead of booting into a fully de-privileged state.
-    const samePort = PORT + 5; // exits before any listen, so the value need only collide
-    const guardDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-guard-"));
-    const proc = spawn(path.join(repoRoot, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
-      cwd: repoRoot,
+    const samePort = await freePort(); // exits before any listen, so the value need only collide
+    const guardDataDir = tmpDir("surface-guard-");
+    const proc = spawn(path.join(REPO_ROOT, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
+      cwd: REPO_ROOT,
       env: {
         ...process.env,
         SURFACE_DATA_DIR: guardDataDir,
@@ -178,7 +178,7 @@ async function main() {
     proc.stderr!.setEncoding("utf8");
     proc.stderr!.on("data", (c: string) => { err += c; });
     const code: number = await new Promise((resolve) => proc.on("exit", (c) => resolve(c ?? -1)));
-    fs.rmSync(guardDataDir, { recursive: true, force: true });
+    cleanupDir(guardDataDir);
     assert.notEqual(code, 0, "process must exit non-zero on port collision");
     assert.match(err, /must differ from PORT/, "logs the collision reason");
   });
@@ -187,10 +187,10 @@ async function main() {
 }
 
 main()
-  .then(() => { cleanup(); process.exit(0); })
-  .catch((err) => { console.error(err); cleanup(); process.exit(1); });
+  .then(async () => { await cleanup(); process.exit(0); })
+  .catch(async (err) => { console.error(err); await cleanup(); process.exit(1); });
 
-function cleanup() {
-  try { server?.kill("SIGKILL"); } catch {}
-  try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch {}
+async function cleanup() {
+  await killServer(server, PORT).catch(() => {});
+  cleanupDir(dataDir);
 }

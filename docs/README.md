@@ -1,6 +1,6 @@
 # Surface Documentation
 
-One file per feature, organized by concern. Every doc opens with a status line. As of 2026-06 **everything here is Shipped** — all four roadmap phases are built, and each doc describes the code as it runs today, with file references. (The earlier statuses — *Partially shipped*, *Approved — not yet built* — are gone; the [roadmap](roadmap.md) is kept as the record of what was decided and why.)
+One file per feature, organized by concern. Every doc opens with a status line. Docs are intended to describe the code as it runs today, with file references; stale lines should be fixed in the same PR as behavior changes.
 
 **New here (human or agent)?** Read in this order: [architecture.md](architecture.md) → [core/artifacts.md](core/artifacts.md) → [core/cli.md](core/cli.md) → [roadmap.md](roadmap.md). Then drill into whatever you're touching.
 
@@ -57,6 +57,7 @@ One file per feature, organized by concern. Every doc opens with a status line. 
 | [templates/video.md](templates/video.md) | YouTube/embeds in one line |
 | [templates/board.md](templates/board.md) | The multi-agent status board |
 | [templates/doc.md](templates/doc.md) | Repo markdown files, rendered, hot-reloading |
+| [templates/report.md](templates/report.md) | Long-form explanations and reports |
 
 ## display/ — what the user sees
 

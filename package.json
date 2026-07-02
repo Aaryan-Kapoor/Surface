@@ -3,17 +3,40 @@
   "version": "0.1.0",
   "description": "The last app. A universal display for AI agents.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aaryan-Kapoor/Surface.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "bin/",
+    "client/",
+    "dist/",
+    "docs/",
+    "examples/",
+    "server/",
+    "templates/",
+    "INSTALL_FOR_AGENTS.md",
+    "README.md",
+    "SECURITY.md",
+    "SKILL.md"
+  ],
   "scripts": {
     "dev": "tsx server/index.ts",
     "service": "tsx server/index.ts",
     "cli": "tsx bin/surface.ts",
-    "build:cli": "esbuild bin/surface.ts --bundle --platform=node --format=esm --outfile=dist/surface.mjs && sed -i '1s|.*|#!/usr/bin/env node|' dist/surface.mjs && chmod +x dist/surface.mjs",
+    "build:cli": "node scripts/build-cli.mjs",
     "prepare": "npm run build:cli",
+    "pretest": "npm run build:cli",
+    "test": "tsx test/run-all.ts",
     "test:artifacts": "tsx test/artifacts.ts",
     "test:auth": "tsx test/auth.ts",
     "test:startup-access": "tsx test/startupAccess.ts",
     "test:thumbs": "tsx test/thumbs.ts",
     "test:runtime": "tsx test/runtime.ts",
+    "test:cli": "tsx test/cli.ts",
     "test:app-routing": "tsx test/appRouting.ts",
     "test:bindings": "tsx test/bindings.ts",
     "test:content-origin": "tsx test/contentOrigin.ts",

@@ -1,0 +1,13 @@
+{
+  "name": "report",
+  "description": "Polished long-form report with markdown body, summary callout, and reading typography",
+  "params": {
+    "title": { "type": "string", "required": true, "description": "Report title" },
+    "subtitle": { "type": "string", "required": false, "default": "", "description": "Short context line below the title" },
+    "summary": { "type": "markdown", "required": false, "default": "", "description": "Short executive summary or key result" },
+    "body_md": { "type": "markdown", "required": true, "description": "Main report body as markdown" },
+    "width": { "type": "string", "required": false, "default": "default", "description": "Reading measure: narrow, default, or wide" }
+  },
+  "state": {},
+  "actions": []
+}

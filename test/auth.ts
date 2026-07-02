@@ -107,7 +107,7 @@ async function waitForReady(req: ReturnType<typeof makeClient>, timeoutMs = 1500
 // Spawn tsx directly (not through npx) in its own process group so killServer
 // can take down the whole tree — killing a wrapper while the real server
 // survives is how orphaned test servers kept squatting on ports.
-function spawnServer(port: number, dataDir: string, env: Record<string, string>): ChildProcess {
+function spawnServer(port: number, contentPort: number, dataDir: string, env: Record<string, string>): ChildProcess {
   const tsxBin = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
   const child = spawn(tsxBin, ["server/index.ts"], {
     cwd: REPO_ROOT,
@@ -118,9 +118,7 @@ function spawnServer(port: number, dataDir: string, env: Record<string, string>)
       SURFACE_BIND: "127.0.0.1",
       SURFACE_PAIR_ON_START: "0",
       PORT: String(port),
-      // Unique content port per spawn so the second listener never collides
-      // with another test server (or the live service) on the default 3100.
-      SURFACE_CONTENT_PORT: String(port + 1000),
+      SURFACE_CONTENT_PORT: String(contentPort),
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -152,12 +150,14 @@ async function killServer(child: ChildProcess, port: number): Promise<void> {
 
 async function main() {
   const port = await freePort();
+  let contentPort = await freePort();
+  while (contentPort === port) contentPort = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-auth-"));
   const req = makeClient(base);
 
   console.log(`\n=== Surface Auth Acceptance Tests ===`);
-  console.log(`Port: ${port}  DataDir: ${dataDir}\n`);
+  console.log(`Port: ${port}  ContentPort: ${contentPort}  DataDir: ${dataDir}\n`);
 
   let child: ChildProcess | null = null;
   const cleanup = async () => {
@@ -167,7 +167,7 @@ async function main() {
 
   try {
     // ── Boot 1: trusted loopback (the agent plane) ──
-    child = spawnServer(port, dataDir, {});
+    child = spawnServer(port, contentPort, dataDir, {});
     await waitForReady(req);
 
     const loopbackSess = await req("GET", "/api/auth/session");
@@ -184,7 +184,7 @@ async function main() {
     child = null;
 
     // ── Boot 2: loopback untrusted — every request authenticates ──
-    child = spawnServer(port, dataDir, { SURFACE_TRUST_LOOPBACK: "0" });
+    child = spawnServer(port, contentPort, dataDir, { SURFACE_TRUST_LOOPBACK: "0" });
     await waitForReady(req);
 
     const boot2Identity = await req("GET", "/api/auth/session");
@@ -356,8 +356,15 @@ async function main() {
     const deviceLabels = Array.isArray(devices.body) ? devices.body.map((d: any) => d.label) : [];
     check("devices list shows the paired phone", devices.status === 200 && deviceLabels.includes("phone"), deviceLabels);
 
+    const revokeLocal = await req("POST", "/api/auth/devices/revoke", { token: SYS, body: { device: "local" } });
+    check("device revoke rejects the local system target", revokeLocal.status === 404, revokeLocal.body);
+
     const revAmbig = await req("POST", "/api/auth/devices/revoke", { token: SYS, body: { device: "ph" } });
-    check("revoke by unambiguous label prefix works", revAmbig.status === 200 && revAmbig.body?.revoked === true, revAmbig.body);
+    check(
+      "revoke by unambiguous label prefix works",
+      revAmbig.status === 200 && revAmbig.body?.revoked === true && revAmbig.body?.device?.label === "phone",
+      revAmbig.body,
+    );
 
     const afterRevoke = await req("GET", "/artifacts", { cookie: sessionCookie! });
     check("revoked device immediately loses access", afterRevoke.status === 401, afterRevoke.status);

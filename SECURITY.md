@@ -8,7 +8,7 @@ Surface trusts:
 
 - **The local user.** Anyone with shell access to the host can do anything Surface can do.
 - **Every connected agent.** Agents that can reach the HTTP API (directly or via the CLI) have the same authority as the local user over Surface's content, display, and proxies. There is no per-agent capability scoping.
-- **Every artifact's HTML/JS.** Surfaces execute in iframes loaded from the Surface origin. Code inside a surface can call any HTTP endpoint Surface exposes, read every other artifact, and use the LLM proxy. Treat artifact authors the same way you treat agents.
+- **System-authored artifact HTML/JS.** Agent-created surfaces execute on the app origin and can use the injected runtime. Device-authored surfaces render from the content origin and resolve as `device`, never `system`.
 
 Surface does **not** protect against:
 
@@ -29,7 +29,7 @@ Surface authenticates non-loopback access with **one-time pairing tokens** that 
 - `pairing_tokens` are short-lived (5 min default), single-use credentials, drawn from a human-friendly alphabet, used only to establish trust.
 - `sessions` are long-lived (30 day default) credentials representing a paired browser, CLI, or agent. They are delivered as an `HttpOnly` cookie (`surface_session`) for browsers and usable as `Authorization: Bearer <session-token>` for CLI/agents.
 
-Only `owner`-role credentials exist today; scoped `client` roles may be added later.
+The roles are `system` and `device`.
 
 Both pairing tokens and session tokens are stored only as `sha256(serverSecret:token)` hashes. The `serverSecret` lives at `~/.surface/auth-secret` (mode `0600`), so a leaked database (see below) does not directly yield usable credentials.
 
@@ -78,7 +78,7 @@ Surface data and control routes such as `/artifacts/*`, `/stream`, `/display/*`,
 
 Every request resolves auth in this order: trusted loopback → `surface_session` cookie → `Authorization: Bearer <session-token>` → 401. Cookies are the right transport for `EventSource`/SSE (`/stream`, `/artifacts/:id/stream`), which cannot set custom headers.
 
-Two roles (see `docs/auth/trust-model.md`): **`system`** — loopback and explicitly minted system bearers; full power. **`device`** — paired displays; viewing, clicking, workspace-artifact CRUD, presence, and display control only. Anything that touches the host filesystem (`link`, `present-file`), executes code (`exec`), drains the action inbox, writes surface state, registers bindings, or mints credentials requires `system`.
+Two roles (see `docs/auth/trust-model.md`): **`system`** — loopback and explicitly minted system bearers; full power. **`device`** — paired displays; viewing, clicking, device-authored workspace-artifact CRUD, and presence only. Anything that drives display control (`theme`, `open`, `notify`), touches the host filesystem (`link`, `present-file`), executes code (`exec`), drains the action inbox, writes surface state, registers bindings, or mints credentials requires `system`.
 
 The static `SURFACE_TOKEN` credential is **removed** (2026-06). A set env var is ignored with a startup warning. Remote agents mint a revocable, hashed session bearer instead: `surface auth session issue --role system --label <where>`, carried as `SURFACE_SESSION` in the agent's environment.
 
@@ -105,7 +105,14 @@ These are not bugs; they are why the system/device split exists and why non-loop
 
 ### Surface content isolation
 
-Surface HTML renders in same-origin iframes by design — the injected `surface.js` runtime needs same-origin `fetch`/SSE for state and actions. The PWA applies an iframe `sandbox` attribute that blocks top-navigation and modal abuse, but a malicious surface *script* still runs same-origin. The trust assumption is explicit: surfaces are authored by the user's own agents on the user's own machine. Don't link or present HTML from sources you don't trust. (A second-origin content domain was considered and deferred — it complicates pairing and remote access for a single-user tool; revisit if the trust assumption changes.)
+Surface has two HTTP listeners by default:
+
+- App/control origin: `PORT` (default `3000`), where trusted system-authored surfaces and the PWA load.
+- Content origin: `SURFACE_CONTENT_PORT` (default `3100`), where device-authored surfaces load.
+
+The auth middleware grants `device`, never `system`, to every request on the content port, even over loopback. Device JavaScript can still use `surface.js` for state/actions on its own origin, but system-only routes return 403 there. The PWA embeds system-authored artifacts from the app origin and device-authored artifacts from the content origin based on server-stamped `metadata.author_plane`.
+
+The content listener is mandatory. If `SURFACE_CONTENT_PORT` is unavailable or equals `PORT`, the server refuses to start. Behind a proxy where `host:3100` is not reachable, set `SURFACE_CONTENT_ORIGIN` to the externally reachable content origin.
 
 ## Narrowing Linked Artifacts
 
