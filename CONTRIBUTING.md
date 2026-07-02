@@ -30,6 +30,19 @@ npm audit --audit-level=high
 `test:e2e` is a paid OpenRouter smoke test and is skipped unless
 `SURFACE_TEST_E2E=1` is set.
 
+## Releases
+
+Releases are tagged from `master` as `vX.Y.Z` after CI passes.
+
+Before cutting a release:
+
+1. Move relevant `CHANGELOG.md` entries from `Unreleased` into a dated version
+   section.
+2. Confirm `package.json` has the same version.
+3. Run the checks above on a clean checkout.
+4. Create and push the tag, then publish a GitHub release using the changelog
+   section as release notes.
+
 ## Security
 
 Do not weaken the two-plane trust model. Loopback/system, paired device, and
