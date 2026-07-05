@@ -18,11 +18,11 @@
 <body>
 <main>
   <h1>Readable reports beat terminal walls.</h1>
-  <section class="summary">The built-in report template turns markdown into a self-contained surface with stable typography, tables, and print-friendly layout.</section>
+  <section class="summary">Write the report as markdown in the repo and surface it with <code>surface doc</code> — stable typography, tables, and a print-friendly layout, hot-reloading from disk.</section>
   <h2>Why this exists</h2>
   <p>Agents can ship substantial explanations as surfaces instead of dumping long markdown into the chat transcript.</p>
   <h2>How to make one</h2>
-  <p><code>surface create "Review" --template report --param title="Review" --param body_md=-</code></p>
+  <p><code>surface doc ./reports/review.md --toc</code></p>
 </main>
 </body>
 </html>

@@ -57,7 +57,6 @@ One file per feature, organized by concern. Every doc opens with a status line. 
 | [templates/video.md](templates/video.md) | YouTube/embeds in one line |
 | [templates/board.md](templates/board.md) | The multi-agent status board |
 | [templates/doc.md](templates/doc.md) | Repo markdown files, rendered, hot-reloading |
-| [templates/report.md](templates/report.md) | Long-form explanations and reports |
 
 ## display/ — what the user sees
 

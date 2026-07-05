@@ -475,7 +475,10 @@ async function waitForAction(opts: {
 
   const isMatch = (a: any): boolean => {
     if (!a || typeof a !== "object") return false;
-    if (opts.surfaceId && a.surface_id !== opts.surfaceId) return false;
+    // surface_action payloads carry the surface as `surface_id`; state_patch /
+    // stream_append payloads carry it as `id` (their `id` IS the surface id).
+    const sid = a.surface_id !== undefined ? a.surface_id : a.id;
+    if (opts.surfaceId && sid !== opts.surfaceId) return false;
     if (opts.wantAction && a.action !== opts.wantAction) return false;
     return true;
   };
@@ -566,10 +569,18 @@ async function waitForAction(opts: {
             if (lines.length > 0 && evt === wantEvent) {
               let parsed: any;
               try { parsed = JSON.parse(lines.join("\n")); } catch { parsed = lines.join("\n"); }
-              if (isMatch(parsed) && !(parsed?.id && seen.has(parsed.id))) {
-                if (parsed?.id) seen.add(parsed.id);
-                if (opts.onAction) opts.onAction(await finalize(parsed));
-                else return finalize(parsed);
+              if (wantEvent === "surface_action") {
+                if (isMatch(parsed) && !(parsed?.id && seen.has(parsed.id))) {
+                  if (parsed?.id) seen.add(parsed.id);
+                  if (opts.onAction) opts.onAction(await finalize(parsed));
+                  else return finalize(parsed);
+                }
+              } else if (isMatch(parsed)) {
+                // Non-action events (state_patch, stream_append, …): the
+                // payload is the event itself — no ack envelope, and no dedup
+                // (their `id` is the surface id, which repeats every event).
+                if (opts.onAction) opts.onAction(parsed);
+                else return { ...parsed };
               }
             }
             evt = "message";

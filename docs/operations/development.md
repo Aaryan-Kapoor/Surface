@@ -13,7 +13,7 @@ server/routes/  one router per concern: auth, artifacts, actions, display, integ
 client/      Vanilla-JS PWA (app.js, surface.js, style.css, index.html, pair.html, manifest.json)
 bin/         surface.ts — the CLI (canonical agent client)
 dist/        surface.mjs — the bundled single-file CLI (built by npm run build:cli, gitignored)
-templates/   built-in templates: ask, stream, video, board, doc, report
+templates/   built-in templates: ask, stream, video, board, doc
 examples/    demos/ — bundled example surfaces used by the tutorial + idea portal
 archived/    old docs/demos plus the legacy MCP stdio adapter (not maintained)
 test/        standalone regression suites plus helpers/run-all.ts
