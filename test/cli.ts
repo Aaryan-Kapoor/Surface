@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { cleanupDir, isolatedPorts, killServer, makeClient, REPO_ROOT, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import { cleanupDir, isolatedPorts, killServer, makeClient, REPO_ROOT, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
 
 const cli = path.join(REPO_ROOT, "dist", "surface.mjs");
 
@@ -68,6 +68,26 @@ try {
   const rec = await req("GET", "/artifacts/cli-binary");
   assert.equal(rec.body.version.version, 2);
   assert.equal(rec.body.files[0].size_bytes, 5);
+
+  // wait --id <surface> --event state_patch must wake on that surface's patch
+  // and ignore other surfaces'. State events carry the surface id as `id`
+  // (not `surface_id`), and their payload passes through un-enveloped —
+  // regression for the id-filter mismatch that made this hang forever.
+  const waitA = await run(["create", "Wait A", "--id", "cli-wait-a", "--content", "<h1>a</h1>"], env);
+  assert.equal(waitA.code, 0, waitA.stderr);
+  const waitB = await run(["create", "Wait B", "--id", "cli-wait-b", "--content", "<h1>b</h1>"], env);
+  assert.equal(waitB.code, 0, waitB.stderr);
+  const waiter = run(["wait", "--id", "cli-wait-a", "--event", "state_patch", "--timeout", "15"], env);
+  await sleep(1000); // let the waiter's SSE connection register before patching
+  const patchB = await run(["patch", "cli-wait-b", '{"decoy":true}'], env);
+  assert.equal(patchB.code, 0, patchB.stderr);
+  const patchA = await run(["patch", "cli-wait-a", '{"answer":42}'], env);
+  assert.equal(patchA.code, 0, patchA.stderr);
+  const woke = await waiter;
+  assert.equal(woke.code, 0, `wait --event state_patch did not wake: ${woke.stderr}`);
+  const statePayload = JSON.parse(woke.stdout);
+  assert.equal(statePayload.id, "cli-wait-a", "woke on the wrong surface");
+  assert.equal(statePayload.patch?.answer, 42, "state_patch payload not passed through");
 } finally {
   await killServer(server, ports.port).catch(() => {});
   cleanupDir(dataDir);

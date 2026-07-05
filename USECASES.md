@@ -47,17 +47,15 @@ surface touch <id>
 
 Surface re-serves the real file, so the project remains the source of truth. This fits design prototypes, generated reports that are committed, static previews, and runnable single-file tools.
 
-### Report surface
+### Report document
 
-Use the built-in report template when the user needs to scan or revisit substantial output:
+When the user needs to scan or revisit substantial output, write it as markdown in the repo and surface it as a rendered document:
 
 ```bash
-surface create "Audit report" --template report \
-  --param title="Audit report" \
-  --param body_md=-
+surface doc ./reports/2026-07-05-audit.md --toc
 ```
 
-This fits code review summaries, research briefs, debugging writeups, incident notes, and final task reports that would otherwise become hard-to-read terminal walls.
+The file stays in git as the source of truth and the surface hot-reloads when you edit it. This fits code review summaries, research briefs, debugging writeups, incident notes, and final task reports that would otherwise become hard-to-read terminal walls.
 
 ### Shared agent board
 
@@ -86,5 +84,5 @@ The seed demos in `examples/demos/` intentionally demonstrate product primitives
 - `action-panel.html` — multiple user actions.
 - `stream-build.html` — live log shape.
 - `board-ops.html` — shared agent status board.
-- `report-brief.html` — report template use case.
+- `report-brief.html` — readable long-form report shape.
 - `live-link.html` — linked-file hot reload.

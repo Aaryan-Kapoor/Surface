@@ -10,7 +10,9 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
 - The delivery ladder routes actions through live waiters, consent-gated bindings, then the durable inbox.
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
 - Content is served through a dedicated content origin when configured, with Host/Origin validation on the app plane.
-- Built-in templates include ask, stream, video, board, doc, and report.
+- Built-in templates include ask, stream, video, board, and doc. The report
+  template was deliberately removed (2026-07-05, owner decision — do not
+  re-add); long-form output goes through `surface doc <file>.md --toc`.
 
 ## Verification
 
@@ -35,7 +37,12 @@ bash scripts/check-leaks.sh
 
 ## Source of Truth
 
-- `SKILL.md` is the agent-facing command contract.
+- `SKILL.md` is the agent-facing command contract. It is the benchmark-winning
+  E5 skill from `surface-skill-bench` (61 lines; kept byte-identical with
+  `surface-skill-bench/versions/E5/SKILL.md` and `OPTIMIZED-SKILL.md` — edit
+  one, sync all three). Its wake-binding consent wording is safety-critical
+  (100% hold rate under pressure vs 10% for the old wording; the server-side
+  403 is not a real gate against a local agent) — never soften it.
 - `docs/README.md` links the maintained feature docs.
 - `SECURITY.md` describes the trust model and remote access boundaries.
 - `USECASES.md` lists current product patterns.
