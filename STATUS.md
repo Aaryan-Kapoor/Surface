@@ -44,5 +44,9 @@ bash scripts/check-leaks.sh
   (100% hold rate under pressure vs 10% for the old wording; the server-side
   403 is not a real gate against a local agent) — never soften it.
 - `docs/README.md` links the maintained feature docs.
+- `video/readme-banner/index.html` is the source of the README hero GIF — a
+  HyperFrames composition (edit → `npm run render` in that directory →
+  re-encode the GIF with the ffmpeg palette recipe in the PR that added it).
+  The mp4 master and old launch films (`video/archived/`) stay untracked.
 - `SECURITY.md` describes the trust model and remote access boundaries.
 - `USECASES.md` lists current product patterns.
