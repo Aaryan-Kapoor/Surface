@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Surface — README banner</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* ── Surface theme (client/style.css tokens) ─────────────────── */
+      :root {
+        --bg: #000000;
+        --fg: #ffffff;
+        --fg-muted: rgba(255, 255, 255, 0.52);
+        --fg-faint: rgba(255, 255, 255, 0.3);
+        --fg-ghost: rgba(255, 255, 255, 0.16);
+        --hairline: rgba(255, 255, 255, 0.14);
+        --hairline-strong: rgba(255, 255, 255, 0.4);
+        --surface-1: rgba(255, 255, 255, 0.035);
+        --surface-2: rgba(255, 255, 255, 0.07);
+        --danger: #ff453a;
+        --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); }
+      body { font-family: var(--font); color: var(--fg); }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      .wrap { position: absolute; inset: 0; }
+      .mono { font-family: var(--mono); }
+
+      /* shared bits */
+      .cursor { position: absolute; left: 0; top: 0; width: 34px; height: 40px; z-index: 90; opacity: 0; }
+      .ring {
+        position: absolute; width: 56px; height: 56px; border-radius: 50%;
+        border: 2px solid var(--fg); opacity: 0; z-index: 89;
+      }
+      .ring.sm { width: 30px; height: 30px; }
+      .pulse {
+        position: absolute; left: 0; top: 0; width: 14px; height: 14px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 14px rgba(255, 255, 255, 0.9); opacity: 0; z-index: 85;
+      }
+      .stamp {
+        border: 1.5px solid var(--hairline-strong); border-radius: 8px;
+        padding: 18px 34px; font-family: var(--mono); font-size: 34px;
+        letter-spacing: 0.14em; color: var(--fg); background: rgba(0, 0, 0, 0.72);
+        opacity: 0;
+      }
+      .era-h { font-size: 82px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.06; }
+      .era-sub { font-size: 34px; color: var(--fg-muted); font-weight: 400; }
+      .chat-titlebar {
+        display: flex; align-items: center; gap: 14px; padding: 20px 26px;
+        border-bottom: 1px solid var(--hairline); font-family: var(--mono);
+        font-size: 22px; color: var(--fg-muted);
+      }
+      .chat-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--fg-faint); }
+      .cmd-chip {
+        background: var(--surface-2); border: 1px solid var(--hairline);
+        border-radius: 8px; padding: 2px 10px; font-family: var(--mono); font-weight: 600;
+      }
+
+      /* ── S1 · prompt ─────────────────────────────────────────────── */
+      #s1-chat {
+        position: absolute; left: 470px; top: 230px; width: 980px; height: 620px;
+        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 18px;
+        display: flex; flex-direction: column; overflow: hidden;
+        box-shadow: 0 40px 120px rgba(0, 0, 0, 0.8);
+      }
+      .chat-body { flex: 1; position: relative; padding: 30px; }
+      #s1-bubble {
+        position: absolute; right: 30px; top: 28px; max-width: 640px;
+        background: var(--surface-2); border: 1px solid var(--hairline);
+        border-radius: 14px; padding: 16px 22px; font-size: 28px; opacity: 0;
+      }
+      #s1-dots { position: absolute; left: 30px; top: 120px; display: flex; gap: 10px; }
+      #s1-dots span { display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--fg-faint); opacity: 0.2; }
+      .chat-inputbar {
+        display: flex; align-items: center; gap: 18px; margin: 0 24px 24px;
+        border: 1px solid var(--hairline-strong); border-radius: 14px;
+        padding: 18px 22px; background: var(--surface-1);
+      }
+      #s1-inputline { flex: 1; font-size: 32px; white-space: nowrap; }
+      .s1ch { opacity: 0; }
+      #s1-caret { display: inline-block; width: 3px; height: 34px; background: var(--fg); vertical-align: middle; margin-left: 2px; }
+      #s1-send {
+        width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--hairline-strong);
+        display: grid; place-items: center; font-size: 28px; color: var(--fg);
+        background: var(--surface-2); flex: none;
+      }
+
+      /* ── S2 · markdown wall ──────────────────────────────────────── */
+      #s2-cam { position: absolute; inset: 0; }
+      #s2-chat {
+        position: absolute; left: 400px; top: 150px; width: 1120px; height: 780px;
+        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 18px;
+        overflow: hidden; box-shadow: 0 40px 120px rgba(0, 0, 0, 0.8);
+      }
+      #s2-viewport { position: absolute; inset: 66px 56px 26px 36px; overflow: hidden; }
+      #s2-scroll { font-family: var(--mono); font-size: 24px; line-height: 1.72; color: var(--fg-muted); }
+      .s2ln { white-space: nowrap; }
+      .s2ln.hd { color: var(--fg); font-weight: 700; }
+      .s2ln.bad { color: var(--danger); }
+      .s2ln.ghost { color: var(--fg-ghost); }
+      #s2-bubble {
+        position: absolute; right: 26px; top: 14px; background: var(--surface-2);
+        border: 1px solid var(--hairline); border-radius: 12px; padding: 10px 18px;
+        font-size: 24px;
+      }
+      #s2-track { position: absolute; right: 14px; top: 70px; bottom: 30px; width: 8px; border-radius: 4px; background: var(--surface-2); }
+      #s2-thumb { position: absolute; left: 0; top: 0; width: 8px; height: 200px; border-radius: 4px; background: var(--fg-faint); transform-origin: top center; }
+      #s2-count {
+        position: absolute; left: 36px; bottom: 18px; font-family: var(--mono);
+        font-size: 22px; color: var(--fg-faint); opacity: 0;
+      }
+      #s2-h { position: absolute; left: 110px; top: 380px; opacity: 0; }
+      #s2-sub { position: absolute; left: 112px; top: 590px; opacity: 0; max-width: 440px; line-height: 1.4; }
+
+      /* ── S3 · HTML era ───────────────────────────────────────────── */
+      #s3-h { position: absolute; top: 54px; width: 100%; text-align: center; font-size: 58px; font-weight: 700; letter-spacing: -0.01em; opacity: 0; }
+      #s3-cam { position: absolute; inset: 0; }
+      #s3-win {
+        position: absolute; left: 280px; top: 170px; width: 1360px; height: 800px;
+        background: #0a0a0a; border: 1px solid var(--hairline); border-radius: 16px;
+        overflow: hidden; box-shadow: 0 40px 120px rgba(0, 0, 0, 0.8);
+      }
+      .browser-bar {
+        display: flex; align-items: center; gap: 16px; padding: 14px 22px;
+        border-bottom: 1px solid var(--hairline);
+      }
+      .traffic { display: flex; gap: 9px; }
+      .traffic i { width: 13px; height: 13px; border-radius: 50%; background: var(--fg-ghost); }
+      .urlbox {
+        flex: 1; font-family: var(--mono); font-size: 20px; color: var(--fg-muted);
+        background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 8px; padding: 8px 16px;
+      }
+      #s3-time { position: relative; width: 320px; height: 38px; flex: none; }
+      #s3-time span {
+        position: absolute; right: 0; top: 4px; font-family: var(--mono); font-size: 20px;
+        color: var(--fg-faint); white-space: nowrap;
+      }
+      #s3-time-stale { opacity: 0; color: var(--danger) !important; }
+      .dash-head { display: flex; align-items: center; gap: 24px; padding: 26px 36px 10px; }
+      .dash-head h2 { font-size: 40px; font-weight: 700; letter-spacing: -0.01em; }
+      .dash-head .meta { font-family: var(--mono); font-size: 22px; color: var(--fg-muted); flex: 1; }
+      #s3-btn {
+        display: inline-block; background: var(--fg); color: #000;
+        font-size: 24px; font-weight: 600; border-radius: 10px; padding: 13px 30px;
+      }
+      .rep-cols { display: flex; flex-wrap: wrap; gap: 24px; padding: 20px 36px; }
+      .s3card {
+        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 12px;
+        padding: 22px; width: 400px; min-height: 140px;
+      }
+      .s3card .t { font-size: 27px; font-weight: 600; line-height: 1.25; margin-bottom: 10px; font-family: var(--mono); }
+      .s3card .m { font-family: var(--mono); font-size: 20px; color: var(--fg-muted); line-height: 1.6; }
+      .s3card .m .fail { color: var(--danger); }
+      .pdot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; background: var(--fg-faint); margin-right: 10px; }
+      .pdot.p0 { background: var(--danger); }
+      #s3-dead {
+        position: absolute; left: 980px; top: 350px; font-family: var(--mono);
+        font-size: 42px; color: var(--fg); opacity: 0; background: rgba(0, 0, 0, 0.85);
+        border: 1px solid var(--hairline-strong); border-radius: 12px; padding: 20px 34px; z-index: 30;
+      }
+      #s3-dim { position: absolute; inset: 0; background: #000; opacity: 0; }
+      #s3-stamps {
+        position: absolute; left: 0; top: 240px; width: 100%; display: flex;
+        flex-direction: column; align-items: center; gap: 40px; z-index: 40;
+      }
+      .stamp { font-size: 46px; }
+      #s3-pile { position: absolute; inset: 0; z-index: 35; }
+      .filechip {
+        position: absolute; font-family: var(--mono); font-size: 24px; color: var(--fg-muted);
+        border: 1px solid var(--hairline); border-radius: 10px; padding: 12px 22px;
+        background: rgba(8, 8, 8, 0.92); opacity: 0; white-space: nowrap;
+      }
+
+      /* ── S4 · pivot ──────────────────────────────────────────────── */
+      #s4-glow {
+        position: absolute; left: 560px; top: 240px; width: 800px; height: 600px;
+        background: radial-gradient(closest-side, rgba(255, 255, 255, 0.12), transparent 70%);
+        opacity: 0;
+      }
+      #s4-row {
+        position: absolute; inset: 0; display: flex; align-items: center;
+        justify-content: center; gap: 52px;
+      }
+      .s4-old { font-size: 72px; font-weight: 600; color: var(--fg); opacity: 0; }
+      .s4-arrow { font-size: 60px; color: var(--fg-ghost); opacity: 0; }
+      #s4-sf { font-size: 132px; font-weight: 700; letter-spacing: -0.03em; opacity: 0; }
+      #s4-sub {
+        position: absolute; top: 680px; width: 100%; text-align: center;
+        font-size: 36px; color: var(--fg-muted); opacity: 0;
+      }
+
+      /* ── S5 · the Surface era ────────────────────────────────────── */
+      #s5-flash { position: absolute; inset: 0; background: #fff; opacity: 0; z-index: 60; }
+      #s5-chat {
+        position: absolute; left: 90px; top: 620px; width: 640px; height: 380px;
+        background: rgba(10, 10, 10, 0.94); border: 1px solid var(--hairline);
+        border-radius: 16px; display: flex; flex-direction: column; overflow: hidden;
+        z-index: 70; opacity: 0; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.8);
+      }
+      #s5-chat .chat-body { padding: 24px 26px; }
+      #s5-agentmsg { font-size: 25px; line-height: 1.5; color: var(--fg-muted); max-width: 520px; }
+      #s5-chat .chat-inputbar { margin: 0 20px 20px; padding: 14px 18px; }
+      #s5-inputline { flex: 1; font-size: 28px; white-space: nowrap; }
+      .s5ch { opacity: 0; }
+      #s5-caret { display: inline-block; width: 3px; height: 30px; background: var(--fg); vertical-align: middle; margin-left: 2px; }
+      .gbub {
+        position: absolute; font-family: var(--mono); font-size: 25px; color: var(--fg-muted);
+        border: 1px solid var(--hairline); border-radius: 12px; padding: 12px 20px;
+        background: var(--surface-1); opacity: 0; z-index: 72; white-space: nowrap;
+      }
+
+      #s5-board { position: absolute; inset: 0; opacity: 0; }
+      .board-head {
+        position: absolute; left: 90px; right: 90px; top: 56px;
+        display: flex; align-items: center; justify-content: space-between;
+      }
+      .board-head h2 { font-size: 42px; font-weight: 700; letter-spacing: -0.01em; }
+      .board-head h2 em { font-style: normal; color: var(--fg-muted); font-weight: 400; }
+      #s5-agentbox { display: flex; align-items: center; gap: 16px; font-family: var(--mono); font-size: 24px; color: var(--fg-muted); }
+      #agent-dot {
+        width: 20px; height: 20px; border-radius: 50%; background: #fff;
+        box-shadow: 0 0 22px rgba(255, 255, 255, 0.8); opacity: 0;
+      }
+      #dot-flare {
+        position: absolute; left: 1712px; top: 70px; width: 36px; height: 36px;
+        border-radius: 50%; border: 2px solid #fff; opacity: 0; z-index: 84;
+      }
+      #s5-ticker { position: absolute; right: 90px; top: 128px; width: 700px; height: 34px; }
+      #s5-ticker span {
+        position: absolute; right: 0; top: 0; font-family: var(--mono); font-size: 23px;
+        color: var(--fg-muted); white-space: nowrap; opacity: 0;
+      }
+      .panel {
+        position: absolute; border: 1px solid var(--hairline); border-radius: 16px;
+        background: var(--surface-1);
+      }
+      .panel-label {
+        position: absolute; left: 24px; top: 18px; font-family: var(--mono); font-size: 22px;
+        letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-muted);
+      }
+      #suite { left: 90px; top: 180px; width: 850px; height: 620px; }
+      .trow { position: absolute; left: 26px; width: 800px; height: 78px; display: flex; align-items: center; gap: 22px; }
+      .trow .st { width: 20px; height: 20px; border-radius: 50%; background: var(--danger); flex: none; }
+      .trow .st.ok { background: #ffffff; }
+      .trow .nm { font-size: 29px; font-weight: 500; }
+      .trow.done .nm { color: var(--fg-muted); }
+      #trow6 { opacity: 0; }
+      #s5-chip {
+        position: absolute; left: 90px; top: 838px; font-family: var(--mono); font-size: 25px;
+        color: var(--fg-muted); border: 1px solid var(--hairline-strong); border-radius: 12px;
+        padding: 16px 26px; background: var(--surface-1);
+      }
+      #runner { left: 1000px; top: 180px; width: 830px; height: 420px; }
+      #runner-lines { position: absolute; left: 24px; top: 56px; right: 24px; font-family: var(--mono); font-size: 22px; line-height: 1.6; color: var(--fg-muted); }
+      .rln { white-space: nowrap; }
+      .rln.hot { color: #ffffff; }
+      .rln.late { opacity: 0; }
+      #progress { left: 1000px; top: 630px; width: 830px; height: 170px; }
+      #cntbox { position: absolute; left: 30px; top: 44px; width: 300px; height: 80px; }
+      #cntbox span { position: absolute; left: 0; top: 0; font-size: 64px; font-weight: 700; letter-spacing: -0.02em; opacity: 0; }
+      #cntbox #cnt1 { opacity: 1; }
+      #cnt-label { position: absolute; left: 34px; top: 118px; font-family: var(--mono); font-size: 22px; color: var(--fg-muted); }
+      #bar-track {
+        position: absolute; right: 30px; top: 78px; width: 420px; height: 12px;
+        border-radius: 6px; background: var(--surface-2); overflow: hidden;
+      }
+      #bar-fill { display: block; width: 100%; height: 12px; background: #fff; transform-origin: left center; }
+
+      /* grid tiles */
+      .tile {
+        position: absolute; width: 440px; height: 250px; border: 1px solid var(--hairline);
+        border-radius: 14px; background: var(--surface-1); opacity: 0;
+      }
+      .tile .tname { position: absolute; left: 20px; top: 14px; font-family: var(--mono); font-size: 28px; font-weight: 700; }
+      .tile .tdot {
+        position: absolute; right: 18px; top: 20px; width: 10px; height: 10px;
+        border-radius: 50%; background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+      }
+      #tile-label {
+        position: absolute; left: 166px; top: 196px; z-index: 45; font-family: var(--mono);
+        font-size: 28px; font-weight: 700; background: rgba(0, 0, 0, 0.78);
+        border: 1px solid var(--hairline); border-radius: 8px; padding: 6px 14px; opacity: 0;
+      }
+      #tile-ghost {
+        border-style: dashed; display: grid; place-items: center;
+        font-family: var(--mono); font-size: 25px; color: var(--fg-faint);
+      }
+      .hbar { position: absolute; left: 24px; width: 330px; height: 18px; border: 1px solid var(--hairline); border-radius: 9px; overflow: hidden; }
+      .hbar i { display: block; width: 45%; height: 16px; background: var(--danger); transform-origin: left center; }
+      .vchip {
+        position: absolute; top: 58px; width: 52px; height: 36px; border: 1px solid var(--hairline);
+        border-radius: 8px; display: grid; place-items: center; font-family: var(--mono);
+        font-size: 20px; color: var(--fg-muted);
+      }
+      .blk { position: absolute; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px; }
+      .lane { position: absolute; top: 58px; width: 122px; height: 168px; border: 1px dashed var(--hairline); border-radius: 10px; }
+      .mcard { position: absolute; width: 102px; height: 42px; background: var(--surface-2); border: 1px solid var(--hairline-strong); border-radius: 8px; }
+      .pill {
+        position: absolute; left: 24px; width: 190px; height: 40px; border: 1px solid var(--hairline-strong);
+        border-radius: 20px; font-family: var(--mono); font-size: 20px; color: var(--fg-muted);
+        display: grid; place-items: center;
+      }
+      .tprog { position: absolute; left: 24px; top: 214px; width: 392px; height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
+      .tprog i { display: block; width: 50%; height: 10px; background: #fff; transform-origin: left center; }
+
+      #s5-cap { position: absolute; bottom: 42px; width: 100%; height: 70px; text-align: center; z-index: 75; }
+      #s5-cap span {
+        position: absolute; left: 0; right: 0; font-size: 50px; font-weight: 600;
+        letter-spacing: -0.01em; opacity: 0;
+      }
+
+      /* ── S6 · close ──────────────────────────────────────────────── */
+      #s6-glow {
+        position: absolute; left: 460px; top: 190px; width: 1000px; height: 700px;
+        background: radial-gradient(closest-side, rgba(255, 255, 255, 0.09), transparent 70%);
+        opacity: 0;
+      }
+      #s6-word {
+        position: absolute; top: 340px; width: 100%; text-align: center;
+        font-size: 176px; font-weight: 700; letter-spacing: -0.035em; opacity: 0;
+      }
+      #s6-s1 { position: absolute; top: 610px; width: 100%; text-align: center; font-size: 46px; font-weight: 600; opacity: 0; }
+      #s6-s2 {
+        position: absolute; top: 692px; width: 100%; text-align: center;
+        font-family: var(--mono); font-size: 27px; color: var(--fg-muted); opacity: 0;
+      }
+      #s6-link {
+        position: absolute; top: 780px; width: 100%; text-align: center;
+        font-family: var(--mono); font-size: 26px; color: var(--fg-faint); opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="63">
+      <div id="bg" class="clip" data-start="0" data-duration="63" data-track-index="0" style="background: #000"></div>
+
+      <!-- ── S1 · the prompt ─────────────────────────────────────── -->
+      <section id="s1" class="clip" data-start="0" data-duration="7" data-track-index="1">
+        <div id="s1-wrap" class="wrap">
+          <div id="s1-chat">
+            <div class="chat-titlebar"><i class="chat-dot"></i>agent — chat</div>
+            <div class="chat-body">
+              <div id="s1-bubble"><span class="cmd-chip">/tdd</span> the webhook parser fix</div>
+              <div id="s1-dots"><span></span><span></span><span></span></div>
+            </div>
+            <div class="chat-inputbar">
+              <div id="s1-inputline"><span class="cmd-chip"><span class="s1ch">/</span><span class="s1ch">t</span><span class="s1ch">d</span><span class="s1ch">d</span></span><span class="s1ch">&nbsp;</span><span class="s1ch">t</span><span class="s1ch">h</span><span class="s1ch">e</span><span class="s1ch">&nbsp;</span><span class="s1ch">w</span><span class="s1ch">e</span><span class="s1ch">b</span><span class="s1ch">h</span><span class="s1ch">o</span><span class="s1ch">o</span><span class="s1ch">k</span><span class="s1ch">&nbsp;</span><span class="s1ch">p</span><span class="s1ch">a</span><span class="s1ch">r</span><span class="s1ch">s</span><span class="s1ch">e</span><span class="s1ch">r</span><span class="s1ch">&nbsp;</span><span class="s1ch">f</span><span class="s1ch">i</span><span class="s1ch">x</span><span id="s1-caret"></span></div>
+              <div id="s1-send">↑</div>
+            </div>
+          </div>
+          <div id="s1-ring" class="ring" style="left: 1330px; top: 762px"></div>
+          <svg id="s1-cursor" class="cursor" viewBox="0 0 24 30">
+            <path d="M2 1 L2 24 L8 18.5 L12 28 L16 26 L11.5 17 L20 17 Z" fill="#fff" stroke="#000" stroke-width="1.4" />
+          </svg>
+        </div>
+      </section>
+
+      <!-- ── S2 · the markdown wall ──────────────────────────────── -->
+      <section id="s2" class="clip" data-start="6.4" data-duration="7.7" data-track-index="2">
+        <div id="s2-wrap" class="wrap">
+          <div id="s2-cam">
+            <div id="s2-chat">
+              <div class="chat-titlebar"><i class="chat-dot"></i>agent — chat</div>
+              <div id="s2-bubble"><span class="cmd-chip">/tdd</span> the webhook parser fix</div>
+              <div id="s2-viewport" data-layout-allow-overlap>
+                <div id="s2-scroll" data-layout-allow-overflow data-layout-allow-overlap>
+                  <div class="s2ln hd"># tdd — webhook parser fix</div>
+                  <div class="s2ln">plan: red → green → refactor</div>
+                  <div class="s2ln hd">## failing tests to write</div>
+                  <div class="s2ln">- rejects null payload.event</div>
+                  <div class="s2ln">- rejects missing signature header</div>
+                  <div class="s2ln">- replayed id accepted exactly once</div>
+                  <div class="s2ln hd">## run 1 — 3 failed · 2 passed</div>
+                  <div class="s2ln bad">✗ null payload → TypeError: cannot read 'event'</div>
+                  <div class="s2ln">    at parseHook (parser.ts:41:18)</div>
+                  <div class="s2ln">    at Object.&lt;anonymous&gt; (parser.test.ts:12:9)</div>
+                  <div class="s2ln">    … 16 more stack frames</div>
+                  <div class="s2ln bad">✗ missing signature → expected 401, got 500</div>
+                  <div class="s2ln bad">✗ replayed id → expected 409, got 200</div>
+                  <div class="s2ln hd">## run 2 — 3 failed · 2 passed</div>
+                  <div class="s2ln">same failures. adjusting the guard…</div>
+                  <div class="s2ln hd">## run 3 — 2 failed · 3 passed</div>
+                  <div class="s2ln ghost">✗ missing signature → expected 401, got 500</div>
+                  <div class="s2ln ghost">    at verify (signature.ts:18:4)</div>
+                  <div class="s2ln ghost">    at parseHook (parser.ts:44:11)</div>
+                  <div class="s2ln ghost">    … 14 more stack frames</div>
+                  <div class="s2ln ghost">✗ replayed id → expected 409, got 200</div>
+                  <div class="s2ln ghost">## run 4 — 2 failed · 3 passed</div>
+                  <div class="s2ln ghost">rethinking the dedupe table…</div>
+                  <div class="s2ln ghost">## run 5 — 1 failed · 4 passed</div>
+                  <div class="s2ln ghost">✗ replayed id → expected 409, got 200</div>
+                  <div class="s2ln ghost">    at dedupe (store.ts:71:9)</div>
+                  <div class="s2ln ghost">    … 380 more lines of runner output …</div>
+                  <div class="s2ln ghost">## run 6 — did you catch all that?</div>
+                  <div class="s2ln ghost">…</div>
+                </div>
+              </div>
+              <div id="s2-track"><div id="s2-thumb"></div></div>
+              <div id="s2-count">· 447 lines of runner output</div>
+            </div>
+          </div>
+          <div id="s2-h" class="era-h">First, we read<br />markdown.</div>
+          <div id="s2-sub" class="era-sub">endless walls of text. scroll, squint, forget.</div>
+        </div>
+      </section>
+
+      <!-- ── S3 · the HTML era ───────────────────────────────────── -->
+      <section id="s3" class="clip" data-start="13.7" data-duration="12.4" data-track-index="1">
+        <div id="s3-wrap" class="wrap">
+          <div id="s3-h">Then, agents wrote HTML.</div>
+          <div id="s3-cam">
+            <div id="s3-win">
+              <div class="browser-bar">
+                <div class="traffic"><i></i><i></i><i></i></div>
+                <div class="urlbox">file:///Users/you/Downloads/test-report.html</div>
+                <div id="s3-time">
+                  <span id="s3-time-fresh">generated 9:14 am</span>
+                  <span id="s3-time-stale">stale — 3 commits behind</span>
+                </div>
+              </div>
+              <div class="dash-head">
+                <h2>webhook parser — test report</h2>
+                <span class="meta">12 passed · 3 failed · 74% coverage</span>
+                <div id="s3-btn">Re-run</div>
+              </div>
+              <div class="rep-cols">
+                <div class="s3card">
+                  <div class="t"><i class="pdot p0"></i>parser.test.ts</div>
+                  <div class="m"><span class="fail">✗ null payload</span> · <span class="fail">✗ signature</span><br />8 assertions · 41ms</div>
+                </div>
+                <div class="s3card">
+                  <div class="t"><i class="pdot p0"></i>store.test.ts</div>
+                  <div class="m"><span class="fail">✗ replayed id</span> · dedupe table<br />5 assertions · 12ms</div>
+                </div>
+                <div class="s3card">
+                  <div class="t"><i class="pdot"></i>routes.test.ts</div>
+                  <div class="m">✓ all passing<br />11 assertions · 88ms</div>
+                </div>
+                <div class="s3card">
+                  <div class="t"><i class="pdot"></i>auth.test.ts</div>
+                  <div class="m">✓ all passing<br />7 assertions · 34ms</div>
+                </div>
+                <div class="s3card">
+                  <div class="t"><i class="pdot"></i>audit.test.ts</div>
+                  <div class="m">✓ all passing<br />4 assertions · 9ms</div>
+                </div>
+                <div class="s3card">
+                  <div class="t"><i class="pdot"></i>e2e.test.ts</div>
+                  <div class="m">○ skipped — needs live hooks<br />0 of 6 ran</div>
+                </div>
+              </div>
+              <div id="s3-dim"></div>
+            </div>
+          </div>
+          <div id="s3-dead" data-layout-allow-overlap>…no one is listening.</div>
+          <div id="s3-stamps" data-layout-allow-overlap>
+            <div class="stamp">STATIC</div>
+            <div class="stamp">THROWN AWAY</div>
+            <div class="stamp">NOWHERE TO LIVE</div>
+            <div class="stamp">CAN'T TALK BACK</div>
+          </div>
+          <div id="s3-pile" data-layout-allow-overlap>
+            <div class="filechip" style="left: 110px; top: 806px">test-report.html</div>
+            <div class="filechip" style="left: 448px; top: 812px">coverage-final.html</div>
+            <div class="filechip" style="left: 852px; top: 804px">report (2).html</div>
+            <div class="filechip" style="left: 1176px; top: 814px">run-old.html</div>
+            <div class="filechip" style="left: 1478px; top: 806px">triage-v3.html</div>
+            <div class="filechip" style="left: 232px; top: 884px">dashboard-FINAL.html</div>
+            <div class="filechip" style="left: 668px; top: 890px">plan-final-FINAL (2).html</div>
+            <div class="filechip" style="left: 1128px; top: 882px">untitled (7).html</div>
+            <div class="filechip" style="left: 1448px; top: 890px">mockup-old.html</div>
+            <div class="filechip" style="left: 152px; top: 962px">retro-notes.html</div>
+            <div class="filechip" style="left: 520px; top: 968px">perf-report-v2.html</div>
+            <div class="filechip" style="left: 902px; top: 960px">onboarding-flow (3).html</div>
+            <div class="filechip" style="left: 1364px; top: 966px">spec_final_v8.html</div>
+            <div class="filechip" style="left: 1680px; top: 960px">demo.html</div>
+          </div>
+          <div id="s3-r1" class="ring" style="left: 1520px; top: 246px"></div>
+          <div id="s3-r2" class="ring" style="left: 1520px; top: 246px"></div>
+          <svg id="s3-cursor" class="cursor" viewBox="0 0 24 30">
+            <path d="M2 1 L2 24 L8 18.5 L12 28 L16 26 L11.5 17 L20 17 Z" fill="#fff" stroke="#000" stroke-width="1.4" />
+          </svg>
+        </div>
+      </section>
+
+      <!-- ── S4 · the pivot ──────────────────────────────────────── -->
+      <section id="s4" class="clip" data-start="25.9" data-duration="6.6" data-track-index="2">
+        <div id="s4-wrap" class="wrap">
+          <div id="s4-glow"></div>
+          <div id="s4-row">
+            <div id="s4-md" class="s4-old">Markdown</div>
+            <div id="s4-a1" class="s4-arrow">→</div>
+            <div id="s4-html" class="s4-old">HTML</div>
+            <div id="s4-a2" class="s4-arrow">→</div>
+            <div id="s4-sf">Surface</div>
+          </div>
+          <div id="s4-sub">the natural next evolution</div>
+        </div>
+      </section>
+
+      <!-- ── S5 · the Surface era ────────────────────────────────── -->
+      <section id="s5" class="clip" data-start="32.2" data-duration="26" data-track-index="1">
+        <div id="s5-wrap" class="wrap">
+          <div id="s5-board">
+            <div class="board-head">
+              <h2>orbit <em>· /tdd — webhook parser</em></h2>
+              <div id="s5-agentbox"><div id="agent-dot"></div>agent · live</div>
+            </div>
+            <div id="s5-ticker">
+              <span id="s5-t1">state_patch · suite updated live</span>
+              <span id="s5-t2">← action add_edge_case — delivered to agent</span>
+              <span id="s5-t3">state_patch · all green</span>
+            </div>
+
+            <div id="suite" class="panel">
+              <div class="panel-label">suite</div>
+              <div id="trow1" class="trow" style="top: 68px"><div class="st"></div><div class="nm">rejects null payload</div></div>
+              <div id="trow2" class="trow" style="top: 150px"><div class="st"></div><div class="nm">rejects missing signature</div></div>
+              <div id="trow3" class="trow" style="top: 232px"><div class="st"></div><div class="nm">replayed id accepted once</div></div>
+              <div id="trow4" class="trow done" style="top: 314px"><div class="st ok"></div><div class="nm">parses a valid event</div></div>
+              <div id="trow5" class="trow done" style="top: 396px"><div class="st ok"></div><div class="nm">emits the audit log</div></div>
+              <div id="trow6" class="trow" style="top: 478px"><div class="st"></div><div class="nm">empty payload → 400</div></div>
+            </div>
+            <div id="s5-chip">+ edge case: empty payload</div>
+
+            <div id="runner" class="panel">
+              <div class="panel-label">runner</div>
+              <div id="runner-lines">
+                <div class="rln">❯ tdd — red → green → refactor</div>
+                <div class="rln">run 2 · 2/5 passing</div>
+                <div id="rl3" class="rln late">guard: reject null payload.event</div>
+                <div id="rl4" class="rln late">✓ rejects null payload</div>
+                <div id="rl5" class="rln late">sign: verify header before parse</div>
+                <div id="rl6" class="rln late">✓ rejects missing signature</div>
+                <div id="rl7" class="rln late hot">← add_edge_case — from your surface</div>
+                <div id="rl8" class="rln late">red: empty payload → expect 400</div>
+                <div id="rl9" class="rln late">✓ replayed id accepted once</div>
+                <div id="rl10" class="rln late">✓ empty payload → 400 · all green</div>
+              </div>
+            </div>
+
+            <div id="progress" class="panel">
+              <div id="cntbox">
+                <span id="cnt1">2/5</span><span id="cnt2">3/5</span><span id="cnt3">4/5</span>
+                <span id="cnt4">4/6</span><span id="cnt5">5/6</span><span id="cnt6">6/6</span>
+              </div>
+              <div id="cnt-label">passing</div>
+              <div id="bar-track"><div id="bar-fill"></div></div>
+            </div>
+
+            <div id="pl1" class="pulse"></div>
+            <div id="pl2" class="pulse"></div>
+            <div id="pl3" class="pulse"></div>
+            <div id="pl4" class="pulse"></div>
+            <div id="pl5" class="pulse"></div>
+          </div>
+
+          <!-- the grid the board docks into -->
+          <div id="tile-label">/tdd</div>
+          <div id="tile-dg" class="tile" style="left: 740px; top: 180px">
+            <div class="tname">/diagnose</div><div class="tdot"></div>
+            <div class="hbar" style="top: 74px"><i></i></div>
+            <div id="dg-b2" class="hbar" style="top: 124px"><i id="dg-b2f"></i></div>
+            <div class="hbar" style="top: 174px"><i></i></div>
+            <div id="dg-ring" class="ring sm" style="left: 160px; top: 112px"></div>
+            <div id="tp1" class="pulse"></div>
+          </div>
+          <div id="tile-pt" class="tile" style="left: 1330px; top: 180px">
+            <div class="tname">/prototype</div><div class="tdot"></div>
+            <div class="vchip" style="left: 24px">A</div>
+            <div id="pt-b" class="vchip" style="left: 88px">B</div>
+            <div class="vchip" style="left: 152px">C</div>
+            <div id="pt-r1" class="blk" style="left: 24px; top: 116px; width: 150px; height: 96px"></div>
+            <div id="pt-r2" class="blk" style="left: 200px; top: 146px; width: 200px; height: 66px"></div>
+            <div id="pt-ring" class="ring sm" style="left: 100px; top: 62px"></div>
+            <div id="tp2" class="pulse"></div>
+          </div>
+          <div id="tile-tr" class="tile" style="left: 740px; top: 520px">
+            <div class="tname">/triage</div><div class="tdot"></div>
+            <div class="lane" style="left: 24px"></div>
+            <div class="lane" style="left: 160px"></div>
+            <div class="lane" style="left: 296px"></div>
+            <div class="mcard" style="left: 34px; top: 70px"></div>
+            <div id="tr-c2" class="mcard" style="left: 34px; top: 124px"></div>
+            <div class="mcard" style="left: 170px; top: 70px"></div>
+            <div id="tr-ring" class="ring sm" style="left: 70px; top: 130px"></div>
+            <div id="tp3" class="pulse"></div>
+          </div>
+          <div id="tile-th" class="tile" style="left: 1330px; top: 520px">
+            <div class="tname">/teach</div><div class="tdot"></div>
+            <div style="position: absolute; left: 24px; top: 66px; font-family: var(--mono); font-size: 21px; color: var(--fg-muted)">quiz 3/4 — which call wins?</div>
+            <div id="th-p1" class="pill" style="top: 104px">the first one</div>
+            <div class="pill" style="top: 156px">the last one</div>
+            <div class="tprog"><i id="th-fill"></i></div>
+            <div id="th-ring" class="ring sm" style="left: 100px; top: 110px"></div>
+            <div id="tp4" class="pulse"></div>
+          </div>
+          <div id="tile-ghost" class="tile" style="left: 150px; top: 520px">+ surface anything</div>
+
+          <div id="s5-cap">
+            <span id="s5-cap1">"surface" is a verb now.</span>
+            <span id="s5-cap2">same agent. bigger stage.</span>
+            <span id="s5-cap3">drag it. tap it. your agent is listening.</span>
+            <span id="s5-cap4">alive. persistent. yours.</span>
+            <span id="s5-cap5">everything gets a surface.</span>
+          </div>
+
+          <div id="gb1" class="gbub" style="left: 150px; top: 528px">put it on my surface</div>
+          <div id="gb2" class="gbub" style="left: 438px; top: 460px">surface the tests</div>
+          <div id="gb3" class="gbub" style="left: 196px; top: 394px">surface the plan</div>
+
+          <div id="s5-chat">
+            <div class="chat-titlebar"><i class="chat-dot"></i>agent — chat</div>
+            <div class="chat-body">
+              <div id="s5-agentmsg">3 failing tests written — starting the loop.</div>
+            </div>
+            <div class="chat-inputbar">
+              <div id="s5-inputline"><span class="s5ch">s</span><span class="s5ch">u</span><span class="s5ch">r</span><span class="s5ch">f</span><span class="s5ch">a</span><span class="s5ch">c</span><span class="s5ch">e</span><span class="s5ch">&nbsp;</span><span class="s5ch">i</span><span class="s5ch">t</span><span id="s5-caret"></span></div>
+            </div>
+          </div>
+
+          <div id="s5-flash"></div>
+          <div id="dot-flare"></div>
+          <div id="s5-ringA" class="ring" style="left: 300px; top: 838px"></div>
+          <svg id="s5-cursor" class="cursor" viewBox="0 0 24 30">
+            <path d="M2 1 L2 24 L8 18.5 L12 28 L16 26 L11.5 17 L20 17 Z" fill="#fff" stroke="#000" stroke-width="1.4" />
+          </svg>
+        </div>
+      </section>
+
+      <!-- ── S6 · close ──────────────────────────────────────────── -->
+      <section id="s6" class="clip" data-start="58" data-duration="5" data-track-index="2">
+        <div id="s6-wrap" class="wrap">
+          <div id="s6-glow"></div>
+          <div id="s6-word">Surface</div>
+          <div id="s6-s1">A new primitive.</div>
+          <div id="s6-s2">one tiny skill · a simple CLI · zero context bloat</div>
+          <div id="s6-link">github.com/Aaryan-Kapoor/Surface</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const EO = "power3.out";
+      const EIO = "power2.inOut";
+
+      // click ripple: pre-start-safe (set + to, never a visible fromTo state)
+      function ripple(sel, t, big) {
+        tl.set(sel, { scale: 0.3 }, t - 0.02);
+        tl.to(sel, { opacity: 0.9, duration: 0.05, ease: "none" }, t);
+        tl.to(sel, { scale: big ? 2.2 : 2.0, opacity: 0, duration: 0.5, ease: EO }, t + 0.06);
+      }
+      // two-way pulse: a light dot travels between an element and the agent dot
+      function pulseRun(sel, t, x1, y1, x2, y2) {
+        tl.fromTo(sel, { x: x1, y: y1, opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, t);
+        tl.to(sel, { x: x2, y: y2, duration: 0.42, ease: EIO }, t + 0.04);
+        tl.to(sel, { opacity: 0, duration: 0.14, ease: "none" }, t + 0.46);
+      }
+
+      /* ══ S1 · the prompt (0 – 7) ═════════════════════════════════ */
+      tl.set("#s1-chat", { transformPerspective: 1500, rotationY: -18, rotationX: 8, scale: 1.08, opacity: 0 }, 0);
+      tl.to("#s1-chat", { opacity: 1, duration: 0.9, ease: EO }, 0.15);
+      tl.to("#s1-chat", { rotationY: -9, rotationX: 4, duration: 4.5, ease: "sine.inOut" }, 0.3);
+      tl.to(".s1ch", { opacity: 1, duration: 0.02, stagger: 0.08, ease: "none" }, 0.9);
+      tl.to("#s1-caret", { opacity: 0, duration: 0.42, yoyo: true, repeat: 8, ease: "steps(1)" }, 0.9);
+      tl.fromTo("#s1-cursor", { x: 1540, y: 1040, opacity: 0 }, { x: 1352, y: 782, opacity: 1, duration: 0.9, ease: EO }, 3.4);
+      tl.to("#s1-cursor", { scale: 0.85, duration: 0.1, yoyo: true, repeat: 1 }, 4.45);
+      ripple("#s1-ring", 4.47, true);
+      tl.to("#s1-send", { backgroundColor: "rgba(255,255,255,0.3)", duration: 0.14, yoyo: true, repeat: 1 }, 4.47);
+      tl.to("#s1-inputline", { opacity: 0, duration: 0.25 }, 4.7);
+      tl.fromTo("#s1-bubble", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: EO }, 4.85);
+      tl.fromTo("#s1-dots span", { opacity: 0.15 }, { opacity: 0.9, duration: 0.3, yoyo: true, repeat: 1, stagger: 0.14 }, 5.3);
+      tl.to("#s1-chat", { rotationY: 0, rotationX: 0, scale: 1.32, duration: 1.5, ease: EIO }, 5.4);
+      tl.to("#s1-wrap", { opacity: 0, duration: 0.55, ease: "none" }, 6.45);
+
+      /* ══ S2 · the markdown wall (6.4 – 14.1) ═════════════════════ */
+      tl.fromTo("#s2-wrap", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "none" }, 6.45);
+      tl.fromTo(".s2ln", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.1, ease: EO }, 6.9);
+      tl.to("#s2-cam", { scale: 0.6, duration: 2.5, ease: EIO }, 9.7);
+      tl.to("#s2-scroll", { y: -1500, duration: 3.1, ease: "power2.in" }, 9.9);
+      tl.to("#s2-thumb", { scaleY: 0.14, y: 430, duration: 3.1, ease: "power2.in" }, 9.9);
+      tl.fromTo("#s2-count", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 11.3);
+      tl.fromTo("#s2-h", { opacity: 0, x: -34 }, { opacity: 1, x: 0, duration: 0.8, ease: EO }, 10.4);
+      tl.fromTo("#s2-sub", { opacity: 0 }, { opacity: 1, duration: 0.7 }, 11.6);
+      tl.to("#s2-wrap", { opacity: 0, duration: 0.55, ease: "none" }, 13.55);
+
+      /* ══ S3 · the HTML era (13.7 – 23.3) ═════════════════════════ */
+      tl.fromTo("#s3-win", { transformPerspective: 1300, rotationX: -12, y: 36, scale: 0.95, opacity: 0 },
+        { rotationX: 0, y: 0, scale: 1, opacity: 1, duration: 1.1, ease: EO }, 13.9);
+      tl.fromTo("#s3-h", { opacity: 0, y: -16 }, { opacity: 1, y: 0, duration: 0.7, ease: EO }, 14.3);
+      tl.fromTo(".s3card", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, stagger: 0.1, ease: EO }, 14.9);
+      tl.to("#s3-cam", { scale: 1.09, duration: 2.4, ease: "sine.inOut" }, 16.4);
+      tl.fromTo("#s3-cursor", { x: 1680, y: 960, opacity: 0 }, { x: 1542, y: 270, opacity: 1, duration: 0.9, ease: EO }, 16.9);
+      tl.to("#s3-cursor", { scale: 0.85, duration: 0.1, yoyo: true, repeat: 1 }, 17.95);
+      ripple("#s3-r1", 17.97, true);
+      tl.to("#s3-btn", { x: 5, duration: 0.06, yoyo: true, repeat: 5, ease: "none" }, 18.1);
+      tl.to("#s3-cursor", { scale: 0.85, duration: 0.1, yoyo: true, repeat: 1 }, 19.05);
+      ripple("#s3-r2", 19.07, true);
+      tl.to("#s3-btn", { x: 5, duration: 0.06, yoyo: true, repeat: 5, ease: "none" }, 19.2);
+      tl.fromTo("#s3-dead", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 19.65);
+      tl.to("#s3-cursor", { opacity: 0, duration: 0.4 }, 20.2);
+      tl.to("#s3-dim", { opacity: 0.45, duration: 0.8, ease: "none" }, 20.2);
+      tl.to("#s3-time-fresh", { opacity: 0, duration: 0.4 }, 20.3);
+      tl.fromTo("#s3-time-stale", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 20.4);
+      // the throwaway: the report falls away, verdicts sweep in, dead files rain down
+      tl.to("#s3-win", { scale: 0.4, y: 1200, rotation: -3, opacity: 0.35, duration: 1.6, ease: "power2.in" }, 21.0);
+      tl.to("#s3-h", { opacity: 0.25, duration: 0.5 }, 21.0);
+      tl.to("#s3-dead", { opacity: 0, duration: 0.3 }, 21.0);
+      tl.fromTo("#s3-stamps .stamp", { opacity: 0, x: -720 },
+        { opacity: 1, x: 0, duration: 0.65, stagger: 0.58, ease: "power3.out" }, 21.5);
+      const ROT = [-3, 2, -2, 4, -1, 3, -4, 2, -2, 1, -3, 4, -1, 2];
+      tl.fromTo(".filechip", { opacity: 0, y: -420 },
+        { opacity: 1, y: 0, rotation: (i) => ROT[i], duration: 0.7, stagger: 0.12, ease: "power2.in" }, 21.8);
+      tl.to("#s3-wrap", { opacity: 0, duration: 0.55, ease: "none" }, 25.5);
+
+      /* ══ S4 · the pivot (25.9 – 32.5) ════════════════════════════ */
+      tl.fromTo("#s4-md", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: EO }, 26.4);
+      tl.fromTo("#s4-a1", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 26.95);
+      tl.fromTo("#s4-html", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.5, ease: EO }, 27.35);
+      tl.to("#s4-md", { opacity: 0.3, duration: 0.5 }, 27.5);
+      tl.fromTo("#s4-a2", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 27.9);
+      tl.to("#s4-html", { opacity: 0.3, duration: 0.5 }, 28.5);
+      tl.fromTo("#s4-sf", { opacity: 0, scale: 0.88 }, { opacity: 1, scale: 1, duration: 0.9, ease: EO }, 28.45);
+      tl.fromTo("#s4-glow", { opacity: 0 }, { opacity: 0.55, duration: 0.7 }, 28.5);
+      tl.to("#s4-glow", { opacity: 0.28, duration: 1.0 }, 29.3);
+      tl.fromTo("#s4-sub", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 29.55);
+      tl.to("#s4-wrap", { opacity: 0, duration: 0.5, ease: "none" }, 31.95);
+
+      /* ══ S5 · the Surface era (27.3 – 46.9) ══════════════════════ */
+      tl.set("#bar-fill", { scaleX: 0.4 }, 32.25);
+      // beat A — "surface it": surface is a verb; the chat folds into the agent dot
+      tl.fromTo("#s5-chat", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 32.6);
+      tl.fromTo("#gb1", { opacity: 0, y: 18 }, { opacity: 0.75, y: 0, duration: 0.5, ease: EO }, 33.3);
+      tl.fromTo("#gb2", { opacity: 0, y: 18 }, { opacity: 0.75, y: 0, duration: 0.5, ease: EO }, 33.75);
+      tl.fromTo("#gb3", { opacity: 0, y: 18 }, { opacity: 0.75, y: 0, duration: 0.5, ease: EO }, 34.2);
+      tl.to(".s5ch", { opacity: 1, duration: 0.02, stagger: 0.07, ease: "none" }, 34.3);
+      tl.to("#s5-caret", { opacity: 0, duration: 0.4, yoyo: true, repeat: 6, ease: "steps(1)" }, 34.2);
+      tl.to("#s5-chat .chat-inputbar", { borderColor: "rgba(255,255,255,0.9)", duration: 0.16, yoyo: true, repeat: 1 }, 35.4);
+      tl.fromTo("#s5-flash", { opacity: 0 }, { opacity: 0.2, duration: 0.12, ease: "none" }, 35.75);
+      tl.to("#s5-flash", { opacity: 0, duration: 0.55, ease: "power2.out" }, 35.9);
+      tl.fromTo("#s5-board", { opacity: 0, scale: 0.975 }, { opacity: 1, scale: 1, duration: 1.1, ease: EO }, 35.8);
+      tl.to("#gb1", { opacity: 0, duration: 0.4 }, 35.85);
+      tl.to("#gb2", { opacity: 0, duration: 0.4 }, 35.85);
+      tl.to("#gb3", { opacity: 0, duration: 0.4 }, 35.85);
+      tl.to("#s5-chat", { x: 1318, y: -724, scale: 0.05, duration: 1.0, ease: EIO }, 36.5);
+      tl.to("#s5-chat", { opacity: 0, duration: 0.3, ease: "none" }, 37.2);
+      tl.fromTo("#agent-dot", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(2.5)" }, 37.35);
+      tl.to("#agent-dot", { scale: 1.35, duration: 0.8, yoyo: true, repeat: 23, ease: "sine.inOut" }, 38.0);
+      tl.fromTo("#s5-cap1", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 37.8);
+
+      // beat B1 — the agent works: tests flip as pulses arrive from the dot
+      tl.fromTo("#rl3", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 38.0);
+      pulseRun("#pl1", 38.3, 1720, 78, 140, 296);
+      tl.to("#trow1 .st", { backgroundColor: "#ffffff", duration: 0.25 }, 38.75);
+      tl.fromTo("#rl4", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 38.85);
+      tl.to("#cnt1", { opacity: 0, duration: 0.22 }, 38.95);
+      tl.to("#cnt2", { opacity: 1, duration: 0.22 }, 39.0);
+      tl.to("#bar-fill", { scaleX: 0.6, duration: 0.4, ease: EO }, 39.0);
+      tl.fromTo("#s5-t1", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 39.05);
+      tl.fromTo("#rl5", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 39.5);
+      pulseRun("#pl2", 39.8, 1720, 78, 140, 378);
+      tl.to("#trow2 .st", { backgroundColor: "#ffffff", duration: 0.25 }, 40.25);
+      tl.fromTo("#rl6", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 40.35);
+      tl.to("#cnt2", { opacity: 0, duration: 0.22 }, 40.45);
+      tl.to("#cnt3", { opacity: 1, duration: 0.22 }, 40.5);
+      tl.to("#bar-fill", { scaleX: 0.8, duration: 0.4, ease: EO }, 40.5);
+      tl.to("#s5-cap1", { opacity: 0, duration: 0.4 }, 40.6);
+      tl.fromTo("#s5-cap2", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 41.0);
+
+      // beat B2 — you inject an edge case; the pulse carries it to the agent
+      tl.to("#s5-cap2", { opacity: 0, duration: 0.4 }, 43.7);
+      tl.fromTo("#s5-cursor", { x: 1620, y: 1044, opacity: 0 }, { x: 322, y: 862, opacity: 1, duration: 0.9, ease: EO }, 43.6);
+      tl.fromTo("#s5-cap3", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 44.3);
+      tl.to("#s5-cursor", { scale: 0.85, duration: 0.1, yoyo: true, repeat: 1 }, 44.75);
+      ripple("#s5-ringA", 44.77, true);
+      tl.to("#s5-chip", { borderColor: "rgba(255,255,255,0.9)", color: "#ffffff", duration: 0.3 }, 44.8);
+      pulseRun("#pl3", 45.0, 320, 866, 1720, 78);
+      ripple("#dot-flare", 45.55, true);
+      tl.to("#s5-t1", { opacity: 0, duration: 0.3 }, 45.4);
+      tl.fromTo("#s5-t2", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 45.55);
+      tl.fromTo("#rl7", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 45.75);
+      tl.fromTo("#trow6", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.5, ease: EO }, 45.95);
+      tl.to("#cnt3", { opacity: 0, duration: 0.22 }, 46.15);
+      tl.to("#cnt4", { opacity: 1, duration: 0.22 }, 46.2);
+      tl.to("#bar-fill", { scaleX: 0.667, duration: 0.45, ease: EIO }, 46.2);
+      tl.to("#s5-cursor", { opacity: 0, duration: 0.4 }, 46.3);
+      tl.fromTo("#rl8", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 46.5);
+
+      // beat B3 — the agent closes the loop, including your test
+      pulseRun("#pl4", 47.3, 1720, 78, 140, 460);
+      tl.to("#trow3 .st", { backgroundColor: "#ffffff", duration: 0.25 }, 47.75);
+      tl.fromTo("#rl9", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 47.85);
+      tl.to("#cnt4", { opacity: 0, duration: 0.22 }, 47.95);
+      tl.to("#cnt5", { opacity: 1, duration: 0.22 }, 48.0);
+      tl.to("#bar-fill", { scaleX: 0.833, duration: 0.4, ease: EO }, 48.0);
+      tl.to("#s5-cap3", { opacity: 0, duration: 0.4 }, 48.0);
+      tl.fromTo("#s5-cap4", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 48.4);
+      pulseRun("#pl5", 49.0, 1720, 78, 140, 710);
+      tl.to("#trow6 .st", { backgroundColor: "#ffffff", duration: 0.25 }, 49.45);
+      tl.fromTo("#rl10", { opacity: 0 }, { opacity: 1, duration: 0.25 }, 49.55);
+      tl.to("#cnt5", { opacity: 0, duration: 0.22 }, 49.65);
+      tl.to("#cnt6", { opacity: 1, duration: 0.22 }, 49.7);
+      tl.to("#bar-fill", { scaleX: 1, duration: 0.45, ease: EO }, 49.7);
+      tl.to("#s5-t2", { opacity: 0, duration: 0.3 }, 49.6);
+      tl.fromTo("#s5-t3", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 49.75);
+      tl.to("#suite", { borderColor: "rgba(255,255,255,0.6)", duration: 0.3, yoyo: true, repeat: 1 }, 50.0);
+
+      // beat C — pull back: the board docks into the grid of live surfaces
+      tl.set("#s5-board", { transformOrigin: "left top" }, 50.75);
+      tl.to("#s5-board", { scale: 0.229, x: 150, y: 180, duration: 1.5, ease: EIO }, 50.8);
+      tl.fromTo(".tile", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, stagger: 0.18, ease: EO }, 52.0);
+      tl.fromTo("#tile-label", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 52.5);
+      tl.to("#s5-cap4", { opacity: 0, duration: 0.4 }, 51.7);
+      tl.fromTo("#s5-cap5", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 52.3);
+      // each tile: touch → pulse to its dot → the agent answers (two-way, every time)
+      ripple("#dg-ring", 52.9);
+      pulseRun("#tp1", 53.15, 172, 124, 400, 22);
+      tl.to("#tile-dg .hbar:not(#dg-b2)", { opacity: 0.25, duration: 0.3 }, 53.6);
+      tl.to("#dg-b2f", { backgroundColor: "#ffffff", scaleX: 2.22, duration: 0.45, ease: EO }, 53.6);
+      ripple("#pt-ring", 54.05);
+      pulseRun("#tp2", 54.3, 112, 74, 400, 22);
+      tl.to("#pt-b", { borderColor: "rgba(255,255,255,0.9)", color: "#ffffff", duration: 0.3 }, 54.75);
+      tl.to("#pt-r1", { x: 176, duration: 0.5, ease: EIO }, 54.8);
+      tl.to("#pt-r2", { x: -176, duration: 0.5, ease: EIO }, 54.8);
+      ripple("#tr-ring", 55.2);
+      pulseRun("#tp3", 55.45, 82, 142, 400, 22);
+      tl.to("#tr-c2", { x: 136, duration: 0.5, ease: EIO }, 55.9);
+      ripple("#th-ring", 56.35);
+      pulseRun("#tp4", 56.6, 112, 122, 400, 22);
+      tl.to("#th-p1", { backgroundColor: "#ffffff", color: "#000000", duration: 0.3 }, 57.05);
+      tl.to("#th-fill", { scaleX: 1.5, duration: 0.45, ease: EO }, 57.1);
+      tl.to("#s5-wrap", { opacity: 0, duration: 0.55, ease: "none" }, 57.6);
+
+      /* ══ S6 · close (58 – 63) ════════════════════════════════════ */
+      tl.fromTo("#s6-word", { opacity: 0, scale: 0.955 }, { opacity: 1, scale: 1, duration: 1.1, ease: EO }, 58.4);
+      tl.fromTo("#s6-glow", { opacity: 0 }, { opacity: 1, duration: 1.2 }, 58.55);
+      tl.fromTo("#s6-s1", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 59.2);
+      tl.fromTo("#s6-s2", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 59.7);
+      tl.fromTo("#s6-link", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 60.15);
+      tl.to("#s6-wrap", { opacity: 0, duration: 0.7, ease: "none" }, 62.2);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

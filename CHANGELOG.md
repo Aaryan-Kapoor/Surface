@@ -4,6 +4,12 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- Replaced the static README hero with an animated banner
+  (`video/readme-banner/`, a HyperFrames HTML composition rendered to GIF):
+  Markdown → HTML → Surface told through /tdd, with the two-way loop drawn
+  as pulses between the surface and the agent. Added a social-preview still
+  and repo metadata to match.
+
 - Replaced `SKILL.md` with the benchmark-optimized skill (61 lines, ⅓ the size):
   matches the old skill on shape/primitive choice and hardens the wake-binding
   consent gate (100% hold rate under pressure vs 10% for the old wording).

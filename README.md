@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/banner.svg" alt="Surface — the universal display for AI agents. An agent pushes content from a terminal; clicks flow back." width="100%">
+<img src="video/readme-banner/surface-banner.gif" alt="Markdown → HTML → Surface. An agent's chat folds into a live surface: tests flip as it works, you inject an edge case by touch, and every skill gets a surface." width="100%">
 
 <br>
 <br>
@@ -20,6 +20,18 @@ its way back to an agent — even one that exited hours ago.
 
 ---
 
+## Give your agent Surface in one line
+
+Paste this to any agent that can run a shell command (Claude Code, Cursor,
+Codex CLI, Aider). It reads the install guide and bootstraps itself — no MCP
+server, nothing to register:
+
+```
+Read and follow https://raw.githubusercontent.com/Aaryan-Kapoor/Surface/master/INSTALL_FOR_AGENTS.md
+```
+
+---
+
 ## Why
 
 You don't need a weather app, a reading app, a kanban app, a game app. You
@@ -33,6 +45,14 @@ Agents can already write anything. What they're missing is a *place*: a
 persistent screen that outlives the session, follows you to your phone and
 TV, and carries your clicks back. Surface is that place. Single user,
 single deployment, all data on your machine, MIT-licensed.
+
+**Markdown → HTML → Surface.** First agents answered in markdown — walls
+of text you scroll and forget. Then they wrote HTML — beautiful for a
+moment, but static: generated once, thrown away, nowhere to live, no way
+to talk back. Surface is the natural next step: the same artifact, alive —
+it stays on your screens, updates itself as the agent works, and every
+tap, drag, and answer flows back to the agent that made it. "Surface" is
+a verb now.
 
 ## What it feels like
 
