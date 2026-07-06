@@ -65,6 +65,8 @@ surface ask "Ship release v2.4.0 to production?" --options ship,hold --wait
 # → {"choice": "ship", "answered_at": "…", "device": "phone"}   exit 0
 ```
 
+<img src="video/clips/every-screen/every-screen.gif" alt="One ask blooms on desk, phone, and TV; a tap on the phone answers all three and returns JSON to the blocked command." width="100%">
+
 **A build you can watch from the couch.** Pipe any process into a live,
 scrolling, ANSI-colored stream surface; update a progress bar with one line:
 
@@ -86,6 +88,28 @@ surface bind deploy-panel --action "approve|hold" \
 The card shows **⟳ handling…** while the spawned session works, and the
 click is acknowledged when it's done. Nothing is fire-and-forget; nothing
 is lost.
+
+<img src="video/clips/revival/revival.gif" alt="At 5:04pm the agent exits leaving a binding; at 11:02pm a tap on approve revives the exact session, which handles the action batch." width="100%">
+
+**A team of agents, one screen of truth.** Every agent on your machine —
+interactive sessions, `codex exec` jobs, cron scripts — writes into the
+same board; you glance at one display instead of tailing four terminals:
+
+```bash
+surface set board claude-code '{"status":"tests green"}'
+```
+
+<img src="video/clips/multi-agent/multi-agent.gif" alt="Three agents — claude-code, codex, nightly-cron — each pulse their status into one shared release board." width="100%">
+
+**A file served straight from your repo.** `surface link` a file and the
+display renders it live from disk; edit it, `surface touch`, and every
+screen catches up instantly — versionless, bundle-less hot reload:
+
+```bash
+surface link ./demo.html && $EDITOR demo.html && surface touch demo
+```
+
+<img src="video/clips/live-link/live-link.gif" alt="An edit to demo.html in the repo — heading and accent color — goes live on the surface the moment surface touch runs." width="100%">
 
 ## Quick start
 
@@ -180,6 +204,26 @@ Projects own their surfaces: `surface init` scaffolds a committable
 and `surface sync` reconstitutes everything on a fresh clone
 ([docs](docs/state/project-directory.md)).
 
+## The display is programmable too
+
+Surface isn't a fixed app that agents post into — **the display itself is
+the agent's medium**. The theme, the homescreen renderer, the home widget,
+and the persistent overlay are all artifacts: versioned, linkable,
+rollback-able, and rewritable by the same CLI that fills the cards. It
+doesn't just fill your display; it runs it.
+
+```bash
+surface theme '{"colors":{"accent":"#ff0080"},"css":"…"}'   # restyle every screen
+surface slot renderer <id>     # an artifact takes over the whole homescreen
+surface slot home <id>         # …or the home widget (or `overlay`)
+surface open <id> --on tv      # drive what a specific screen is showing
+```
+
+Movie night? The agent dims the theme. Standup? It swaps the homescreen
+for the team board. Done? `surface slot renderer --clear` and the default
+grid is back — every step versioned and reversible
+([docs](docs/display/theming.md)).
+
 ## The loop: clicks always come back
 
 The hard problem isn't pushing pixels — it's that **agent lifetimes are
@@ -201,10 +245,6 @@ three-layer ladder ([docs](docs/interaction/delivery-ladder.md)):
 
 ## Yours, all the way down
 
-- **Display control** — colors, fonts, backgrounds, raw CSS, card order;
-  the homescreen renderer, home widget, and persistent overlay are
-  themselves artifacts (versioned, linkable, rollback-able) promoted with
-  `surface slot` ([docs](docs/display/theming.md)).
 - **Two trust planes** — loopback is the agent plane (`system`: full
   power, attributed by name tag). Remote displays pair into named,
   revocable `device` sessions that can view, click, and drive the display

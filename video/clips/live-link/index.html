@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Surface — served straight from your repo</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --fg: #ffffff; --fg-muted: rgba(255,255,255,0.52); --fg-faint: rgba(255,255,255,0.3);
+        --hairline: rgba(255,255,255,0.14); --hairline-strong: rgba(255,255,255,0.4);
+        --surface-1: rgba(255,255,255,0.035); --surface-2: rgba(255,255,255,0.07);
+        --danger: #ff453a;
+        --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      body { font-family: var(--font); color: var(--fg); }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      .pulse {
+        position: absolute; left: 0; top: 0; width: 14px; height: 14px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 14px rgba(255,255,255,0.9); opacity: 0; z-index: 85;
+      }
+      .win {
+        position: absolute; top: 150px; width: 800px; height: 600px;
+        background: rgba(10,10,10,0.95); border: 1px solid var(--hairline); border-radius: 16px;
+        overflow: hidden; box-shadow: 0 30px 90px rgba(0,0,0,0.75);
+      }
+      .winbar {
+        display: flex; align-items: center; gap: 14px; padding: 16px 24px;
+        border-bottom: 1px solid var(--hairline); font-family: var(--mono);
+        font-size: 21px; color: var(--fg-muted);
+      }
+      .windot { width: 11px; height: 11px; border-radius: 50%; background: var(--fg-ghost, rgba(255,255,255,0.16)); }
+      #editor { left: 110px; }
+      #ed-code {
+        padding: 26px 30px; font-family: var(--mono); font-size: 25px; line-height: 1.95;
+        color: var(--fg-muted); white-space: pre;
+      }
+      .lnswap { position: relative; height: 1.95em; }
+      .lnswap span { position: absolute; left: 0; top: 0; white-space: pre; }
+      #t-v2 { opacity: 0; color: #fff; }
+      #acc-new { opacity: 0; color: var(--danger); font-weight: 700; }
+      #saved { position: absolute; right: 26px; top: 17px; font-family: var(--mono); font-size: 21px; color: var(--fg); opacity: 0; }
+      #display { left: 1010px; }
+      #disp-body { position: relative; padding: 40px 44px; }
+      #disp-body h1 { font-size: 54px; font-weight: 700; letter-spacing: -0.02em; }
+      .hswap { position: relative; height: 66px; }
+      .hswap h1 { position: absolute; left: 0; top: 0; white-space: nowrap; }
+      #h-v2 { opacity: 0; }
+      .bar { height: 26px; border-radius: 6px; background: var(--surface-2); margin-top: 26px; overflow: hidden; }
+      .bar i { display: block; height: 26px; background: #6e6e6e; transform-origin: left center; }
+      #linkchip {
+        position: absolute; right: 28px; bottom: 20px; font-family: var(--mono); font-size: 21px;
+        color: var(--fg-muted); border: 1px solid var(--hairline); border-radius: 9px; padding: 7px 16px;
+      }
+      #term {
+        position: absolute; left: 110px; top: 810px; width: 800px; height: 170px;
+        background: rgba(10,10,10,0.92); border: 1px solid var(--hairline); border-radius: 14px;
+        padding: 26px 30px; font-family: var(--mono); font-size: 25px; line-height: 1.95;
+      }
+      .tch, .uch { opacity: 0; }
+      #cap {
+        position: absolute; bottom: 46px; left: 960px; width: 900px; text-align: center;
+        font-size: 46px; font-weight: 600; letter-spacing: -0.01em; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="11">
+      <div id="bg" class="clip" data-start="0" data-duration="11" data-track-index="0" style="background: #000"></div>
+      <section id="s" class="clip" data-start="0" data-duration="11" data-track-index="1">
+        <div id="wrap" style="position: absolute; inset: 0">
+
+          <div id="editor" class="win">
+            <div class="winbar"><i class="windot"></i>demo.html — your repo<span id="saved">● saved</span></div>
+            <div id="ed-code"><div>&lt;section class="hero"&gt;</div><div class="lnswap"><span id="t-v1">  &lt;h1&gt;Launch stats v1&lt;/h1&gt;</span><span id="t-v2">  &lt;h1&gt;Launch stats v2&lt;/h1&gt;</span></div><div>  &lt;meter value="0.62"&gt;</div><div>&lt;/section&gt;</div><div>&nbsp;</div><div>&lt;style&gt;</div><div class="lnswap"><span id="acc-old">  .hero { accent: #6e6e6e; }</span><span id="acc-new">  .hero { accent: #ff453a; }</span></div><div>&lt;/style&gt;</div></div>
+          </div>
+
+          <div id="display" class="win">
+            <div class="winbar"><i class="windot"></i>surface · demo</div>
+            <div id="disp-body">
+              <div class="hswap">
+                <h1 id="h-v1">Launch stats v1</h1>
+                <h1 id="h-v2">Launch stats v2</h1>
+              </div>
+              <div class="bar"><i id="bar1" style="width: 62%"></i></div>
+              <div class="bar"><i id="bar2" style="width: 38%"></i></div>
+            </div>
+            <div id="linkchip">linked · served from disk</div>
+          </div>
+
+          <div id="term">
+            <div><span class="tch">❯</span><span class="tch">&nbsp;</span><span class="tch">s</span><span class="tch">u</span><span class="tch">r</span><span class="tch">f</span><span class="tch">a</span><span class="tch">c</span><span class="tch">e</span><span class="tch">&nbsp;</span><span class="tch">l</span><span class="tch">i</span><span class="tch">n</span><span class="tch">k</span><span class="tch">&nbsp;</span><span class="tch">.</span><span class="tch">/</span><span class="tch">d</span><span class="tch">e</span><span class="tch">m</span><span class="tch">o</span><span class="tch">.</span><span class="tch">h</span><span class="tch">t</span><span class="tch">m</span><span class="tch">l</span></div>
+            <div><span class="uch">❯</span><span class="uch">&nbsp;</span><span class="uch">s</span><span class="uch">u</span><span class="uch">r</span><span class="uch">f</span><span class="uch">a</span><span class="uch">c</span><span class="uch">e</span><span class="uch">&nbsp;</span><span class="uch">t</span><span class="uch">o</span><span class="uch">u</span><span class="uch">c</span><span class="uch">h</span><span class="uch">&nbsp;</span><span class="uch">d</span><span class="uch">e</span><span class="uch">m</span><span class="uch">o</span></div>
+          </div>
+
+          <div id="tp1" class="pulse"></div>
+          <div id="cap">served from your repo. edits go live.</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const EO = "power3.out";
+      const EIO = "power2.inOut";
+
+      // link the file — the surface lights up
+      tl.fromTo("#editor", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.7, ease: EO }, 0.2);
+      tl.to(".tch", { opacity: 1, duration: 0.02, stagger: 0.035, ease: "none" }, 0.6);
+      tl.fromTo("#display", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.8, ease: EO }, 2.0);
+      // edit the file in place
+      tl.to("#t-v1", { opacity: 0, duration: 0.3 }, 3.5);
+      tl.to("#t-v2", { opacity: 1, duration: 0.3 }, 3.6);
+      tl.to("#acc-old", { opacity: 0, duration: 0.3 }, 4.4);
+      tl.to("#acc-new", { opacity: 1, duration: 0.3 }, 4.5);
+      tl.fromTo("#saved", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 5.1);
+      // touch → reload pulse → the display catches up instantly
+      tl.to(".uch", { opacity: 1, duration: 0.02, stagger: 0.035, ease: "none" }, 5.8);
+      tl.fromTo("#tp1", { x: 700, y: 905, opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, 6.8);
+      tl.to("#tp1", { x: 1400, y: 450, duration: 0.5, ease: EIO }, 6.84);
+      tl.to("#tp1", { opacity: 0, duration: 0.14, ease: "none" }, 7.34);
+      tl.to("#h-v1", { opacity: 0, duration: 0.3 }, 7.4);
+      tl.to("#h-v2", { opacity: 1, duration: 0.3 }, 7.5);
+      tl.to("#bar1", { backgroundColor: "#ff453a", duration: 0.4 }, 7.5);
+      tl.to("#bar2", { backgroundColor: "#ff453a", duration: 0.4 }, 7.6);
+      tl.to("#bar2", { scaleX: 1.9, duration: 0.6, ease: EO }, 7.7);
+      tl.fromTo("#cap", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 8.4);
+      tl.to("#wrap", { opacity: 0, duration: 0.6, ease: "none" }, 10.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

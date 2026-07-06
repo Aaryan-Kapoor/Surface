@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Surface — every screen you own</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --fg: #ffffff; --fg-muted: rgba(255,255,255,0.52); --fg-faint: rgba(255,255,255,0.3);
+        --hairline: rgba(255,255,255,0.14); --hairline-strong: rgba(255,255,255,0.4);
+        --surface-1: rgba(255,255,255,0.035); --surface-2: rgba(255,255,255,0.07);
+        --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      body { font-family: var(--font); color: var(--fg); }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      .pulse {
+        position: absolute; left: 0; top: 0; width: 14px; height: 14px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 14px rgba(255,255,255,0.9); opacity: 0; z-index: 85;
+      }
+      .touch {
+        position: absolute; width: 46px; height: 46px; border-radius: 50%;
+        background: rgba(255,255,255,0.35); border: 2px solid rgba(255,255,255,0.8);
+        opacity: 0; z-index: 90;
+      }
+      .ring {
+        position: absolute; width: 56px; height: 56px; border-radius: 50%;
+        border: 2px solid var(--fg); opacity: 0; z-index: 89;
+      }
+      .device {
+        position: absolute; border: 2px solid var(--hairline-strong); border-radius: 20px;
+        background: #060606; box-shadow: 0 26px 80px rgba(0,0,0,0.75); opacity: 0;
+      }
+      .devlabel { position: absolute; font-family: var(--mono); font-size: 24px; color: var(--fg-muted); opacity: 0; }
+      .askcard { position: absolute; opacity: 0; }
+      .askcard .q { font-weight: 700; line-height: 1.2; }
+      .btn {
+        display: inline-block; border: 1.5px solid var(--hairline-strong); border-radius: 12px;
+        text-align: center; font-weight: 600; color: var(--fg); background: var(--surface-2);
+      }
+      .done { position: absolute; font-family: var(--mono); color: var(--fg); opacity: 0; }
+      #term {
+        position: absolute; left: 110px; top: 842px; width: 940px; height: 150px;
+        background: rgba(10,10,10,0.92); border: 1px solid var(--hairline); border-radius: 14px;
+        padding: 26px 30px; font-family: var(--mono); font-size: 26px; line-height: 1.85;
+      }
+      .tch { opacity: 0; }
+      #term-out { color: var(--fg-muted); opacity: 0; }
+      #cap {
+        position: absolute; bottom: 46px; width: 100%; text-align: center;
+        font-size: 50px; font-weight: 600; letter-spacing: -0.01em; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="12">
+      <div id="bg" class="clip" data-start="0" data-duration="12" data-track-index="0" style="background: #000"></div>
+      <section id="s" class="clip" data-start="0" data-duration="12" data-track-index="1">
+        <div id="wrap" style="position: absolute; inset: 0">
+
+          <div id="desk" class="device" style="left: 120px; top: 150px; width: 880px; height: 560px"></div>
+          <div id="desk-stand" class="devlabel" style="left: 500px; top: 726px">▔▔▔▔</div>
+          <div class="devlabel" id="lb-desk" style="left: 140px; top: 736px">desk</div>
+          <div id="card-desk" class="askcard" style="left: 180px; top: 250px; width: 760px">
+            <div class="q" style="font-size: 44px">Ship v2.4.0 to production?</div>
+            <div style="margin-top: 46px">
+              <div id="bd-ship" class="btn" style="width: 220px; padding: 20px 0; font-size: 30px">ship</div>
+              <div class="btn" style="width: 220px; padding: 20px 0; font-size: 30px; margin-left: 24px">hold</div>
+            </div>
+          </div>
+          <div id="done-desk" class="done" style="left: 182px; top: 470px; font-size: 32px">✓ ship — answered from phone</div>
+
+          <div id="phone" class="device" style="left: 1150px; top: 210px; width: 260px; height: 520px; border-radius: 38px"></div>
+          <div class="devlabel" id="lb-phone" style="left: 1230px; top: 752px">phone</div>
+          <div id="card-phone" class="askcard" style="left: 1176px; top: 300px; width: 208px">
+            <div class="q" style="font-size: 25px">Ship v2.4.0?</div>
+            <div id="bp-ship" class="btn" style="width: 100%; padding: 15px 0; font-size: 23px; margin-top: 30px">ship</div>
+            <div class="btn" style="width: 100%; padding: 15px 0; font-size: 23px; margin-top: 14px">hold</div>
+          </div>
+          <div id="done-phone" class="done" style="left: 1180px; top: 452px; font-size: 22px">✓ ship</div>
+
+          <div id="tv" class="device" style="left: 1480px; top: 190px; width: 400px; height: 250px; border-radius: 12px"></div>
+          <div class="devlabel" id="lb-tv" style="left: 1652px; top: 462px">tv</div>
+          <div id="card-tv" class="askcard" style="left: 1512px; top: 232px; width: 336px">
+            <div class="q" style="font-size: 22px">Ship v2.4.0 to production?</div>
+            <div style="margin-top: 22px">
+              <div class="btn" style="width: 120px; padding: 9px 0; font-size: 18px">ship</div>
+              <div class="btn" style="width: 120px; padding: 9px 0; font-size: 18px; margin-left: 14px">hold</div>
+            </div>
+          </div>
+          <div id="done-tv" class="done" style="left: 1514px; top: 330px; font-size: 20px">✓ ship — answered from phone</div>
+
+          <div id="term">
+            <div><span class="tch">❯</span><span class="tch">&nbsp;</span><span class="tch">s</span><span class="tch">u</span><span class="tch">r</span><span class="tch">f</span><span class="tch">a</span><span class="tch">c</span><span class="tch">e</span><span class="tch">&nbsp;</span><span class="tch">a</span><span class="tch">s</span><span class="tch">k</span><span class="tch">&nbsp;</span><span class="tch">"</span><span class="tch">S</span><span class="tch">h</span><span class="tch">i</span><span class="tch">p</span><span class="tch">&nbsp;</span><span class="tch">v</span><span class="tch">2</span><span class="tch">.</span><span class="tch">4</span><span class="tch">.</span><span class="tch">0</span><span class="tch">?</span><span class="tch">"</span><span class="tch">&nbsp;</span><span class="tch">-</span><span class="tch">-</span><span class="tch">o</span><span class="tch">p</span><span class="tch">t</span><span class="tch">i</span><span class="tch">o</span><span class="tch">n</span><span class="tch">s</span><span class="tch">&nbsp;</span><span class="tch">s</span><span class="tch">h</span><span class="tch">i</span><span class="tch">p</span><span class="tch">,</span><span class="tch">h</span><span class="tch">o</span><span class="tch">l</span><span class="tch">d</span><span class="tch">&nbsp;</span><span class="tch">-</span><span class="tch">-</span><span class="tch">w</span><span class="tch">a</span><span class="tch">i</span><span class="tch">t</span></div>
+            <div id="term-out">→ {"choice":"ship","device":"phone"}   exit 0</div>
+          </div>
+
+          <div id="tp1" class="pulse"></div>
+          <div id="tp2" class="pulse"></div>
+          <div id="touch1" class="touch" style="left: 1230px; top: 448px"></div>
+          <div id="ring1" class="ring" style="left: 1226px; top: 444px"></div>
+          <div id="cap">every screen you own. one tap — anywhere.</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const EO = "power3.out";
+      const EIO = "power2.inOut";
+      function ripple(sel, t) {
+        tl.set(sel, { scale: 0.3 }, t - 0.02);
+        tl.to(sel, { opacity: 0.9, duration: 0.05, ease: "none" }, t);
+        tl.to(sel, { scale: 2.0, opacity: 0, duration: 0.5, ease: EO }, t + 0.06);
+      }
+      function pulseRun(sel, t, x1, y1, x2, y2) {
+        tl.fromTo(sel, { x: x1, y: y1, opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, t);
+        tl.to(sel, { x: x2, y: y2, duration: 0.42, ease: EIO }, t + 0.04);
+        tl.to(sel, { opacity: 0, duration: 0.14, ease: "none" }, t + 0.46);
+      }
+
+      // the ask goes out
+      tl.to(".tch", { opacity: 1, duration: 0.02, stagger: 0.028, ease: "none" }, 0.5);
+      // three screens light up with the same question
+      tl.fromTo("#desk", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.7, ease: EO }, 2.5);
+      tl.fromTo("#phone", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.7, ease: EO }, 2.7);
+      tl.fromTo("#tv", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.7, ease: EO }, 2.9);
+      tl.fromTo("#lb-desk", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 2.9);
+      tl.fromTo("#desk-stand", { opacity: 0 }, { opacity: 0.5, duration: 0.4 }, 2.9);
+      tl.fromTo("#lb-phone", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 3.1);
+      tl.fromTo("#lb-tv", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 3.3);
+      tl.fromTo(".askcard", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.6, stagger: 0.15, ease: EO }, 3.2);
+      // you answer on the phone
+      tl.fromTo("#touch1", { opacity: 0, scale: 1.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: EO }, 5.4);
+      ripple("#ring1", 5.85);
+      tl.to("#bp-ship", { backgroundColor: "#ffffff", color: "#000000", duration: 0.25 }, 5.9);
+      tl.to("#touch1", { opacity: 0, duration: 0.3 }, 6.2);
+      // …and every other screen already knows
+      pulseRun("#tp1", 6.1, 1240, 470, 560, 430);
+      pulseRun("#tp2", 6.2, 1240, 470, 1680, 300);
+      tl.to("#card-desk", { opacity: 0, duration: 0.3 }, 6.55);
+      tl.fromTo("#done-desk", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 6.7);
+      tl.to("#card-phone", { opacity: 0, duration: 0.3 }, 6.45);
+      tl.fromTo("#done-phone", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 6.6);
+      tl.to("#card-tv", { opacity: 0, duration: 0.3 }, 6.65);
+      tl.fromTo("#done-tv", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 6.8);
+      // the blocked command returns
+      tl.fromTo("#term-out", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 7.4);
+      tl.fromTo("#cap", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 8.2);
+      tl.to("#wrap", { opacity: 0, duration: 0.6, ease: "none" }, 11.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

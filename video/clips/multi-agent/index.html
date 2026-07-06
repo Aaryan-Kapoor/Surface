@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Surface — a team of agents, one display</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --fg: #ffffff; --fg-muted: rgba(255,255,255,0.52); --fg-faint: rgba(255,255,255,0.3);
+        --hairline: rgba(255,255,255,0.14); --hairline-strong: rgba(255,255,255,0.4);
+        --surface-1: rgba(255,255,255,0.035); --surface-2: rgba(255,255,255,0.07);
+        --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      body { font-family: var(--font); color: var(--fg); }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      .pulse {
+        position: absolute; left: 0; top: 0; width: 14px; height: 14px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 14px rgba(255,255,255,0.9); opacity: 0; z-index: 85;
+      }
+      #board {
+        position: absolute; left: 460px; top: 160px; width: 1000px; height: 620px;
+        background: rgba(12,12,12,0.97); border: 1px solid var(--hairline-strong); border-radius: 20px;
+        padding: 34px 40px; opacity: 0; box-shadow: 0 30px 90px rgba(0,0,0,0.75);
+      }
+      #board h2 { font-size: 40px; font-weight: 700; letter-spacing: -0.01em; }
+      #bhead { position: absolute; right: 40px; top: 44px; width: 320px; height: 34px; }
+      #bhead span { position: absolute; right: 0; top: 0; font-family: var(--mono); font-size: 24px; color: var(--fg-muted); }
+      #bh-live { opacity: 0; color: var(--fg) !important; }
+      .brow {
+        position: absolute; left: 40px; width: 920px; height: 130px;
+        border: 1px solid var(--hairline); border-radius: 14px; background: var(--surface-1);
+        display: flex; align-items: center; padding: 0 34px; gap: 30px;
+      }
+      .brow .who { font-family: var(--mono); font-size: 28px; font-weight: 700; width: 300px; }
+      .statusbox { position: relative; flex: 1; height: 40px; }
+      .statusbox span { position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: 26px; color: var(--fg-faint); }
+      .statusbox .val { opacity: 0; color: var(--fg); }
+      .agent {
+        position: absolute; display: flex; align-items: center; gap: 16px;
+        font-family: var(--mono); font-size: 25px; color: var(--fg-muted); opacity: 0;
+      }
+      .agent i {
+        display: block; width: 18px; height: 18px; border-radius: 50%; background: #fff;
+        box-shadow: 0 0 18px rgba(255,255,255,0.8); flex: none;
+      }
+      #cli {
+        position: absolute; left: 460px; top: 830px; width: 1000px; text-align: center;
+        font-family: var(--mono); font-size: 24px; color: var(--fg-muted); opacity: 0;
+      }
+      #cap {
+        position: absolute; bottom: 46px; width: 100%; text-align: center;
+        font-size: 50px; font-weight: 600; letter-spacing: -0.01em; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="12">
+      <div id="bg" class="clip" data-start="0" data-duration="12" data-track-index="0" style="background: #000"></div>
+      <section id="s" class="clip" data-start="0" data-duration="12" data-track-index="1">
+        <div id="wrap" style="position: absolute; inset: 0">
+
+          <div id="board">
+            <h2>release board</h2>
+            <div id="bhead">
+              <span id="bh-idle">waiting for agents…</span>
+              <span id="bh-live">3 agents · live</span>
+            </div>
+            <div class="brow" style="top: 120px">
+              <div class="who">claude-code</div>
+              <div class="statusbox">
+                <span id="r1-idle">—</span>
+                <span id="r1-val" class="val">tests green ✓ · 10/10 suites</span>
+              </div>
+            </div>
+            <div class="brow" style="top: 280px">
+              <div class="who">codex</div>
+              <div class="statusbox">
+                <span id="r2-idle">—</span>
+                <span id="r2-val" class="val">docs built · 128 pages</span>
+              </div>
+            </div>
+            <div class="brow" style="top: 440px">
+              <div class="who">nightly-cron</div>
+              <div class="statusbox">
+                <span id="r3-idle">—</span>
+                <span id="r3-val" class="val">backup done · scheduled 02:00</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="ag1" class="agent" style="left: 130px; top: 260px"><i id="ag1-dot"></i>claude-code</div>
+          <div id="ag2" class="agent" style="left: 130px; top: 560px"><i id="ag2-dot"></i>codex</div>
+          <div id="ag3" class="agent" style="left: 1580px; top: 410px"><i id="ag3-dot"></i>nightly-cron</div>
+
+          <div id="tp1" class="pulse"></div>
+          <div id="tp2" class="pulse"></div>
+          <div id="tp3" class="pulse"></div>
+          <div id="cli">❯ surface set board claude-code '{"status":"tests green"}'</div>
+          <div id="cap">a team of agents. one screen of truth.</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const EO = "power3.out";
+      const EIO = "power2.inOut";
+      function pulseRun(sel, t, x1, y1, x2, y2) {
+        tl.fromTo(sel, { x: x1, y: y1, opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, t);
+        tl.to(sel, { x: x2, y: y2, duration: 0.5, ease: EIO }, t + 0.04);
+        tl.to(sel, { opacity: 0, duration: 0.14, ease: "none" }, t + 0.54);
+      }
+      function report(dotSel, agentSel, pulseSel, t, x1, y1, y2, idleSel, valSel) {
+        tl.to(dotSel, { scale: 1.6, duration: 0.22, yoyo: true, repeat: 1, ease: "sine.inOut" }, t);
+        pulseRun(pulseSel, t + 0.2, x1, y1, 700, y2);
+        tl.to(idleSel, { opacity: 0, duration: 0.25 }, t + 0.75);
+        tl.to(valSel, { opacity: 1, duration: 0.3 }, t + 0.85);
+      }
+
+      tl.fromTo("#board", { opacity: 0, scale: 0.97 }, { opacity: 1, scale: 1, duration: 0.8, ease: EO }, 0.4);
+      tl.fromTo("#ag1", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: EO }, 1.1);
+      tl.fromTo("#ag2", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.5, ease: EO }, 1.3);
+      tl.fromTo("#ag3", { opacity: 0, x: 24 }, { opacity: 1, x: 0, duration: 0.5, ease: EO }, 1.5);
+
+      // each agent reports into the same board
+      report("#ag1-dot", "#ag1", "#tp1", 2.2, 150, 268, 300, "#r1-idle", "#r1-val");
+      tl.fromTo("#cli", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 3.4);
+      report("#ag2-dot", "#ag2", "#tp2", 4.4, 150, 568, 460, "#r2-idle", "#r2-val");
+      report("#ag3-dot", "#ag3", "#tp3", 6.6, 1590, 418, 620, "#r3-idle", "#r3-val");
+
+      // all present
+      tl.to("#ag1-dot", { scale: 1.6, duration: 0.25, yoyo: true, repeat: 1 }, 8.4);
+      tl.to("#ag2-dot", { scale: 1.6, duration: 0.25, yoyo: true, repeat: 1 }, 8.5);
+      tl.to("#ag3-dot", { scale: 1.6, duration: 0.25, yoyo: true, repeat: 1 }, 8.6);
+      tl.to("#bh-idle", { opacity: 0, duration: 0.3 }, 8.6);
+      tl.to("#bh-live", { opacity: 1, duration: 0.35 }, 8.75);
+      tl.fromTo("#cap", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 9.2);
+      tl.to("#wrap", { opacity: 0, duration: 0.6, ease: "none" }, 11.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

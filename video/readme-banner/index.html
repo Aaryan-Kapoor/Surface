@@ -312,6 +312,14 @@
         position: absolute; left: 0; right: 0; font-size: 50px; font-weight: 600;
         letter-spacing: -0.01em; opacity: 0;
       }
+      #s5-capsub {
+        position: absolute; bottom: 118px; width: 100%; text-align: center; z-index: 75;
+        font-family: var(--mono); font-size: 26px; color: var(--fg-muted); opacity: 0;
+      }
+      #s5-warm {
+        position: absolute; inset: 0; z-index: 1; opacity: 0;
+        background: radial-gradient(closest-side at 50% 45%, rgba(255, 178, 92, 0.16), rgba(255, 178, 92, 0.05) 60%, transparent 85%);
+      }
 
       /* ── S6 · close ──────────────────────────────────────────────── */
       #s6-glow {
@@ -335,8 +343,8 @@
     </style>
   </head>
   <body>
-    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="63">
-      <div id="bg" class="clip" data-start="0" data-duration="63" data-track-index="0" style="background: #000"></div>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="66.5">
+      <div id="bg" class="clip" data-start="0" data-duration="66.5" data-track-index="0" style="background: #000"></div>
 
       <!-- ── S1 · the prompt ─────────────────────────────────────── -->
       <section id="s1" class="clip" data-start="0" data-duration="7" data-track-index="1">
@@ -503,8 +511,9 @@
       </section>
 
       <!-- ── S5 · the Surface era ────────────────────────────────── -->
-      <section id="s5" class="clip" data-start="32.2" data-duration="26" data-track-index="1">
+      <section id="s5" class="clip" data-start="32.2" data-duration="29.4" data-track-index="1">
         <div id="s5-wrap" class="wrap">
+          <div id="s5-warm"></div>
           <div id="s5-board">
             <div class="board-head">
               <h2>orbit <em>· /tdd — webhook parser</em></h2>
@@ -607,7 +616,9 @@
             <span id="s5-cap3">drag it. tap it. your agent is listening.</span>
             <span id="s5-cap4">alive. persistent. yours.</span>
             <span id="s5-cap5">everything gets a surface.</span>
+            <span id="s5-cap6">it runs the display, too.</span>
           </div>
+          <div id="s5-capsub">surface theme · surface slot renderer</div>
 
           <div id="gb1" class="gbub" style="left: 150px; top: 528px">put it on my surface</div>
           <div id="gb2" class="gbub" style="left: 438px; top: 460px">surface the tests</div>
@@ -633,7 +644,7 @@
       </section>
 
       <!-- ── S6 · close ──────────────────────────────────────────── -->
-      <section id="s6" class="clip" data-start="58" data-duration="5" data-track-index="2">
+      <section id="s6" class="clip" data-start="61.4" data-duration="5.1" data-track-index="2">
         <div id="s6-wrap" class="wrap">
           <div id="s6-glow"></div>
           <div id="s6-word">Surface</div>
@@ -751,7 +762,7 @@
       tl.to("#s5-chat", { x: 1318, y: -724, scale: 0.05, duration: 1.0, ease: EIO }, 36.5);
       tl.to("#s5-chat", { opacity: 0, duration: 0.3, ease: "none" }, 37.2);
       tl.fromTo("#agent-dot", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: "back.out(2.5)" }, 37.35);
-      tl.to("#agent-dot", { scale: 1.35, duration: 0.8, yoyo: true, repeat: 23, ease: "sine.inOut" }, 38.0);
+      tl.to("#agent-dot", { scale: 1.35, duration: 0.8, yoyo: true, repeat: 27, ease: "sine.inOut" }, 38.0);
       tl.fromTo("#s5-cap1", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 37.8);
 
       // beat B1 — the agent works: tests flip as pulses arrive from the dot
@@ -835,15 +846,26 @@
       pulseRun("#tp4", 56.6, 112, 122, 400, 22);
       tl.to("#th-p1", { backgroundColor: "#ffffff", color: "#000000", duration: 0.3 }, 57.05);
       tl.to("#th-fill", { scaleX: 1.5, duration: 0.45, ease: EO }, 57.1);
-      tl.to("#s5-wrap", { opacity: 0, duration: 0.55, ease: "none" }, 57.6);
 
-      /* ══ S6 · close (58 – 63) ════════════════════════════════════ */
-      tl.fromTo("#s6-word", { opacity: 0, scale: 0.955 }, { opacity: 1, scale: 1, duration: 1.1, ease: EO }, 58.4);
-      tl.fromTo("#s6-glow", { opacity: 0 }, { opacity: 1, duration: 1.2 }, 58.55);
-      tl.fromTo("#s6-s1", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 59.2);
-      tl.fromTo("#s6-s2", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 59.7);
-      tl.fromTo("#s6-link", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 60.15);
-      tl.to("#s6-wrap", { opacity: 0, duration: 0.7, ease: "none" }, 62.2);
+      // beat D — the agent restyles the display itself: theme + slots are its, too
+      tl.to("#s5-cap5", { opacity: 0, duration: 0.4 }, 57.4);
+      tl.fromTo("#s5-warm", { opacity: 0 }, { opacity: 1, duration: 1.1, ease: "sine.inOut" }, 57.8);
+      tl.to(".tile", { borderColor: "rgba(255,190,110,0.5)", duration: 0.9, ease: "sine.inOut" }, 57.9);
+      tl.to(".tile .tname", { color: "#ffcf8a", duration: 0.9 }, 57.9);
+      tl.to(".tile .tdot", { backgroundColor: "#ffcf8a", duration: 0.9 }, 57.9);
+      tl.to("#agent-dot", { backgroundColor: "#ffcf8a", duration: 0.9 }, 57.9);
+      tl.to("#tile-label", { color: "#ffcf8a", duration: 0.9 }, 57.9);
+      tl.fromTo("#s5-capsub", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 57.9);
+      tl.fromTo("#s5-cap6", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 58.1);
+      tl.to("#s5-wrap", { opacity: 0, duration: 0.55, ease: "none" }, 61.0);
+
+      /* ══ S6 · close (61.4 – 66.5) ════════════════════════════════ */
+      tl.fromTo("#s6-word", { opacity: 0, scale: 0.955 }, { opacity: 1, scale: 1, duration: 1.1, ease: EO }, 61.8);
+      tl.fromTo("#s6-glow", { opacity: 0 }, { opacity: 1, duration: 1.2 }, 61.95);
+      tl.fromTo("#s6-s1", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 62.6);
+      tl.fromTo("#s6-s2", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 63.1);
+      tl.fromTo("#s6-link", { opacity: 0 }, { opacity: 1, duration: 0.6 }, 63.55);
+      tl.to("#s6-wrap", { opacity: 0, duration: 0.7, ease: "none" }, 65.6);
 
       window.__timelines["main"] = tl;
     </script>

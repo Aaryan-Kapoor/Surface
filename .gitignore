@@ -19,5 +19,8 @@ video/archived/
 video/readme-banner/surface-banner.mp4
 video/readme-banner/snapshots/
 video/readme-banner/node_modules/
+video/clips/*/clip.mp4
+video/clips/*/snapshots/
+video/clips/*/node_modules/
 structures_symmetry_symbols.*
 planning/

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Surface — the 11pm revival</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --fg: #ffffff; --fg-muted: rgba(255,255,255,0.52); --fg-faint: rgba(255,255,255,0.3);
+        --hairline: rgba(255,255,255,0.14); --hairline-strong: rgba(255,255,255,0.4);
+        --surface-1: rgba(255,255,255,0.035); --surface-2: rgba(255,255,255,0.07);
+        --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+        --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      body { font-family: var(--font); color: var(--fg); }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      .clip { position: absolute; inset: 0; }
+      .pulse {
+        position: absolute; left: 0; top: 0; width: 14px; height: 14px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 14px rgba(255,255,255,0.9); opacity: 0; z-index: 85;
+      }
+      .touch {
+        position: absolute; width: 46px; height: 46px; border-radius: 50%;
+        background: rgba(255,255,255,0.35); border: 2px solid rgba(255,255,255,0.8);
+        opacity: 0; z-index: 90;
+      }
+      .ring {
+        position: absolute; width: 56px; height: 56px; border-radius: 50%;
+        border: 2px solid var(--fg); opacity: 0; z-index: 89;
+      }
+      #clockbox { position: absolute; right: 120px; top: 84px; width: 300px; height: 60px; }
+      #clockbox span {
+        position: absolute; right: 0; top: 0; font-family: var(--mono); font-size: 44px;
+        color: var(--fg-muted);
+      }
+      #clock-late { opacity: 0; color: var(--fg) !important; }
+      #night { position: absolute; inset: 0; background: #000; opacity: 0; z-index: 2; }
+      #term {
+        position: absolute; left: 110px; top: 660px; width: 860px; height: 330px;
+        background: rgba(10,10,10,0.92); border: 1px solid var(--hairline); border-radius: 14px;
+        padding: 28px 32px; font-family: var(--mono); font-size: 25px; line-height: 1.9; z-index: 5;
+      }
+      .tch { opacity: 0; }
+      #term .late { opacity: 0; }
+      #term .dim { color: var(--fg-muted); }
+      #term .hot { color: #ffffff; }
+      #card {
+        position: absolute; left: 1030px; top: 250px; width: 680px; height: 350px;
+        background: rgba(14,14,14,0.97); border: 1px solid var(--hairline-strong); border-radius: 18px;
+        padding: 36px 40px; z-index: 5; box-shadow: 0 30px 90px rgba(0,0,0,0.75);
+      }
+      #card h2 { font-size: 42px; font-weight: 700; letter-spacing: -0.01em; }
+      #card .meta { font-family: var(--mono); font-size: 23px; color: var(--fg-muted); margin-top: 12px; }
+      .btn {
+        display: inline-block; border: 1.5px solid var(--hairline-strong); border-radius: 12px;
+        width: 210px; padding: 18px 0; text-align: center; font-weight: 600; font-size: 28px;
+        color: var(--fg); background: var(--surface-2); margin-top: 40px;
+      }
+      #statusbox { position: absolute; left: 40px; bottom: 26px; width: 560px; height: 36px; }
+      #statusbox span { position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: 24px; color: var(--fg-muted); opacity: 0; }
+      #st-handling { color: #ffffff; }
+      #cap {
+        position: absolute; bottom: 46px; width: 100%; text-align: center; z-index: 6;
+        font-size: 48px; font-weight: 600; letter-spacing: -0.01em; opacity: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-width="1920" data-height="1080" data-duration="13">
+      <div id="bg" class="clip" data-start="0" data-duration="13" data-track-index="0" style="background: #000"></div>
+      <section id="s" class="clip" data-start="0" data-duration="13" data-track-index="1">
+        <div id="wrap" style="position: absolute; inset: 0">
+          <div id="night"></div>
+
+          <div id="clockbox">
+            <span id="clock-day">5:04 pm</span>
+            <span id="clock-late">11:02 pm</span>
+          </div>
+
+          <div id="term">
+            <div><span class="tch">❯</span><span class="tch">&nbsp;</span><span class="tch">s</span><span class="tch">u</span><span class="tch">r</span><span class="tch">f</span><span class="tch">a</span><span class="tch">c</span><span class="tch">e</span><span class="tch">&nbsp;</span><span class="tch">b</span><span class="tch">i</span><span class="tch">n</span><span class="tch">d</span><span class="tch">&nbsp;</span><span class="tch">d</span><span class="tch">e</span><span class="tch">p</span><span class="tch">l</span><span class="tch">o</span><span class="tch">y</span><span class="tch">&nbsp;</span><span class="tch">-</span><span class="tch">-</span><span class="tch">a</span><span class="tch">c</span><span class="tch">t</span><span class="tch">i</span><span class="tch">o</span><span class="tch">n</span><span class="tch">&nbsp;</span><span class="tch">a</span><span class="tch">p</span><span class="tch">p</span><span class="tch">r</span><span class="tch">o</span><span class="tch">v</span><span class="tch">e</span><span class="tch">|</span><span class="tch">h</span><span class="tch">o</span><span class="tch">l</span><span class="tch">d</span></div>
+            <div class="dim"><span class="tch">&nbsp;</span><span class="tch">&nbsp;</span><span class="tch">-</span><span class="tch">-</span><span class="tch">r</span><span class="tch">u</span><span class="tch">n</span><span class="tch">&nbsp;</span><span class="tch">'</span><span class="tch">c</span><span class="tch">l</span><span class="tch">a</span><span class="tch">u</span><span class="tch">d</span><span class="tch">e</span><span class="tch">&nbsp;</span><span class="tch">-</span><span class="tch">p</span><span class="tch">&nbsp;</span><span class="tch">-</span><span class="tch">-</span><span class="tch">r</span><span class="tch">e</span><span class="tch">s</span><span class="tch">u</span><span class="tch">m</span><span class="tch">e</span><span class="tch">&nbsp;</span><span class="tch">s</span><span class="tch">e</span><span class="tch">s</span><span class="tch">_</span><span class="tch">8</span><span class="tch">f</span><span class="tch">2</span><span class="tch">1</span><span class="tch">'</span></div>
+            <div id="tl-exit" class="dim late">· session exited — 5:04 pm</div>
+            <div id="tl-click" class="dim late">⟳ click at 11:02 pm — no listener alive</div>
+            <div id="tl-spawn" class="hot late">→ spawning: claude -p --resume ses_8f21…</div>
+            <div id="tl-done" class="late">✓ action batch handled</div>
+          </div>
+
+          <div id="card">
+            <h2>Deploy v2.4.0</h2>
+            <div class="meta">built 4:58 pm · waiting for approval</div>
+            <div id="b-approve" class="btn">approve</div>
+            <div class="btn" style="margin-left: 22px">hold</div>
+            <div id="statusbox">
+              <span id="st-handling">⟳ handling…</span>
+              <span id="st-done">✓ approved — 11:02 pm</span>
+            </div>
+          </div>
+
+          <div id="tp1" class="pulse"></div>
+          <div id="touch1" class="touch" style="left: 1155px; top: 468px"></div>
+          <div id="ring1" class="ring" style="left: 1151px; top: 464px"></div>
+          <div id="cap">your click revives the exact session that built it.</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      const EO = "power3.out";
+      const EIO = "power2.inOut";
+      function ripple(sel, t) {
+        tl.set(sel, { scale: 0.3 }, t - 0.02);
+        tl.to(sel, { opacity: 0.9, duration: 0.05, ease: "none" }, t);
+        tl.to(sel, { scale: 2.0, opacity: 0, duration: 0.5, ease: EO }, t + 0.06);
+      }
+
+      // 5pm: the agent leaves a binding behind and exits
+      tl.fromTo("#card", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.7, ease: EO }, 0.3);
+      tl.to(".tch", { opacity: 1, duration: 0.02, stagger: 0.024, ease: "none" }, 0.5);
+      tl.fromTo("#tl-exit", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 2.8);
+      tl.to("#term", { opacity: 0.32, duration: 0.7 }, 3.5);
+      // night falls
+      tl.to("#night", { opacity: 0.4, duration: 1.1, ease: "sine.inOut" }, 4.1);
+      tl.to("#clock-day", { opacity: 0, duration: 0.5 }, 4.3);
+      tl.fromTo("#clock-late", { opacity: 0 }, { opacity: 1, duration: 0.5 }, 4.5);
+      // 11:02 pm: you tap approve
+      tl.fromTo("#touch1", { opacity: 0, scale: 1.4 }, { opacity: 1, scale: 1, duration: 0.4, ease: EO }, 5.5);
+      ripple("#ring1", 5.95);
+      tl.to("#b-approve", { backgroundColor: "#ffffff", color: "#000000", duration: 0.25 }, 6.0);
+      tl.to("#touch1", { opacity: 0, duration: 0.3 }, 6.3);
+      tl.to("#st-handling", { opacity: 1, duration: 0.3 }, 6.35);
+      // the click travels down… and wakes the session with the context
+      tl.fromTo("#tp1", { x: 1265, y: 490, opacity: 0 }, { opacity: 1, duration: 0.08, ease: "none" }, 6.5);
+      tl.to("#tp1", { x: 540, y: 700, duration: 0.5, ease: EIO }, 6.54);
+      tl.to("#tp1", { opacity: 0, duration: 0.14, ease: "none" }, 7.04);
+      tl.to("#term", { opacity: 1, duration: 0.5 }, 7.0);
+      tl.fromTo("#tl-click", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 7.2);
+      tl.fromTo("#tl-spawn", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 7.9);
+      tl.fromTo("#tl-done", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 9.2);
+      tl.to("#st-handling", { opacity: 0, duration: 0.3 }, 9.5);
+      tl.fromTo("#st-done", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 9.65);
+      tl.fromTo("#cap", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.6, ease: EO }, 10.2);
+      tl.to("#wrap", { opacity: 0, duration: 0.6, ease: "none" }, 12.3);
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

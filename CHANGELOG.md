@@ -7,8 +7,13 @@ All notable changes to Surface are recorded here.
 - Replaced the static README hero with an animated banner
   (`video/readme-banner/`, a HyperFrames HTML composition rendered to GIF):
   Markdown → HTML → Surface told through /tdd, with the two-way loop drawn
-  as pulses between the surface and the agent. Added a social-preview still
-  and repo metadata to match.
+  as pulses between the surface and the agent, ending on the agent
+  restyling the display itself. Added a social-preview still and repo
+  metadata to match.
+- Added four showcase clips (`video/clips/`): every-screen (ask answered
+  from the phone), revival (the 11pm binding wake), multi-agent (shared
+  board), and live-link (repo file hot reload) — embedded in the README,
+  which also gained a "The display is programmable too" section.
 
 - Replaced `SKILL.md` with the benchmark-optimized skill (61 lines, ⅓ the size):
   matches the old skill on shape/primitive choice and hardens the wake-binding
