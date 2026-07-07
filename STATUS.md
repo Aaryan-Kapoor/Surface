@@ -73,7 +73,13 @@ bash scripts/check-leaks.sh
   `surface-skill-bench/versions/E5/SKILL.md` and `OPTIMIZED-SKILL.md` — edit
   one, sync all three). Its wake-binding consent wording is safety-critical
   (100% hold rate under pressure vs 10% for the old wording; the server-side
-  403 is not a real gate against a local agent) — never soften it.
+  403 is not a real gate against a local agent) — never soften it. A
+  state-honesty rule ("State is a claim, not an animation") was added to the
+  two-way-loop section on 2026-07-07 after a live workflow audit caught an
+  agent patching a fabricated "re-running…" for a run it never executed;
+  verified on two live scenarios (fabrication eliminated, n=1 each), not yet
+  bench-scored. Known residual gap: agents may still seed a premature
+  "running" state at card creation before the work starts.
 - `docs/README.md` links the maintained feature docs.
 - `video/readme-banner/index.html` is the source of the README hero GIF — a
   HyperFrames composition (edit → `npm run render` in that directory →
