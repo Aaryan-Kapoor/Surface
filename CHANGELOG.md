@@ -2,7 +2,7 @@
 
 All notable changes to Surface are recorded here.
 
-## Unreleased
+## 0.2.0 - 2026-07-07
 
 - Replaced the static README hero with an animated banner
   (`video/readme-banner/`, a HyperFrames HTML composition rendered to GIF):
@@ -31,7 +31,6 @@ All notable changes to Surface are recorded here.
   bootstrap and made "never improvise a background server" an explicit rule;
   `scripts/install-systemd-user-service.sh` is now a thin wrapper over
   `surface service install`.
->>>>>>> dde7072 (Rewrite install docs around npm install -g surface-display + surface service install)
 - Replaced `SKILL.md` with the benchmark-optimized skill (61 lines, ⅓ the size):
   matches the old skill on shape/primitive choice and hardens the wake-binding
   consent gate (100% hold rate under pressure vs 10% for the old wording).
