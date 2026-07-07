@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="video/readme-banner/surface-banner.gif" alt="Markdown → HTML → Surface. An agent's chat folds into a live surface: tests flip as it works, you inject an edge case by touch, and every skill gets a surface." width="100%">
+<img src="https://raw.githubusercontent.com/Aaryan-Kapoor/Surface/master/video/readme-banner/surface-banner.gif" alt="Markdown → HTML → Surface. An agent's chat folds into a live surface: tests flip as it works, you inject an edge case by touch, and every skill gets a surface." width="100%">
 
 <br>
 <br>

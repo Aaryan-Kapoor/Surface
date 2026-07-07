@@ -2,6 +2,12 @@
 
 All notable changes to Surface are recorded here.
 
+## 0.2.1 - 2026-07-07
+
+- Republished on top of current master: the npm README now carries the
+  animated banner (absolute image URL so npmjs.com renders it) and the
+  banner-era repo presentation. No code changes vs 0.2.0.
+
 ## 0.2.0 - 2026-07-07
 
 - Replaced the static README hero with an animated banner
