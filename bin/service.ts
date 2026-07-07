@@ -309,6 +309,15 @@ export interface HealthReport {
   error?: string;
 }
 
+function localVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    return String(pkg.version || "unknown");
+  } catch {
+    return "unknown";
+  }
+}
+
 function probeTcp(port: number, host = "127.0.0.1"): Promise<boolean> {
   return new Promise((resolve) => {
     const sock = net.connect({ port, host });
@@ -546,6 +555,11 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         console.log(`healthy: Surface ${health.version} on :${health.port} (content :${health.content_port}), pid ${health.pid}, up ${health.uptime_seconds}s`);
       } else {
         console.error(`unhealthy: ${health.error} (${health.url})`);
+      }
+      // The npm-upgrade blind spot: package updated, service still running old code.
+      const mine = localVersion();
+      if (health.ok && mine !== "unknown" && health.version !== mine) {
+        console.error(`note: this CLI is ${mine} but the running service is ${health.version} — run: surface service restart`);
       }
       process.exit(health.ok ? 0 : 1);
     }
