@@ -55,7 +55,7 @@ Two planes ([auth/trust-model.md](auth/trust-model.md)): **loopback = system** (
 
 ## Stack
 
-Express 5, better-sqlite3, native `fetch`, vanilla-JS PWA, `tsx` runtime for the server, no client dependencies. The CLI also ships as a single esbuild-bundled file (`dist/surface.mjs`, built by `npm run build:cli` via the `prepare` hook). Headless Chrome (optional) for card screenshots. Schema versioned via `PRAGMA user_version` (`server/migrations.ts`).
+Express 5, better-sqlite3, native `fetch`, vanilla-JS PWA, no client dependencies. Both entrypoints ship as esbuild bundles (`dist/surface.mjs` for the CLI, `dist/server.mjs` for the server, built by `npm run build` via the `prepare` hook); `tsx` runs the server from source in development. Headless Chrome (optional) for card screenshots. Schema versioned via `PRAGMA user_version` (`server/migrations.ts`).
 
 ## Where the detail lives
 

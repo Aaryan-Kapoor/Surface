@@ -89,25 +89,31 @@ is lost.
 
 ## Quick start
 
+Two commands, identical on Linux, macOS, and Windows:
+
+```bash
+npm install -g surface-display
+surface service install    # → http://127.0.0.1:3000, supervised + health-gated
+```
+
+`surface service install` registers the native per-user supervisor — a
+systemd user unit, a launchd agent, or a Scheduled Task — starts the server,
+and succeeds only once it answers health checks. Manage it with:
+
+```bash
+surface service health     # liveness, version, content plane (exit 0/1)
+surface service logs       # same log file on every platform
+surface service status|start|stop|restart|uninstall
+```
+
+Hacking on Surface itself:
+
 ```bash
 git clone https://github.com/Aaryan-Kapoor/Surface.git
 cd Surface
-npm install
-npm run dev        # → http://127.0.0.1:3000
-```
-
-For a persistent Linux user service:
-
-```bash
-./scripts/install-systemd-user-service.sh
-systemctl --user status surface.service --no-pager
-```
-
-Put the single-file CLI on your `$PATH` (built automatically on install):
-
-```bash
-npm link
-surface --help
+npm install        # prepare hook bundles the CLI + server into dist/
+npm run dev        # foreground dev server → http://127.0.0.1:3000
+npm link           # put the local `surface` CLI on $PATH
 ```
 
 Surface binds to `127.0.0.1` and stores everything under `~/.surface/`.

@@ -42,6 +42,11 @@ Before cutting a release:
 3. Run the checks above on a clean checkout.
 4. Create and push the tag, then publish a GitHub release using the changelog
    section as release notes.
+5. Pushing the `vX.Y.Z` tag triggers the `publish` job in CI: after the full
+   matrix (build, tests on Linux/macOS/Windows, service-install smoke on
+   macOS/Windows, audit) passes, it publishes `surface-display` to npm with
+   provenance. The job requires the tag to match `package.json` and the
+   `NPM_TOKEN` repo secret to be set.
 
 ## Security
 

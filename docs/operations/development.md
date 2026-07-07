@@ -26,7 +26,7 @@ Key server files: `index.ts` (entrypoint + auth middleware + static serving), `r
 ## Runtime stack
 
 - **Express 5** (`express@^5.1.0`) + **better-sqlite3** (`@^11.8.2`) — synchronous SQLite, no ORM.
-- **`tsx`** runs TypeScript directly for the dev server and the service entrypoint — the server is never compiled. The **CLI** is the exception: `npm run build:cli` (run automatically by the `prepare` hook) bundles `bin/surface.ts` to `dist/surface.mjs` with esbuild, and the npm `bin` entry points at the bundle. `tsconfig.json` targets ES2022 with `strict: true` and exists mainly so `npx tsc --noEmit` can type-check (it excludes `archived/`).
+- **`tsx`** runs TypeScript directly for the dev server (`npm run dev`). For distribution, `npm run build` (run automatically by the `prepare` hook, `scripts/build.mjs`) bundles **both** entrypoints with esbuild: `bin/surface.ts` → `dist/surface.mjs` (fully self-contained; the npm `bin` points at it) and `server/index.ts` → `dist/server.mjs` (npm packages stay external — better-sqlite3 is native). The `surface service` supervisor execs `dist/server.mjs`. `tsconfig.json` targets ES2022 with `strict: true` and exists mainly so `npx tsc --noEmit` can type-check (it excludes `archived/`).
 - **Vanilla-JS client, no build step.** `client/index.html` loads `app.js` and `style.css` directly. Cache-bust client assets by bumping the `?v=N` query in `client/index.html` — this is the project convention for shipping client changes.
 - **SSE** for all live updates (`server/sse.ts`); no WebSockets.
 - Data lives under **`~/.surface/`** (`db.sqlite`, `artifacts/`, `auth-secret`, `install-state.json`, `logs/`, `templates/`, `thumbs/`), overridable with `SURFACE_DATA_DIR`. A pre-baseline `db.sqlite` is archived to `db.sqlite.bak` at boot, never migrated (`server/db.ts`).
@@ -36,10 +36,10 @@ Key server files: `index.ts` (entrypoint + auth middleware + static serving), `r
 | Script | Command | Purpose |
 | --- | --- | --- |
 | `npm run dev` | `tsx server/index.ts` | Start the server on `127.0.0.1:3000`. |
-| `npm run service` | `tsx server/index.ts` | Same entrypoint, used by the systemd unit. |
+| `npm run service` | `tsx server/index.ts` | Same entrypoint from source (production installs run `dist/server.mjs` via `surface service`). |
 | `npm run cli` | `tsx bin/surface.ts` | Run the CLI from source without `npm link`. |
-| `npm run build:cli` | `esbuild bin/surface.ts --bundle …` | Bundle the CLI to `dist/surface.mjs` (also runs via the `prepare` hook). |
-| `npm test` | `tsx test/run-all.ts` | Build the CLI and run the isolated regression suite aggregate. |
+| `npm run build` | `node scripts/build.mjs` | Bundle CLI → `dist/surface.mjs` and server → `dist/server.mjs` (also runs via the `prepare` hook; `build:cli` is a legacy alias). |
+| `npm test` | `tsx test/run-all.ts` | Build the bundles and run the isolated regression suite aggregate. |
 | `npm run test:artifacts` | `tsx test/artifacts.ts` | Artifact HTTP regression test. |
 | `npm run test:auth` | `tsx test/auth.ts` | Pairing/session auth acceptance tests. |
 | `npm run test:startup-access` | `tsx test/startupAccess.ts` | Startup connection-string / QR unit tests. |

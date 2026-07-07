@@ -25,12 +25,38 @@ npm audit --audit-level=high
 bash scripts/check-leaks.sh
 ```
 
-`npm test` builds the CLI and runs the isolated regression suites. The OpenRouter e2e loop is opt-in with `SURFACE_TEST_E2E=1` and is skipped by default to avoid touching a live service or requiring credentials.
+`npm test` builds the CLI + server bundles and runs the isolated regression suites. The OpenRouter e2e loop is opt-in with `SURFACE_TEST_E2E=1` and is skipped by default to avoid touching a live service or requiring credentials.
+
+## Distribution (decided 2026-07-07)
+
+- Published npm package: **`surface-display`** (bare `surface`/`surface-cli`
+  were taken; owner rejected a scoped name). The installed command stays
+  `surface`. Distribution is **tagged releases only** — never `github:`
+  installs; master may hold unreleased work.
+- The package is self-contained: `scripts/build.mjs` bundles the CLI
+  (`dist/surface.mjs`, fully inlined) and the server (`dist/server.mjs`,
+  npm packages external — better-sqlite3 is native). No `tsx` at runtime.
+- `surface service` is the only sanctioned way to run the server outside repo
+  dev: systemd user unit / launchd LaunchAgent / Windows Scheduled Task, all
+  exec'ing the same `node dist/server.mjs --log-file …` argv, health-gated on
+  `/healthz` + a content-plane probe. **No foreground `surface serve` command
+  exists, deliberately** — it was designed and rejected (owner decision,
+  2026-07-07) because it re-arms the "agent improvises a hidden background
+  server" failure mode this work exists to close.
+- Known Windows caveat: a Scheduled Task restarts at logon and via task
+  restart settings, but does not supervise a *crashed* process the way
+  systemd `Restart=` / launchd `KeepAlive` do. Accepted for v1; a heartbeat
+  trigger (second instance exits on the fatal content-port bind) is the
+  upgrade path if it bites.
+- Releases: push `vX.Y.Z` matching `package.json`; CI publishes to npm with
+  provenance after the full matrix + Windows/macOS service smoke pass.
+  Needs the `NPM_TOKEN` repo secret (not yet configured as of 2026-07-07).
 
 ## Operational Notes
 
 - Data lives in `~/.surface/` unless `SURFACE_DATA_DIR` is set.
-- The service is intended to run once as a systemd user service bound to `127.0.0.1`.
+- The service is intended to run once as a per-user supervised service bound
+  to `127.0.0.1` (`surface service install`; see Distribution above).
 - Pre-baseline SQLite databases are archived to `db.sqlite.bak` at boot and are not row-migrated.
 - Linked artifacts remain sourced from disk; edit the file and run `surface touch <id>`.
 - The archived MCP adapter is not installed by default.

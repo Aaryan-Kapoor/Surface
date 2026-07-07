@@ -7,7 +7,7 @@
 
 ## Install / build
 
-The CLI ships as a single bundled file: `npm run build:cli` runs esbuild over `bin/surface.ts` and writes `dist/surface.mjs`; the npm `bin` entry points at it, and the `prepare` hook builds it automatically on `npm install` / `npm link`. The bundle runs with plain `node` — no repo toolchain needed on the machine that invokes it. `npm run cli` still runs straight from source via `tsx`.
+The CLI ships as a single bundled file: `npm run build` (`scripts/build.mjs`) runs esbuild over `bin/surface.ts` and writes `dist/surface.mjs` (it also bundles the server to `dist/server.mjs`); the npm `bin` entry points at it, and the `prepare` hook builds both automatically on `npm install` / `npm link`. The bundle runs with plain `node` — no repo toolchain needed on the machine that invokes it. Installed from npm it's simply `npm install -g surface-display`. `npm run cli` still runs straight from source via `tsx`.
 
 ## Environment
 

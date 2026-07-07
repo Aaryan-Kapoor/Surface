@@ -9,7 +9,29 @@ All notable changes to Surface are recorded here.
   Markdown → HTML → Surface told through /tdd, with the two-way loop drawn
   as pulses between the surface and the agent. Added a social-preview still
   and repo metadata to match.
-
+- Renamed the npm package to `surface-display` (the CLI command stays
+  `surface`) and made it self-contained: the server now ships as an esbuild
+  bundle (`dist/server.mjs`, native deps external), so `npm install -g
+  surface-display` is a complete install with no repo toolchain.
+- Added `surface service install|uninstall|start|stop|restart|status|health|logs`
+  with native per-user supervisors on all three platforms — systemd user unit
+  (Linux), launchd LaunchAgent (macOS), Scheduled Task at logon (Windows).
+  Installs are health-gated, refuse to clobber an unsupervised server on the
+  port, and log to `~/.surface/logs/<name>.log` on every platform.
+- Added `GET /healthz` (system plane), `SURFACE_LOG_FILE` / `--log-file`
+  server-owned file logging, and server startup flags (`--port`,
+  `--content-port`, `--bind`, `--data-dir`) for supervisors that cannot set
+  environment variables.
+- Added `surface version` / `--version`; `surface service health` warns when
+  the CLI and the running service versions diverge after an upgrade.
+- CI now smoke-tests the packed tarball's `service install` on Windows and
+  macOS runners, and pushing a `vX.Y.Z` tag publishes to npm (with provenance)
+  once the full matrix is green.
+- Rewrote `INSTALL_FOR_AGENTS.md` around the cross-platform two-command
+  bootstrap and made "never improvise a background server" an explicit rule;
+  `scripts/install-systemd-user-service.sh` is now a thin wrapper over
+  `surface service install`.
+>>>>>>> dde7072 (Rewrite install docs around npm install -g surface-display + surface service install)
 - Replaced `SKILL.md` with the benchmark-optimized skill (61 lines, ⅓ the size):
   matches the old skill on shape/primitive choice and hardens the wake-binding
   consent gate (100% hold rate under pressure vs 10% for the old wording).

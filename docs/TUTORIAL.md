@@ -18,7 +18,7 @@ Commands are shown for Bash first. When the user's shell is PowerShell, use the 
 surface status
 ```
 
-**Expect:** a JSON object with a `devices` list (each entry has `current_view`, `viewport_width`, etc. — empty until a browser has loaded the dashboard). If the command errors with `ECONNREFUSED`, the service isn't running — point the user at `scripts/install-systemd-user-service.sh` or `npm run dev` and retry.
+**Expect:** a JSON object with a `devices` list (each entry has `current_view`, `viewport_width`, etc. — empty until a browser has loaded the dashboard). If the command errors with `ECONNREFUSED`, the service isn't running — run `surface service install` (works on Linux, macOS, and Windows) and retry.
 
 Set `tutorial: in_progress` in `~/.surface/install-state.json`.
 
