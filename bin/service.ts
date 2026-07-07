@@ -123,6 +123,23 @@ export function windowsInstallScript(cfg: ServiceConfig): string {
   ].join("\n");
 }
 
+export function windowsStopScript(cfg: ServiceConfig): string {
+  // Stop-ScheduledTask kills the conhost wrapper but can orphan the node
+  // child (observed on CI: the server kept answering after uninstall). Finish
+  // the job: kill whatever still LISTENs on the app port, but only if it's
+  // our shape of process (node/conhost) — never an unrelated port squatter.
+  return [
+    `Stop-ScheduledTask -TaskName ${psQuote(cfg.name)} -ErrorAction SilentlyContinue`,
+    `$owners = Get-NetTCPConnection -LocalPort ${cfg.port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`,
+    `foreach ($id in $owners) {`,
+    `  $p = Get-Process -Id $id -ErrorAction SilentlyContinue`,
+    `  if ($p -and ($p.ProcessName -eq 'node' -or $p.ProcessName -eq 'conhost')) {`,
+    `    Stop-Process -Id $id -Force -ErrorAction SilentlyContinue`,
+    `  }`,
+    `}`,
+  ].join("\n");
+}
+
 // ---------- backends ----------
 
 interface RunResult {
@@ -280,7 +297,7 @@ const windowsBackend: Backend = {
     if (!s.ok) throw new Error(`Start-ScheduledTask failed: ${s.stderr || s.stdout}`);
   },
   uninstall(cfg) {
-    powershell(`Stop-ScheduledTask -TaskName ${psQuote(cfg.name)} -ErrorAction SilentlyContinue`);
+    powershell(windowsStopScript(cfg));
     powershell(`Unregister-ScheduledTask -TaskName ${psQuote(cfg.name)} -Confirm:$false`);
   },
   start(cfg) {
@@ -288,8 +305,8 @@ const windowsBackend: Backend = {
     if (!r.ok) throw new Error(`Start-ScheduledTask failed: ${r.stderr || r.stdout}`);
   },
   stop(cfg) {
-    const r = powershell(`Stop-ScheduledTask -TaskName ${psQuote(cfg.name)}`);
-    if (!r.ok) throw new Error(`Stop-ScheduledTask failed: ${r.stderr || r.stdout}`);
+    const r = powershell(windowsStopScript(cfg));
+    if (!r.ok) throw new Error(`stopping the task failed: ${r.stderr || r.stdout}`);
   },
   restart(cfg) {
     windowsBackend.stop(cfg);

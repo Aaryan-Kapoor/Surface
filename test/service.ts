@@ -11,6 +11,7 @@ import {
   serverArgs,
   systemdUnit,
   windowsInstallScript,
+  windowsStopScript,
   type ServiceConfig,
 } from "../bin/service.js";
 
@@ -80,6 +81,14 @@ test("windows script: conhost wrapper, quoted args, safe task name", () => {
   assert.ok(script.includes("Register-ScheduledTask -TaskName 'surface-test'"));
   assert.ok(script.includes("-WorkingDirectory '/home/o''brien/.surface'"));
   assert.ok(script.includes("-AtLogOn"));
+});
+
+test("windows stop script: stops the task, then reaps only node/conhost on the port", () => {
+  const script = windowsStopScript(hostile);
+  assert.ok(script.includes("Stop-ScheduledTask -TaskName 'surface-test'"));
+  assert.ok(script.includes("Get-NetTCPConnection -LocalPort 3457 -State Listen"));
+  assert.ok(script.includes("$p.ProcessName -eq 'node'"));
+  assert.ok(script.includes("Stop-Process -Id $id -Force"));
 });
 
 // ---------- live loop (Linux + working user systemd only) ----------
