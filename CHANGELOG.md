@@ -2,6 +2,20 @@
 
 All notable changes to Surface are recorded here.
 
+## 0.2.2 - 2026-07-07
+
+- Fixed Windows `surface service stop`/`uninstall` leaving the server
+  running: Stop-ScheduledTask kills the conhost wrapper but orphans the node
+  child, so the stop path now also reaps the node/conhost process still
+  listening on the app port (never unrelated processes).
+- `surface service install` now persists its resolved flags per service name
+  (`~/.surface/services/<name>.json`); stop, uninstall, restart, status,
+  health, and logs reuse them, so teardown of a custom-port install needs no
+  repeated flags.
+- npm publishing switched to tokenless trusted publishing (GitHub OIDC) and
+  the CI service smoke now covers all three platforms, including a real
+  systemd user manager on Linux runners via `loginctl enable-linger`.
+
 ## 0.2.1 - 2026-07-07
 
 - Republished on top of current master: the npm README now carries the

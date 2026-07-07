@@ -1,6 +1,6 @@
 {
   "name": "surface-display",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "The last app. A universal display for AI agents.",
   "license": "MIT",
   "type": "module",
