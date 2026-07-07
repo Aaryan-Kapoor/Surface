@@ -48,9 +48,14 @@ bash scripts/check-leaks.sh
   systemd `Restart=` / launchd `KeepAlive` do. Accepted for v1; a heartbeat
   trigger (second instance exits on the fatal content-port bind) is the
   upgrade path if it bites.
-- Releases: push `vX.Y.Z` matching `package.json`; CI publishes to npm with
-  provenance after the full matrix + Windows/macOS service smoke pass.
-  Needs the `NPM_TOKEN` repo secret (not yet configured as of 2026-07-07).
+- Releases: push `vX.Y.Z` matching `package.json`; CI publishes to npm after
+  the full matrix + Windows/macOS service smoke pass. Publishing is tokenless
+  — npm **trusted publishing** via GitHub OIDC (decided 2026-07-07 over an
+  `NPM_TOKEN` secret: nothing to rotate or leak, provenance attested
+  automatically). Bootstrap still pending as of 2026-07-07: the first publish
+  must be run locally by the owner, then the trusted publisher (repo
+  `Aaryan-Kapoor/Surface`, workflow `ci.yml`) added in the surface-display
+  package settings on npmjs.com.
 
 ## Operational Notes
 

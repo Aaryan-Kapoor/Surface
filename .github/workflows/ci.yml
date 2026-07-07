@@ -112,7 +112,11 @@ jobs:
       - run: npm audit --audit-level=high
 
   # Publishes only from a v* tag, only when every job above is green.
-  # Requires the NPM_TOKEN repo secret (npm automation token for surface-display).
+  # Tokenless: npm trusted publishing via OIDC (id-token: write). Configure
+  # this repo + workflow as the trusted publisher in the surface-display
+  # package settings on npmjs.com — the first-ever publish must be done
+  # locally, since npm only lets existing packages add a trusted publisher.
+  # Provenance is attested automatically on trusted publishes.
   publish:
     name: Publish to npm
     needs: [package, test, service-smoke, audit]
@@ -128,6 +132,8 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: https://registry.npmjs.org
+      - name: Update npm (OIDC trusted publishing needs >= 11.5.1)
+        run: npm install -g npm@latest
       - run: npm ci
       - name: Tag must match package.json version
         run: |
@@ -139,6 +145,4 @@ jobs:
               process.exit(1);
             }
           "
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --access public

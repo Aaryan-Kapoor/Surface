@@ -44,9 +44,13 @@ Before cutting a release:
    section as release notes.
 5. Pushing the `vX.Y.Z` tag triggers the `publish` job in CI: after the full
    matrix (build, tests on Linux/macOS/Windows, service-install smoke on
-   macOS/Windows, audit) passes, it publishes `surface-display` to npm with
-   provenance. The job requires the tag to match `package.json` and the
-   `NPM_TOKEN` repo secret to be set.
+   macOS/Windows, audit) passes, it publishes `surface-display` to npm. The
+   job requires the tag to match `package.json`. Publishing is tokenless via
+   npm trusted publishing (GitHub OIDC), which also attests provenance
+   automatically; the trusted publisher (this repo + `ci.yml`) is configured
+   in the package settings on npmjs.com. The first-ever publish of the
+   package was necessarily done locally — npm only lets an existing package
+   add a trusted publisher.
 
 ## Security
 
