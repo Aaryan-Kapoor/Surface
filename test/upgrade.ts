@@ -119,7 +119,8 @@ try {
 
   // ── a wrong symlink is repaired ──
   fs.unlinkSync(agentsLink);
-  fs.symlinkSync(path.join(home, ".foreign"), agentsLink, "dir");
+  // junction on win32: dir symlinks can need elevation there (matches production linking)
+  fs.symlinkSync(path.join(home, ".foreign"), agentsLink, process.platform === "win32" ? "junction" : "dir");
   const repaired = await run(["skill", "install", "--json"]);
   const repairedLink = JSON.parse(repaired.stdout).links.find((l: any) => l.path === agentsLink);
   assert.equal(repairedLink.mode, "linked", "misdirected symlink is repointed");
