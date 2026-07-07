@@ -70,10 +70,13 @@ test("launchd plist: label, xml-escaped args, keepalive-on-failure", () => {
   assert.ok(!plist.includes("pkg & co")); // raw ampersand must never survive
 });
 
-test("windows script: conhost wrapper, escaped quotes, safe task name", () => {
+test("windows script: conhost wrapper, quoted args, safe task name", () => {
   const script = windowsInstallScript(hostile);
   assert.ok(script.includes("New-ScheduledTaskAction -Execute 'conhost.exe'"));
-  assert.ok(script.includes('--headless \\"/opt/node bin/node'));
+  // The -Argument value is one single-quoted PowerShell string; each path is
+  // double-quoted inside it, flags are bare, and no backslash escaping exists.
+  assert.ok(script.includes(`-Argument '--headless "/opt/node bin/node "20"" "/data/pkg & co/dist/server.mjs" --log-file "/home/o''brien/.surface/logs/surface-test.log"`));
+  assert.ok(!script.includes("\\\""));
   assert.ok(script.includes("Register-ScheduledTask -TaskName 'surface-test'"));
   assert.ok(script.includes("-WorkingDirectory '/home/o''brien/.surface'"));
   assert.ok(script.includes("-AtLogOn"));

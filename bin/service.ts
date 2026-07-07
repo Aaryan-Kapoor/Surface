@@ -109,12 +109,14 @@ export function windowsInstallScript(cfg: ServiceConfig): string {
   // conhost --headless keeps the console window from appearing at logon; the
   // task itself runs node directly underneath it. Scheduled Tasks cannot set
   // environment variables, which is why the server takes flags (serverArgs).
-  const inner = serverArgs(cfg)
-    .map((a) => `\\"${a}\\"`)
+  // The -Argument value is a Windows process command line: each path rides in
+  // literal double quotes. The whole thing is a single-quoted PowerShell
+  // string (psQuote), so no backslash escaping is involved anywhere.
+  const argument = ["--headless", cfg.node, ...serverArgs(cfg)]
+    .map((a) => (a.startsWith("--") ? a : `"${a}"`))
     .join(" ");
-  const argument = `--headless \\"${cfg.node}\\" ${inner}`;
   return [
-    `$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument "${argument}" -WorkingDirectory ${psQuote(cfg.dataDir)}`,
+    `$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument ${psQuote(argument)} -WorkingDirectory ${psQuote(cfg.dataDir)}`,
     `$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME`,
     `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
     `Register-ScheduledTask -TaskName ${psQuote(cfg.name)} -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
@@ -166,6 +168,21 @@ const linuxBackend: Backend = {
   install(cfg) {
     const unitPath = systemdUnitPath(cfg.name);
     fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+    // Pre-`surface service` units ran from the repo clone, where dotenv read
+    // the repo .env. The new unit runs from the data dir — warn when we're
+    // about to orphan a .env the old working directory was supplying.
+    try {
+      const old = fs.readFileSync(unitPath, "utf8");
+      const oldCwd = old.match(/^WorkingDirectory=(.+)$/m)?.[1]?.trim();
+      if (oldCwd && path.resolve(oldCwd) !== path.resolve(cfg.dataDir) && fs.existsSync(path.join(oldCwd, ".env"))) {
+        console.error(
+          `note: the previous unit ran from ${oldCwd}, which has a .env. ` +
+          `The service now runs from ${cfg.dataDir} — copy that .env to ${path.join(cfg.dataDir, ".env")} to keep its settings.`,
+        );
+      }
+    } catch {
+      // no previous unit
+    }
     fs.writeFileSync(unitPath, systemdUnit(cfg));
     mustRun("systemctl", ["--user", "daemon-reload"], "systemd daemon-reload");
     mustRun("systemctl", ["--user", "enable", "--now", `${cfg.name}.service`], "systemd enable --now");
@@ -231,6 +248,9 @@ const darwinBackend: Backend = {
     mustRun("launchctl", ["bootout", launchdTarget(cfg.name)], "launchctl bootout");
   },
   restart(cfg) {
+    // After `stop` the agent is unloaded and there is no target to kickstart;
+    // bootstrap first (a no-op error when already loaded), then kick.
+    run("launchctl", ["bootstrap", launchdDomain(), plistPath(cfg.name)]);
     mustRun("launchctl", ["kickstart", "-k", launchdTarget(cfg.name)], "launchctl kickstart -k");
   },
   status(cfg) {
@@ -246,7 +266,10 @@ const darwinBackend: Backend = {
 };
 
 function powershell(script: string): RunResult {
-  return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+  // -EncodedCommand sidesteps every layer of Windows command-line re-quoting:
+  // the script arrives byte-identical no matter what characters it contains.
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  return run("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]);
 }
 
 const windowsBackend: Backend = {
@@ -331,8 +354,19 @@ function probeTcp(port: number, host = "127.0.0.1"): Promise<boolean> {
   });
 }
 
-export async function checkHealth(port: number): Promise<HealthReport> {
-  const url = `http://127.0.0.1:${port}/healthz`;
+// A concrete --bind address must be probed where the server actually listens;
+// wildcard binds are reachable on loopback anyway.
+export function healthHost(bind?: string): string {
+  if (!bind || bind === "0.0.0.0" || bind === "::" || bind === "[::]") return "127.0.0.1";
+  return bind;
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+export async function checkHealth(port: number, host = "127.0.0.1"): Promise<HealthReport> {
+  const url = `http://${hostForUrl(host)}:${port}/healthz`;
   let body: any;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
@@ -342,7 +376,7 @@ export async function checkHealth(port: number): Promise<HealthReport> {
     return { ok: false, url, error: err?.cause?.code || err?.message || String(err) };
   }
   if (body?.ok !== true) return { ok: false, url, error: "healthz returned ok !== true" };
-  const contentOk = typeof body.content_port === "number" ? await probeTcp(body.content_port) : false;
+  const contentOk = typeof body.content_port === "number" ? await probeTcp(body.content_port, host) : false;
   return {
     ok: contentOk,
     url,
@@ -356,11 +390,11 @@ export async function checkHealth(port: number): Promise<HealthReport> {
   };
 }
 
-async function waitHealthy(port: number, timeoutSec: number): Promise<HealthReport> {
+async function waitHealthy(port: number, timeoutSec: number, host = "127.0.0.1"): Promise<HealthReport> {
   const deadline = Date.now() + timeoutSec * 1000;
   let last: HealthReport = { ok: false, url: "", error: "not attempted" };
   for (;;) {
-    last = await checkHealth(port);
+    last = await checkHealth(port, host);
     if (last.ok || Date.now() > deadline) return last;
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -475,7 +509,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
       if (!existing.registered) {
         // A live server we don't supervise would fight this install for the
         // ports. Refuse rather than sabotage it — the Codex-on-Windows lesson.
-        const already = await checkHealth(cfg.port);
+        const already = await checkHealth(cfg.port, healthHost(cfg.bind));
         if (already.ok || (already.error && !/ECONNREFUSED|fetch failed|timeout/i.test(String(already.error)))) {
           throw new Error(
             `something is already answering on 127.0.0.1:${cfg.port}` +
@@ -494,7 +528,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         }
       }
       b.install(cfg);
-      const health = await waitHealthy(cfg.port, timeoutSec);
+      const health = await waitHealthy(cfg.port, timeoutSec, healthHost(cfg.bind));
       if (!health.ok) {
         const tail = readLastLines(cfg.logFile, 10);
         console.error(`service registered but not healthy after ${timeoutSec}s: ${health.error}`);
@@ -528,7 +562,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
     }
     case "restart": {
       backend().restart(cfg);
-      const health = await waitHealthy(cfg.port, timeoutSec);
+      const health = await waitHealthy(cfg.port, timeoutSec, healthHost(cfg.bind));
       if (!health.ok) {
         console.error(`restarted but not healthy after ${timeoutSec}s: ${health.error}`);
         process.exit(1);
@@ -548,7 +582,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
       process.exit(st.registered && /running|active/i.test(st.state) ? 0 : 1);
     }
     case "health": {
-      const health = await checkHealth(cfg.port);
+      const health = await checkHealth(cfg.port, healthHost(cfg.bind));
       if (json) {
         console.log(JSON.stringify(health, null, 2));
       } else if (health.ok) {
