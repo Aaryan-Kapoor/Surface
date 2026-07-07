@@ -470,6 +470,9 @@ export const SERVICE_HELP = [
   "Options: --name <svc> --port <n> --content-port <n> --bind <addr> --data-dir <dir>",
   "         --timeout <s> (install/restart health gate, default 20) --json --lines <n> --follow",
   "",
+  "install remembers its flags per --name (~/.surface/services/<name>.json);",
+  "every other subcommand reuses them, so flags never need repeating.",
+  "",
   "Backends: systemd user unit (Linux), launchd LaunchAgent (macOS), Scheduled Task (Windows).",
 ].join("\n");
 
@@ -478,20 +481,65 @@ interface ServiceCtx {
   flags: Record<string, string | boolean>;
 }
 
+// `install` remembers its resolved flags here so every later subcommand
+// (stop, uninstall, logs, health, …) operates on the service as installed —
+// nobody should have to repeat --port/--data-dir to tear down what they set
+// up. The registry lives in the *default* data dir on purpose: it's CLI-side
+// metadata keyed by --name, findable without knowing the custom data dir.
+function savedConfigPath(name: string): string {
+  return path.join(os.homedir(), ".surface", "services", `${name}.json`);
+}
+
+interface SavedConfig {
+  port?: number;
+  contentPort?: number;
+  bind?: string;
+  dataDir?: string;
+}
+
+function loadSavedConfig(name: string): SavedConfig {
+  try {
+    return JSON.parse(fs.readFileSync(savedConfigPath(name), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+export function saveServiceConfig(cfg: ServiceConfig): void {
+  const file = savedConfigPath(cfg.name);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const saved: SavedConfig = {
+    port: cfg.port,
+    contentPort: cfg.contentPort,
+    bind: cfg.bind,
+    dataDir: cfg.dataDir,
+  };
+  fs.writeFileSync(file, JSON.stringify(saved, null, 2) + "\n");
+}
+
+function removeServiceConfig(name: string): void {
+  fs.rmSync(savedConfigPath(name), { force: true });
+}
+
 function resolveConfig(flags: Record<string, string | boolean>): ServiceConfig {
   const name = typeof flags.name === "string" ? flags.name : "surface";
   if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/.test(name)) {
     throw new Error(`invalid --name "${name}" (letters, digits, hyphens)`);
   }
+  const saved = loadSavedConfig(name);
   const dataDir = typeof flags["data-dir"] === "string"
     ? path.resolve(String(flags["data-dir"]))
-    : process.env.SURFACE_DATA_DIR
-      ? path.resolve(process.env.SURFACE_DATA_DIR)
-      : path.join(os.homedir(), ".surface");
+    : saved.dataDir
+      ? saved.dataDir
+      : process.env.SURFACE_DATA_DIR
+        ? path.resolve(process.env.SURFACE_DATA_DIR)
+        : path.join(os.homedir(), ".surface");
   const bundled = path.join(__dirname, "server.mjs");
   const entry = fs.existsSync(bundled) ? bundled : path.join(__dirname, "..", "dist", "server.mjs");
-  const port = typeof flags.port === "string" ? Number(flags.port) : 3000;
-  const contentPort = typeof flags["content-port"] === "string" ? Number(flags["content-port"]) : undefined;
+  const port = typeof flags.port === "string" ? Number(flags.port) : saved.port ?? 3000;
+  const contentPort = typeof flags["content-port"] === "string"
+    ? Number(flags["content-port"])
+    : saved.contentPort;
   return {
     name,
     node: process.execPath,
@@ -500,7 +548,7 @@ function resolveConfig(flags: Record<string, string | boolean>): ServiceConfig {
     logFile: path.join(dataDir, "logs", `${name}.log`),
     port,
     contentPort,
-    bind: typeof flags.bind === "string" ? flags.bind : undefined,
+    bind: typeof flags.bind === "string" ? flags.bind : saved.bind,
   };
 }
 
@@ -545,6 +593,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         }
       }
       b.install(cfg);
+      saveServiceConfig(cfg);
       const health = await waitHealthy(cfg.port, timeoutSec, healthHost(cfg.bind));
       if (!health.ok) {
         const tail = readLastLines(cfg.logFile, 10);
@@ -564,6 +613,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
     }
     case "uninstall": {
       backend().uninstall(cfg);
+      removeServiceConfig(cfg.name);
       console.log(`surface service "${cfg.name}" removed. Data kept at ${cfg.dataDir}.`);
       return;
     }

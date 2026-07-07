@@ -161,12 +161,15 @@ if (!userSystemdAvailable()) {
       assert.equal(r.code, 1, r.output);
       assert.ok(r.output.includes("already answering"), r.output);
     });
-    test("live: uninstall stops the server and health then fails", () => {
-      const r = cli(["service", "uninstall", ...common]);
+    test("live: stop/uninstall need only --name — install-time flags are remembered", () => {
+      // The CI-on-Windows lesson: teardown must find the real port/data-dir
+      // from ~/.surface/services/<name>.json, not from repeated flags.
+      const r = cli(["service", "uninstall", "--name", NAME]);
       assert.equal(r.code, 0, r.output);
-      const health = cli(["service", "health", ...common]);
+      assert.ok(r.output.includes(dataDir), r.output); // proves saved dataDir was used
+      const health = cli(["service", "health", "--port", String(PORT)]);
       assert.equal(health.code, 1, health.output);
-      const status = cli(["service", "status", ...common]);
+      const status = cli(["service", "status", "--name", NAME]);
       assert.equal(status.code, 1, status.output);
       assert.ok(status.output.includes("registered : no"), status.output);
     });

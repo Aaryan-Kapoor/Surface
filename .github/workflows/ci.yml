@@ -90,10 +90,11 @@ jobs:
           set -euxo pipefail
           surface --version
           surface service install --port 3456 --content-port 3556 --data-dir "$RUNNER_TEMP/surface-data" --timeout 90
-          surface service health --port 3456
+          # No flags below: install persisted them per-name, teardown must find them.
+          surface service health
           surface service status
-          surface service logs --data-dir "$RUNNER_TEMP/surface-data"
-          surface service uninstall --data-dir "$RUNNER_TEMP/surface-data"
+          surface service logs
+          surface service uninstall
           if surface service health --port 3456; then
             echo "service still answering after uninstall" >&2
             exit 1
