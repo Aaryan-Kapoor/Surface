@@ -1,8 +1,21 @@
 {
-  "name": "surface",
-  "version": "0.1.0",
+  "name": "surface-display",
+  "version": "0.2.1",
   "description": "The last app. A universal display for AI agents.",
+  "license": "MIT",
   "type": "module",
+  "homepage": "https://github.com/Aaryan-Kapoor/Surface#readme",
+  "bugs": {
+    "url": "https://github.com/Aaryan-Kapoor/Surface/issues"
+  },
+  "keywords": [
+    "agent",
+    "display",
+    "cli",
+    "claude-code",
+    "artifacts",
+    "dashboard"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/Aaryan-Kapoor/Surface.git"
@@ -11,15 +24,12 @@
     "node": ">=20"
   },
   "files": [
-    "bin/",
     "client/",
     "dist/",
     "docs/",
     "examples/",
-    "server/",
     "templates/",
     "INSTALL_FOR_AGENTS.md",
-    "README.md",
     "SECURITY.md",
     "SKILL.md"
   ],
@@ -27,9 +37,10 @@
     "dev": "tsx server/index.ts",
     "service": "tsx server/index.ts",
     "cli": "tsx bin/surface.ts",
-    "build:cli": "node scripts/build-cli.mjs",
-    "prepare": "npm run build:cli",
-    "pretest": "npm run build:cli",
+    "build": "node scripts/build.mjs",
+    "build:cli": "node scripts/build.mjs",
+    "prepare": "npm run build",
+    "pretest": "npm run build",
     "test": "tsx test/run-all.ts",
     "test:artifacts": "tsx test/artifacts.ts",
     "test:auth": "tsx test/auth.ts",
@@ -40,6 +51,7 @@
     "test:app-routing": "tsx test/appRouting.ts",
     "test:bindings": "tsx test/bindings.ts",
     "test:content-origin": "tsx test/contentOrigin.ts",
+    "test:service": "tsx test/service.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {

@@ -6,9 +6,9 @@ Universal display for AI agents. Agents push content via a single shared CLI (`s
 
 - **Server**: Express 5 + SQLite (better-sqlite3) + SSE live updates. Routers per concern in `server/routes/`.
 - **Client**: Vanilla JS PWA, hash routing, sandboxed iframes via real routes. `client/surface.js` is the runtime injected into surface HTML.
-- **CLI** (`bin/surface.ts`): canonical agent client; bundled to `dist/surface.mjs` by `npm run build:cli` (runs on install via `prepare`); the npm `surface` bin points at the bundle.
+- **CLI** (`bin/surface.ts`): canonical agent client; bundled to `dist/surface.mjs` by `npm run build` (runs on install via `prepare`; also bundles the server to `dist/server.mjs`); the npm `surface` bin points at the bundle. Published as `surface-display`.
 - **Data**: `~/.surface/` (`db.sqlite` + `artifacts/` + `logs/` + `templates/`). Override with `SURFACE_DATA_DIR`.
-- **Service**: Surface should run once as a Linux systemd user service, bound to `127.0.0.1`.
+- **Service**: Surface should run once as a per-user supervised service bound to `127.0.0.1` — `surface service install` picks the native backend (systemd user unit / launchd agent / Windows Scheduled Task), health-gates the start, and logs to `~/.surface/logs/`.
 - **Migrations**: SQLite `PRAGMA user_version` via `server/migrations.ts`; fresh-start baseline = v10. Pre-baseline DBs are archived to `db.sqlite.bak` at boot, never migrated.
 - **Templates**: built-ins in `templates/` (ask, stream, video, board, doc); resolution project `.surface/templates` → `~/.surface/templates` → built-in.
 - **MCP** (archived in `archived/mcp.ts`): not installed by default; needs `npm i @modelcontextprotocol/sdk` to run.
@@ -16,7 +16,7 @@ Universal display for AI agents. Agents push content via a single shared CLI (`s
 ## Commands
 
 - `npm run dev` — start server on 127.0.0.1:3000
-- `npm run service` — service entrypoint used by systemd
+- `npm run service` — service entrypoint from source (production supervisors exec `dist/server.mjs` via `surface service install`)
 - `npm run cli` — invoke the CLI from source without `npm link`
 - `npm run test:artifacts` — HTTP regression suite (needs a running server; use an isolated `SURFACE_DATA_DIR` + `PORT`)
 - `npm run test:auth` — two-plane trust-model acceptance tests (spawns its own servers)

@@ -33,24 +33,46 @@ Read it first (`cat ~/.surface/install-state.json`); create it with the defaults
 
 If `service` is `"running"` and `skill_saved_to` points at a file that still exists and `tutorial` is `"complete"` or `"skipped"`, you are done. Skip to "Sanity check" at the bottom.
 
-## Step 1 — Check the service
+## Step 1 — Install the CLI and check the service
+
+Both commands below are identical in bash and PowerShell on Linux, macOS, and
+Windows. There is no per-platform install path.
 
 ```bash
-curl -fsS http://127.0.0.1:3000/artifacts >/dev/null && echo "Surface is running"
-systemctl --user status surface.service --no-pager 2>/dev/null
+surface service health || npm install -g surface-display
 ```
 
-If the HTTP check passes: set `service: "running"` and continue to Step 2.
+If `surface service health` exits 0: set `service: "running"` and continue to Step 2.
 
-If not, ask the user before installing:
+If the service is not healthy, ask the user before installing:
 
-> I don't see a running Surface service. Want me to install and start the systemd user service for this clone?
+> I don't see a running Surface service. Want me to install and start it as a
+> background service (systemd user unit on Linux, launchd agent on macOS,
+> Scheduled Task on Windows)?
 
-If yes: `./scripts/install-systemd-user-service.sh`, then re-run the HTTP check. If still failing, set `service: "failed"` and `notes: <reason>` and stop — surface the failure to the user.
+If yes:
+
+```bash
+surface service install
+```
+
+The install is health-gated: it registers the native supervisor, starts the
+server, and succeeds only once `/healthz` answers and the content plane
+accepts connections. On success set `service: "running"`. If it fails, it
+prints the last log lines — set `service: "failed"` and `notes: <reason>` and
+stop; surface the failure to the user.
+
+**Never run the server yourself as a fallback** — no `npm run service`, no
+hidden background process, no improvised daemon. An unsupervised server
+doesn't survive reboot, is invisible to the user, and squats the ports so
+every later `surface service install` fails its health gate. If
+`surface service install` doesn't work on this machine, `failed` + stop is
+the correct outcome.
 
 Surface also binds a mandatory content listener on `SURFACE_CONTENT_PORT`
 (default `3100`). If startup fails with a content-origin bind error, free that
-port or set a unique `SURFACE_CONTENT_PORT`; it must differ from `PORT`.
+port or pass `surface service install --content-port <n>`; it must differ
+from the app port.
 
 If the user declines: set `service: "not_installed"` and stop. Don't proceed without a running service.
 
@@ -58,7 +80,7 @@ If the user declines: set `service: "not_installed"` and stop. Don't proceed wit
 
 ## Step 2 — Save SKILL.md to your skills directory
 
-`SKILL.md` is at the repo root. Copy it into your own agent's skill directory so you can read it on future sessions without re-cloning.
+`SKILL.md` ships inside the installed package (`"$(npm root -g)/surface-display/SKILL.md"`; repo root if you're working from a clone). Copy it into your own agent's skill directory so you can read it on future sessions.
 
 Known agent skill directories:
 
@@ -68,7 +90,7 @@ Known agent skill directories:
 
 ```bash
 mkdir -p ~/.claude/skills/surface
-cp SKILL.md ~/.claude/skills/surface/SKILL.md
+cp "$(npm root -g)/surface-display/SKILL.md" ~/.claude/skills/surface/SKILL.md
 ```
 
 Set `skill_saved_to: "<absolute path>"`.
@@ -115,21 +137,16 @@ When everything above is green, finish the state file:
 ## Sanity check (always run)
 
 ```bash
-surface --help          # CLI is on PATH (run npm link from the clone if not)
-surface list            # service reachable
-surface status          # per-device display state
-surface actions         # your inbox — drain it (see SKILL.md)
+surface --version        # CLI is on PATH
+surface service health   # service reachable + content plane up (exit 0)
+surface list             # API answers
+surface status           # per-device display state
+surface actions          # your inbox — drain it (see SKILL.md)
 ```
 
-If `surface` is not on PATH:
-
-```bash
-cd /path/to/Surface
-npm install             # also builds the single-file CLI bundle (dist/surface.mjs)
-npm link
-```
-
-Alternative without `npm link`: invoke via `node /path/to/Surface/dist/surface.mjs` or `npx tsx /path/to/Surface/bin/surface.ts`.
+If `surface` is not on PATH: `npm install -g surface-display`. (Working from a
+repo clone instead: `npm install && npm link` — the `prepare` hook builds
+`dist/surface.mjs`.)
 
 ## What to use the CLI for
 
@@ -165,16 +182,16 @@ Per-surface webhooks (with retry) are usually better: `surface bind <id> --webho
 ## Upgrading
 
 ```bash
-cd /path/to/Surface
-git pull
-npm install
-npx tsc --noEmit
-npm run test:artifacts
-systemctl --user restart surface.service
+npm update -g surface-display
+surface service restart      # health-gated; the service keeps running old code until restarted
+surface service health       # warns if CLI and service versions still diverge
 ```
 
-If `SKILL.md` changed, re-copy it to the path recorded in `skill_saved_to`
-before restarting your work.
+Re-copy `SKILL.md` to the path recorded in `skill_saved_to` after upgrading —
+`surface service health` catching a version change is your cue.
+
+(Repo clone instead: `git pull && npm install && npm test`, then
+`surface service restart`.)
 
 Ask before restarting if the user has active work on the display.
 

@@ -3,40 +3,67 @@
 **Status:** Shipped (2026-06)
 **Code:** `README.md`, `INSTALL_FOR_AGENTS.md`, `package.json`, `server/index.ts`, `server/startupAccess.ts`, `server/paths.ts`, `scripts/install-systemd-user-service.sh`
 
-Surface is a single long-running Node service plus a vanilla-JS PWA, with a `surface` CLI as the agent client. The server and client have no build step; the CLI is bundled to a single file. This page covers requirements, running it (dev and as a systemd user service), the environment variables, startup pairing output, the agent bootstrap flow, and demo seeding.
+Surface is a single long-running Node service plus a vanilla-JS PWA, with a `surface` CLI as the agent client. The server and client have no build step in the browser sense; both the CLI and the server are bundled to single files in `dist/` (`scripts/build.mjs`, run by the `prepare` hook). This page covers requirements, installing (npm package and repo clone), the service supervisor, the environment variables, startup pairing output, the agent bootstrap flow, and demo seeding.
 
 ## Requirements
 
-- **Node 22+** (`@types/node` and `tsconfig` target ES2022; the server runs directly with `tsx` — only the CLI is bundled, to `dist/surface.mjs`).
-- **`better-sqlite3`** — a native module, compiled on `npm install`.
+- **Node 20+** (`engines` in `package.json`; `tsconfig` targets ES2022).
+- **`better-sqlite3`** — a native module, installed as a regular dependency (it stays external to the server bundle).
 - **Chrome/Chromium (optional)** — only needed for card thumbnails. Without it, dashboards fall back to SVG/icon placeholders (`server/index.ts`, `server/thumbs.ts`). Override the binary with `SURFACE_CHROME`.
 
-## Running
+## Installing
+
+The published package is **`surface-display`** (the command is still `surface`):
+
+```bash
+npm install -g surface-display
+surface service install    # register + start the per-user service, health-gated
+```
+
+Working from a repo clone instead:
 
 ```bash
 git clone https://github.com/Aaryan-Kapoor/Surface.git
 cd Surface
-npm install
-npm run dev        # tsx server/index.ts → app :3000, content :3100
+npm install        # prepare hook bundles CLI + server into dist/
+npm run dev        # foreground dev server → app :3000, content :3100
+npm link           # optional: local `surface` on $PATH
 ```
 
-`npm run service` is the same entrypoint (`tsx server/index.ts`), used by the systemd unit. Make the CLI available on `$PATH` with `npm link` — the npm `bin` entry points at the single-file bundle `dist/surface.mjs`, built automatically by the `prepare` hook (`npm run build:cli`). The bundle runs with plain `node`, so the installed `surface` command needs no repo toolchain; `npm run cli` still runs straight from source.
+### The service supervisor (`surface service`)
 
-### systemd user service
-
-`scripts/install-systemd-user-service.sh` writes `~/.config/systemd/user/surface.service`, runs `daemon-reload`, and `enable --now`. The generated unit pins `WorkingDirectory` to the clone, sets `NODE_ENV=production`, `SURFACE_BIND=127.0.0.1`, `SURFACE_URL=http://127.0.0.1:3000`, `ExecStart=npm run service`, and `Restart=on-failure`. The service name is overridable with `SURFACE_SERVICE_NAME` (default `surface`).
+`surface service install` writes and starts the native per-user supervisor —
+a systemd user unit on Linux (`~/.config/systemd/user/<name>.service`), a
+launchd LaunchAgent on macOS (`~/Library/LaunchAgents/com.surface-display.<name>.plist`),
+or a Scheduled Task at logon on Windows. All three exec the same
+`node dist/server.mjs --log-file … [--port …]` argv, restart on failure
+(Linux/macOS natively; Windows via task restart settings), and log to
+`~/.surface/logs/<name>.log`, which `surface service logs` reads identically
+everywhere. The install succeeds only once `/healthz` answers and the content
+plane accepts connections; if another server already holds the port it
+refuses rather than fight it.
 
 ```bash
-./scripts/install-systemd-user-service.sh
-systemctl --user status surface.service --no-pager
-journalctl --user -u surface.service -f
+surface service health         # /healthz + content-plane probe; exit 0/1; --json
+surface service status         # supervisor view: registered? running? where?
+surface service logs --follow
+surface service start|stop|restart|uninstall
+surface service install --name surface-test --port 3457 --content-port 3557 --data-dir /tmp/x   # isolated second instance
 ```
 
-The intended posture is to run Surface **once** as this user service — agents reuse the running instance rather than starting a second one (`INSTALL_FOR_AGENTS.md`, operating rules).
+`scripts/install-systemd-user-service.sh` survives as a thin wrapper over
+`surface service install` (it honors `SURFACE_SERVICE_NAME`).
+
+The intended posture is to run Surface **once** as this user service — agents reuse the running instance rather than starting a second one (`INSTALL_FOR_AGENTS.md`, operating rules). Agents must never improvise a hidden background server when an install fails; recording `failed` and stopping is the sanctioned outcome.
 
 ## Environment variables
 
-Read from `process.env` (via `dotenv/config`, so a repo-root `.env` works):
+Read from `process.env` (via `dotenv/config`, so a `.env` in the server's
+working directory works — the service backends set that to the data dir).
+Supervisors that cannot set environment variables (Windows Scheduled Tasks)
+pass flags instead: the server maps `--port`, `--content-port`, `--bind`,
+`--data-dir`, and `--log-file` onto the corresponding variables at startup,
+and flags win over `.env` (`server/index.ts`).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -57,6 +84,7 @@ Read from `process.env` (via `dotenv/config`, so a repo-root `.env` works):
 | `OPENROUTER_MODEL` | `anthropic/claude-sonnet-4` | Default model for `/api/chat`. |
 | `SURFACE_CHAT_RATE_LIMIT` | `30` | Per-minute rate limit on `/api/chat`. |
 | `SURFACE_DATA_DIR` | `~/.surface` | Data directory (`db.sqlite` + `artifacts/`, plus `auth-secret`, `install-state.json`, `logs/`, `templates/`) (`server/paths.ts`). |
+| `SURFACE_LOG_FILE` | — | Tee server stdout/stderr into this append-only file with timestamps (`server/logging.ts`); how every `surface service` backend captures logs. |
 | `SURFACE_WORKSPACE_DIR` | — | Legacy override for the directory containing `artifacts/` (`server/paths.ts`). |
 
 The CLI itself reads `SURFACE_URL` and `SURFACE_SESSION` — see [../core/cli.md](../core/cli.md).
@@ -87,7 +115,7 @@ The canonical first-run routine for agents. Install state lives at **`~/.surface
 - `surface_version`, `installed_at` — stamped on first complete install.
 - `notes` — free-form for the next run.
 
-The flow: check the service (offer to install the systemd unit), copy `SKILL.md` into the agent's skills directory, optionally run the tutorial, then stamp the state. An early-exit clause lets re-runs skip when the service is running, `SKILL.md` is in place, and the tutorial is done/skipped.
+The flow: check the service with `surface service health` (offer `surface service install` if absent — never an improvised background process), copy `SKILL.md` into the agent's skills directory, optionally run the tutorial, then stamp the state. An early-exit clause lets re-runs skip when the service is running, `SKILL.md` is in place, and the tutorial is done/skipped.
 
 ## Demo seeding
 

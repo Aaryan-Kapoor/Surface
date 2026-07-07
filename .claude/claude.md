@@ -6,7 +6,7 @@ Universal display for AI agents. Agents push surfaces via the `surface` CLI (can
 
 - **Server**: Express 5 + SQLite (better-sqlite3) + SSE; routers in `server/routes/`
 - **Client**: Vanilla JS PWA + `client/surface.js` runtime injected into surface HTML
-- **CLI**: `bin/surface.ts`, bundled to `dist/surface.mjs` on install (`prepare` → `build:cli`)
+- **CLI**: `bin/surface.ts`, bundled to `dist/surface.mjs` on install (`prepare` → `npm run build`, which also bundles `server/index.ts` → `dist/server.mjs`); published to npm as `surface-display`
 - **Agent contract**: `SKILL.md` (when/how) + `INSTALL_FOR_AGENTS.md` (bootstrap; state in `~/.surface/install-state.json`)
 - **Templates**: `templates/` built-ins (ask, stream, video, board, doc); project/user overrides
 - **MCP**: archived at `archived/mcp.ts`; SDK not installed by default

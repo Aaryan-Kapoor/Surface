@@ -3,8 +3,19 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
+import { runService, SERVICE_HELP } from "./service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Works from both entrypoints: bin/../package.json in the repo, dist/../package.json installed.
+function cliVersion(): string {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    return String(pkg.version || "unknown");
+  } catch {
+    return "unknown";
+  }
+}
 
 const BASE = (process.env.SURFACE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
 // Loopback callers need no credential. A remote agent (SSH box, container)
@@ -58,6 +69,9 @@ Commands:
   auth <pairing|session> ... Manage pairing tokens and durable sessions
   seed-demos                 Link every example demo as a tutorial surface (idempotent)
   clear-demos                Hide every surface tagged metadata.demo === true (seed-demos revives them)
+  service <sub>              Manage the background service: install|uninstall|start|stop|
+                             restart|status|health|logs (systemd / launchd / Scheduled Task)
+  version                    Print the installed Surface version (also: --version)
 
 Run "surface <command> --help" for command-specific options.
 
@@ -146,6 +160,12 @@ const COMMANDS: Record<string, CommandSpec> = {
   ].join("\n"), { ttl: DUR, label: STR, "base-url": STR, role: STR }),
   "seed-demos": command("surface seed-demos"),
   "clear-demos": command("surface clear-demos"),
+  service: {
+    help: SERVICE_HELP,
+    flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM },
+    run: (ctx) => runService(ctx),
+  },
+  version: command("surface version"),
 };
 
 const CMD_HELP: Record<string, string> = Object.fromEntries(
@@ -617,6 +637,10 @@ async function main() {
   const cmd = argv[0];
   if (!cmd || cmd === "--help" || cmd === "-h") {
     console.log(HELP);
+    return;
+  }
+  if (cmd === "version" || cmd === "--version" || cmd === "-v") {
+    console.log(cliVersion());
     return;
   }
   const spec = COMMANDS[cmd];
