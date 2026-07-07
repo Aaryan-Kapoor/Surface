@@ -62,23 +62,32 @@ jobs:
         run: bash scripts/check-leaks.sh
 
   # The install path a real user hits: global-install the packed tarball, then
-  # surface service install → health → logs → uninstall against the native
-  # supervisor (Scheduled Task on Windows, launchd on macOS). Linux user
-  # systemd has no session on hosted runners; the systemd loop runs in
-  # test/service.ts on developer machines instead.
+  # surface service install → health → logs → uninstall against the REAL native
+  # supervisor on every OS — Scheduled Task on Windows, launchd on macOS, and a
+  # real systemd user manager on Linux (booted via loginctl enable-linger,
+  # since hosted runners have no login session). Nothing is mocked.
   service-smoke:
     name: Service smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - name: Boot a user systemd manager (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo loginctl enable-linger "$(whoami)"
+          for i in $(seq 1 30); do
+            [ -S "/run/user/$(id -u)/bus" ] && break
+            sleep 1
+          done
+          XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user show-environment
       - run: npm ci
       - run: npm pack
       - name: Global-install the tarball
@@ -88,6 +97,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+          fi
           surface --version
           surface service install --port 3456 --content-port 3556 --data-dir "$RUNNER_TEMP/surface-data" --timeout 90
           # No flags below: install persisted them per-name, teardown must find them.
