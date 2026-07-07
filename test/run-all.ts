@@ -9,6 +9,7 @@ const suites = [
   "test:thumbs",
   "test:auth",
   "test:content-origin",
+  "test:service",
   "test:bindings",
   "test:artifacts",
   "test:e2e",

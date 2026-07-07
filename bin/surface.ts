@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
+import { runService, SERVICE_HELP } from "./service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -68,6 +69,8 @@ Commands:
   auth <pairing|session> ... Manage pairing tokens and durable sessions
   seed-demos                 Link every example demo as a tutorial surface (idempotent)
   clear-demos                Hide every surface tagged metadata.demo === true (seed-demos revives them)
+  service <sub>              Manage the background service: install|uninstall|start|stop|
+                             restart|status|health|logs (systemd / launchd / Scheduled Task)
   version                    Print the installed Surface version (also: --version)
 
 Run "surface <command> --help" for command-specific options.
@@ -157,6 +160,11 @@ const COMMANDS: Record<string, CommandSpec> = {
   ].join("\n"), { ttl: DUR, label: STR, "base-url": STR, role: STR }),
   "seed-demos": command("surface seed-demos"),
   "clear-demos": command("surface clear-demos"),
+  service: {
+    help: SERVICE_HELP,
+    flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM },
+    run: (ctx) => runService(ctx),
+  },
   version: command("surface version"),
 };
 

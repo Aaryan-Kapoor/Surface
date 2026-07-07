@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initDb, getDb, closeDb } from "./db.js";
@@ -16,8 +17,32 @@ import {
 } from "./startupAccess.js";
 import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
 import { closeSSEClients } from "./sse.js";
+import { setupFileLogging } from "./logging.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Supervisors that cannot set environment variables (Windows Scheduled Tasks)
+// pass flags instead. Flags win over .env and inherited env. This must run
+// before any config below is read; everything downstream reads env lazily.
+const ARG_TO_ENV: Record<string, string> = {
+  "--port": "PORT",
+  "--content-port": "SURFACE_CONTENT_PORT",
+  "--bind": "SURFACE_BIND",
+  "--data-dir": "SURFACE_DATA_DIR",
+  "--log-file": "SURFACE_LOG_FILE",
+};
+for (let i = 2; i < process.argv.length; i++) {
+  const envName = ARG_TO_ENV[process.argv[i]];
+  const value = process.argv[i + 1];
+  if (!envName || value === undefined) {
+    console.error(`[startup] unknown or valueless argument ${process.argv[i]}. Accepted: ${Object.keys(ARG_TO_ENV).join(" ")}`);
+    process.exit(1);
+  }
+  process.env[envName] = value;
+  i++;
+}
+if (process.env.SURFACE_LOG_FILE) setupFileLogging(process.env.SURFACE_LOG_FILE);
+
 const PORT = Number(process.env.PORT || 3000);
 const BIND = process.env.SURFACE_BIND || "127.0.0.1";
 // Second listener serving the same app as the *untrusted content plane*.
@@ -231,6 +256,36 @@ app.use((req, res, next) => {
   if (isPublicRequest(req)) return next();
 
   res.status(401).json({ error: "Authentication required", bootstrapMethods: ["one-time-token"] });
+});
+
+// Liveness + identity for `surface service health` and the install gate.
+// System plane only: the content port resolves to `device` and gets 403,
+// so a TCP connect on that port is the (sufficient) content-plane probe.
+const STARTED_AT = Date.now();
+let versionCache: string | null = null;
+function serverVersion(): string {
+  if (versionCache) return versionCache;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+    versionCache = String(pkg.version || "unknown");
+  } catch {
+    versionCache = "unknown";
+  }
+  return versionCache;
+}
+app.get("/healthz", (req, res) => {
+  if (req.auth?.role !== "system") {
+    sendError(res, 403, "healthz requires the system plane");
+    return;
+  }
+  res.json({
+    ok: true,
+    version: serverVersion(),
+    pid: process.pid,
+    uptime_seconds: Math.round((Date.now() - STARTED_AT) / 1000),
+    port: PORT,
+    content_port: CONTENT_PORT,
+  });
 });
 
 app.get("/pair", (_req, res) => {
