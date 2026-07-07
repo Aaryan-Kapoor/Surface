@@ -138,6 +138,9 @@ if (!userSystemdAvailable()) {
       assert.equal(health.content_port, CONTENT_PORT);
       assert.equal(health.content_plane_ok, true);
       assert.match(health.version, /^\d+\.\d+\.\d+/);
+      // Upgrade-drift fields ride along in --json (skill copy is absent in this fresh data dir)
+      assert.match(health.cli_version, /^\d+\.\d+\.\d+/);
+      assert.equal(health.skill_copy_state, "missing");
     });
     test("live: status reports registered + running", () => {
       const r = cli(["service", "status", ...common]);

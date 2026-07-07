@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
 import { runService, SERVICE_HELP } from "./service.js";
+import { runSkill, runUpgrade } from "./upgrade.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +72,8 @@ Commands:
   clear-demos                Hide every surface tagged metadata.demo === true (seed-demos revives them)
   service <sub>              Manage the background service: install|uninstall|start|stop|
                              restart|status|health|logs (systemd / launchd / Scheduled Task)
+  skill install              Link SKILL.md into agent skill dirs (canonical copy in the data dir)
+  upgrade                    Update to the latest release, refresh the skill, restart the service
   version                    Print the installed Surface version (also: --version)
 
 Run "surface <command> --help" for command-specific options.
@@ -165,6 +168,30 @@ const COMMANDS: Record<string, CommandSpec> = {
     flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM },
     run: (ctx) => runService(ctx),
   },
+  skill: {
+    help: [
+      "surface skill install [--to <skills-dir>]... [--copy] [--json]",
+      "  Canonical copy: <data-dir>/skills/surface/SKILL.md, linked (junction on Windows) into",
+      "  ~/.agents/skills/surface (open standard: Codex, Cursor, Gemini CLI, Copilot, Zed, Amp,",
+      "  Goose, OpenCode, Roo, Kilo, Windsurf) and ~/.claude/skills/surface (Claude Code).",
+      "  --to adds a harness-native skills dir (e.g. ~/.cline/skills); --copy writes copies",
+      "  instead of links for every target in the run. Idempotent; recorded targets are",
+      "  refreshed by surface upgrade.",
+    ].join("\n"),
+    flags: { to: MULTI, copy: BOOL, json: BOOL },
+    run: (ctx) => runSkill(ctx),
+  },
+  upgrade: {
+    help: [
+      "surface upgrade [--check] [--json] [--timeout <s>] [--name <service>]",
+      "  Everything at once: update surface-display to the latest npm release (global installs),",
+      "  refresh the canonical SKILL.md copy + all recorded skill links, and restart the service",
+      "  if it is running an older version (health-gated). --check reports without changing anything;",
+      "  --name targets a service installed under a non-default name.",
+    ].join("\n"),
+    flags: { check: BOOL, json: BOOL, timeout: NUM, name: STR },
+    run: (ctx) => runUpgrade(ctx),
+  },
   version: command("surface version"),
 };
 
@@ -197,10 +224,11 @@ interface ParsedArgs {
 const BOOLEAN_FLAGS = new Set([
   "help", "json", "no-ack", "no-open", "no-qr", "include-hidden",
   "freetext", "wait", "md", "toc", "autoplay", "loop", "user", "clear",
+  "copy", "check",
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.
-const MULTI_FLAGS = new Set(["param"]);
+const MULTI_FLAGS = new Set(["param", "to"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -397,11 +425,21 @@ async function call(method: string, pathname: string, body?: unknown): Promise<a
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
-  const res = await fetch(`${BASE}${pathname}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${pathname}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch (e: any) {
+    const code = e?.cause?.code || e?.code;
+    throw new Error(
+      `Surface service unreachable at ${BASE}${code ? ` (${code})` : ""} — is it running? ` +
+      `Check: surface service health. Install/start: npm install -g surface-display && surface service install ` +
+      `(see INSTALL_FOR_AGENTS.md).`
+    );
+  }
   const text = await res.text();
   let parsed: any;
   try {

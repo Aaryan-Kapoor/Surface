@@ -2,6 +2,33 @@
 
 All notable changes to Surface are recorded here.
 
+## Unreleased
+
+- New `surface upgrade`: one command that updates `surface-display` to the
+  latest npm release (global installs; dev/local installs get advice instead),
+  refreshes the canonical skill copy plus every recorded skill link, and
+  restarts the service only when it is running an older version
+  (health-gated). `--check` reports without changing anything;
+  `surface service update`/`upgrade` redirect here.
+- New `surface skill install`: keeps one canonical `SKILL.md` at
+  `<data-dir>/skills/surface/` and links it (junction on Windows, managed copy
+  where symlinks are forbidden) into `~/.agents/skills/` — the agentskills.io
+  open standard read by Codex, Cursor, Gemini CLI, Copilot, Zed, Amp, Goose,
+  OpenCode, Roo, Kilo, Windsurf — and `~/.claude/skills/` for Claude Code.
+  `--to` adds harness-native dirs; targets are recorded in
+  `install-state.json` and refreshed by `surface upgrade`. Never touches a
+  skill directory containing files it doesn't own.
+- `surface service health` now also flags a stale/missing skill copy, and the
+  CLI prints an actionable "service unreachable — is it running?" hint (with
+  the install one-liner) instead of a bare `fetch failed` when the service is
+  down.
+- SKILL.md two-way-loop addition: "state is a claim, not an animation" — never
+  patch a status/progress/"running…" for work not actually executed or
+  observed.
+- INSTALL_FOR_AGENTS.md: skill installation and upgrading rewritten around the
+  two new commands; per-harness skill directory list verified against vendor
+  docs (2026-07).
+
 ## 0.2.2 - 2026-07-07
 
 - Fixed Windows `surface service stop`/`uninstall` leaving the server

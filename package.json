@@ -52,6 +52,7 @@
     "test:bindings": "tsx test/bindings.ts",
     "test:content-origin": "tsx test/contentOrigin.ts",
     "test:service": "tsx test/service.ts",
+    "test:upgrade": "tsx test/upgrade.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {

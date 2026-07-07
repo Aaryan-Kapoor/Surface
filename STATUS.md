@@ -60,6 +60,13 @@ bash scripts/check-leaks.sh
 ## Operational Notes
 
 - Data lives in `~/.surface/` unless `SURFACE_DATA_DIR` is set.
+- Skill distribution (2026-07-07): `surface skill install` keeps the canonical
+  `SKILL.md` at `<data-dir>/skills/surface/` and symlinks/junctions it into
+  `~/.agents/skills/` (agentskills.io open standard) + `~/.claude/skills/`
+  (Claude Code reads only its own dir); `surface upgrade` converges package →
+  skill → service in one command. Chosen over `npx skills add` (tracks git
+  master — breaks the version lock between skill text and installed binary)
+  and over linking into `$(npm root -g)` (dangles when nvm switches node).
 - The service is intended to run once as a per-user supervised service bound
   to `127.0.0.1` (`surface service install`; see Distribution above).
 - Pre-baseline SQLite databases are archived to `db.sqlite.bak` at boot and are not row-migrated.

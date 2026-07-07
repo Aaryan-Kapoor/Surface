@@ -10,6 +10,7 @@ const suites = [
   "test:auth",
   "test:content-origin",
   "test:service",
+  "test:upgrade",
   "test:bindings",
   "test:artifacts",
   "test:e2e",
