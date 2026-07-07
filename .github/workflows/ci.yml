@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -11,11 +12,11 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   package:
-    name: Package CLI (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    name: Package (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,8 +31,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm run build:cli
+      - run: npm run build
       - run: node dist/surface.mjs --help
+      - run: node dist/surface.mjs --version
 
   test:
     name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
@@ -59,6 +61,44 @@ jobs:
       - if: runner.os == 'Linux'
         run: bash scripts/check-leaks.sh
 
+  # The install path a real user hits: global-install the packed tarball, then
+  # surface service install → health → logs → uninstall against the native
+  # supervisor (Scheduled Task on Windows, launchd on macOS). Linux user
+  # systemd has no session on hosted runners; the systemd loop runs in
+  # test/service.ts on developer machines instead.
+  service-smoke:
+    name: Service smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm pack
+      - name: Global-install the tarball
+        shell: bash
+        run: npm install -g ./surface-display-*.tgz
+      - name: Install, health-gate, inspect, uninstall
+        shell: bash
+        run: |
+          set -euxo pipefail
+          surface --version
+          surface service install --port 3456 --content-port 3556 --data-dir "$RUNNER_TEMP/surface-data" --timeout 90
+          surface service health --port 3456
+          surface service status
+          surface service logs
+          surface service uninstall --data-dir "$RUNNER_TEMP/surface-data"
+          if surface service health --port 3456; then
+            echo "service still answering after uninstall" >&2
+            exit 1
+          fi
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -70,3 +110,35 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --audit-level=high
+
+  # Publishes only from a v* tag, only when every job above is green.
+  # Requires the NPM_TOKEN repo secret (npm automation token for surface-display).
+  publish:
+    name: Publish to npm
+    needs: [package, test, service-smoke, audit]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Tag must match package.json version
+        run: |
+          node -e "
+            const v = require('./package.json').version;
+            const tag = process.env.GITHUB_REF_NAME;
+            if ('v' + v !== tag) {
+              console.error('tag ' + tag + ' does not match package.json version ' + v);
+              process.exit(1);
+            }
+          "
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
