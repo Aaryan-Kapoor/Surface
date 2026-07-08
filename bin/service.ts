@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import { createHash } from "crypto";
 import fs from "fs";
 import net from "net";
 import os from "os";
@@ -560,12 +561,24 @@ function resolveConfig(flags: Record<string, string | boolean>): ServiceConfig {
 }
 
 // Is the skill copy agents read in sync with the package's SKILL.md?
-function skillCopyState(cfg: ServiceConfig): { path: string; state: "ok" | "stale" | "missing" | "unknown" } {
+// "stale" = provably our old content (hash matches skill_sha256 in
+// install-state — upgrade will converge it); "edited" = the user changed it
+// (or its provenance is unknown) — upgrade keeps it.
+function skillCopyState(cfg: ServiceConfig): { path: string; state: "ok" | "stale" | "edited" | "missing" | "unknown" } {
   const copy = path.join(cfg.dataDir, "skills", "surface", "SKILL.md");
   try {
     const pkgSkill = fs.readFileSync(path.join(__dirname, "..", "SKILL.md"));
     if (!fs.existsSync(copy)) return { path: copy, state: "missing" };
-    return { path: copy, state: fs.readFileSync(copy).equals(pkgSkill) ? "ok" : "stale" };
+    const cur = fs.readFileSync(copy);
+    if (cur.equals(pkgSkill)) return { path: copy, state: "ok" };
+    let recorded: unknown;
+    try {
+      recorded = JSON.parse(fs.readFileSync(path.join(cfg.dataDir, "install-state.json"), "utf8")).skill_sha256;
+    } catch {
+      // no state file — unknown provenance
+    }
+    const mine = createHash("sha256").update(cur).digest("hex");
+    return { path: copy, state: recorded === mine ? "stale" : "edited" };
   } catch {
     return { path: copy, state: "unknown" };
   }
@@ -721,6 +734,8 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         // Same blind spot for the skill: the copy agents read must match the package.
         if (skill.state === "stale" || skill.state === "missing") {
           console.error(`note: skill copy at ${skill.path} is ${skill.state} — run: surface upgrade (or: surface skill install)`);
+        } else if (skill.state === "edited") {
+          console.error(`note: skill copy at ${skill.path} is locally edited — kept; surface skill install --force replaces it`);
         }
       }
       process.exit(health.ok ? 0 : 1);

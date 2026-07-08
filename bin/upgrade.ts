@@ -6,6 +6,7 @@
 // refreshes the canonical copy from the installed package, so the skill text
 // every harness reads is always the one matching the installed binary.
 import { spawnSync } from "child_process";
+import { createHash } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -70,10 +71,21 @@ interface SkillReport {
   canonical: string;
   version: string;
   updated: boolean;
+  edited: boolean;
   links: LinkResult[];
 }
 
-function syncCanonical(base: string): { canonical: string; updated: boolean } {
+function sha256(buf: Buffer): string {
+  return createHash("sha256").update(buf).digest("hex");
+}
+
+// Three canonical states, told apart by the hash of what WE last wrote
+// (skill_sha256 in install-state): matches the package → fresh; matches the
+// recorded hash → our stale copy, safe to overwrite; matches neither → the
+// user edited it — keep it (links and copies then mirror the edit) until
+// `surface skill install --force`. No recorded hash + mismatch counts as
+// edited: unknown provenance is not ours to destroy.
+function syncCanonical(base: string, force: boolean, recordedSha: string | null): { canonical: string; updated: boolean; edited: boolean } {
   const src = packageSkillPath();
   if (!fs.existsSync(src)) {
     throw new Error(`SKILL.md not found at ${src} (broken install?)`);
@@ -82,10 +94,13 @@ function syncCanonical(base: string): { canonical: string; updated: boolean } {
   const dest = path.join(dir, "SKILL.md");
   const next = fs.readFileSync(src);
   const prev = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
-  if (prev && prev.equals(next)) return { canonical: dest, updated: false };
+  if (prev && prev.equals(next)) return { canonical: dest, updated: false, edited: false };
+  if (prev && !force && sha256(prev) !== recordedSha) {
+    return { canonical: dest, updated: false, edited: true };
+  }
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(dest, next);
-  return { canonical: dest, updated: prev !== null };
+  return { canonical: dest, updated: prev !== null, edited: false };
 }
 
 function linksTo(target: string, canonical: string): boolean {
@@ -96,7 +111,9 @@ function linksTo(target: string, canonical: string): boolean {
   }
 }
 
-function copyInto(target: string): void {
+// Managed copies mirror the CANONICAL file, not the package — so a kept
+// user edit propagates to copy targets exactly like it does through links.
+function copyInto(target: string, canonicalDir: string): void {
   fs.mkdirSync(target, { recursive: true });
   const dest = path.join(target, "SKILL.md");
   try {
@@ -105,7 +122,7 @@ function copyInto(target: string): void {
   } catch {
     // dest missing — nothing to replace
   }
-  fs.copyFileSync(packageSkillPath(), dest);
+  fs.copyFileSync(path.join(canonicalDir, "SKILL.md"), dest);
 }
 
 // A directory holding only a SKILL.md is adopted only when that file is a
@@ -147,7 +164,7 @@ function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean, ow
       return { path: target, mode: "skipped", note: "its SKILL.md is not a Surface skill — not managed by surface" };
     }
     if (copy) {
-      copyInto(target);
+      copyInto(target, canonicalDir);
       return { path: target, mode: "copied" };
     }
     fs.rmSync(target, { recursive: true, force: true });
@@ -158,7 +175,7 @@ function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean, ow
 
   fs.mkdirSync(skillsDir, { recursive: true });
   if (copy) {
-    copyInto(target);
+    copyInto(target, canonicalDir);
     return { path: target, mode: "copied" };
   }
   try {
@@ -167,7 +184,7 @@ function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean, ow
   } catch (e: any) {
     // Symlinks can be forbidden (e.g. Windows without developer mode) —
     // fall back to a managed copy; upgrade rewrites it from install-state.
-    copyInto(target);
+    copyInto(target, canonicalDir);
     return { path: target, mode: "copied", note: `symlink failed (${e?.code || e}), copied instead` };
   }
 }
@@ -185,6 +202,7 @@ function readInstallState(base: string): Record<string, unknown> | null {
     if (e?.code === "ENOENT") return {
       service: "pending",
       skill_saved_to: null,
+      skill_sha256: null,
       tutorial: "pending",
       surface_version: null,
       installed_at: null,
@@ -194,10 +212,19 @@ function readInstallState(base: string): Record<string, unknown> | null {
   }
 }
 
-function recordSkillState(report: SkillReport, base: string, prev: Map<string, "copy" | "link">): void {
+function recordedSkillSha(base: string): string | null {
+  const sha = (readInstallState(base) as any)?.skill_sha256;
+  return typeof sha === "string" ? sha : null;
+}
+
+function recordSkillState(report: SkillReport, base: string, prev: Map<string, "copy" | "link">, writtenSha: string | null): void {
   const state = readInstallState(base);
   if (!state) return;
   state.skill_saved_to = report.canonical;
+  // Only stamp the hash when the canonical holds OUR content; a kept edit
+  // must keep the old hash, or the next run would mistake the edit for a
+  // stale copy and clobber it.
+  if (writtenSha) state.skill_sha256 = writtenSha;
   const links = report.links
     .filter((l) => l.mode !== "skipped" && l.mode !== "failed")
     .map((l) => ({ path: l.path, mode: l.mode === "copied" ? "copy" : "link" }));
@@ -225,9 +252,9 @@ function recordedLinks(base: string): { path: string; mode: string }[] {
 // given, else the default targets. Every other recorded target keeps its
 // recorded mode; new targets default to link. Modes are remembered per
 // target, so `surface upgrade` refreshes without reshaping anything.
-export function syncSkill(extraTo: string[], copy: boolean, link = false, name?: string): SkillReport {
+export function syncSkill(extraTo: string[], copy: boolean, link = false, name?: string, force = false): SkillReport {
   const base = dataDir(name);
-  const { canonical, updated } = syncCanonical(base);
+  const { canonical, updated, edited } = syncCanonical(base, force, recordedSkillSha(base));
   const canonicalDir = path.dirname(canonical);
   const recorded = new Map<string, "copy" | "link">();
   for (const l of recordedLinks(base)) recorded.set(path.resolve(l.path), l.mode === "copy" ? "copy" : "link");
@@ -261,17 +288,20 @@ export function syncSkill(extraTo: string[], copy: boolean, link = false, name?:
       links.push({ path: target, mode: "failed", note: String(e?.code || e?.message || e) });
     }
   }
-  const report: SkillReport = { canonical, version: localVersion(), updated, links };
-  recordSkillState(report, base, recorded);
+  const report: SkillReport = { canonical, version: localVersion(), updated, edited, links };
+  recordSkillState(report, base, recorded, edited ? null : sha256(fs.readFileSync(packageSkillPath())));
   return report;
 }
 
-export function skillFresh(name?: string): { canonical: string; fresh: boolean } {
-  const dest = path.join(canonicalSkillDir(dataDir(name)), "SKILL.md");
+export function skillFresh(name?: string): { canonical: string; fresh: boolean; edited: boolean } {
+  const base = dataDir(name);
+  const dest = path.join(canonicalSkillDir(base), "SKILL.md");
   try {
-    return { canonical: dest, fresh: fs.readFileSync(dest).equals(fs.readFileSync(packageSkillPath())) };
+    const cur = fs.readFileSync(dest);
+    if (cur.equals(fs.readFileSync(packageSkillPath()))) return { canonical: dest, fresh: true, edited: false };
+    return { canonical: dest, fresh: false, edited: sha256(cur) !== recordedSkillSha(base) };
   } catch {
-    return { canonical: dest, fresh: false };
+    return { canonical: dest, fresh: false, edited: false };
   }
 }
 
@@ -279,25 +309,30 @@ export function skillFresh(name?: string): { canonical: string; fresh: boolean }
 
 export async function runSkill({ positional, flags, multi }: Ctx): Promise<void> {
   if (positional[0] !== "install") {
-    console.error("usage: surface skill install [--to <skills-dir>]... [--copy|--link] [--json]");
+    console.error("usage: surface skill install [--to <skills-dir>]... [--copy|--link] [--force] [--json]");
     process.exit(2);
   }
   if (flags.copy === true && flags.link === true) {
     console.error("--copy and --link are mutually exclusive");
     process.exit(2);
   }
-  const report = syncSkill(multi.to || [], flags.copy === true, flags.link === true);
+  const report = syncSkill(multi.to || [], flags.copy === true, flags.link === true, undefined, flags.force === true);
   const failed = report.links.filter((l) => l.mode === "failed");
   if (flags.json === true) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    console.log(`skill ${report.version} → ${report.canonical}${report.updated ? " (updated)" : ""}`);
+    console.log(`skill ${report.version} → ${report.canonical}${skillSuffix(report)}`);
     for (const l of report.links) {
       console.log(`  ${l.mode.padEnd(7)} ${l.path}${l.note ? `  (${l.note})` : ""}`);
     }
     if (failed.length) console.error(`${failed.length} target(s) could not be written — see notes above`);
   }
   if (failed.length) process.exit(1);
+}
+
+function skillSuffix(report: SkillReport): string {
+  if (report.edited) return " (locally edited — kept; surface skill install --force to replace)";
+  return report.updated ? " (updated)" : "";
 }
 
 // ── surface upgrade ──
@@ -372,7 +407,8 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
     if (json) console.log(JSON.stringify(report, null, 2));
     else {
       console.log(available ? `update available: ${current} → ${latest}` : `up to date (${current})`);
-      if (!skill.fresh) console.log(`skill copy stale/missing at ${skill.canonical} — run: surface upgrade`);
+      if (skill.edited) console.log(`skill copy locally edited at ${skill.canonical} — kept (surface skill install --force to replace)`);
+      else if (!skill.fresh) console.log(`skill copy stale/missing at ${skill.canonical} — run: surface upgrade`);
       if (available && context !== "global") console.log(contextAdvice(context));
     }
     return;
@@ -410,7 +446,7 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   }
   console.log(available && packageStep.startsWith("updated") ? packageStep : `package: ${packageStep === "unchanged" ? `up to date (${current})` : packageStep}`);
   if (available && context !== "global") console.log(contextAdvice(context));
-  console.log(`skill  : ${skill.version} → ${skill.canonical}${skill.updated ? " (updated)" : ""}`);
+  console.log(`skill  : ${skill.version} → ${skill.canonical}${skillSuffix(skill)}`);
   for (const l of skill.links) console.log(`  ${l.mode.padEnd(7)} ${l.path}${l.note ? `  (${l.note})` : ""}`);
   if (!service.installed) console.log("service: not installed here — skipped");
   else if (service.restarted && service.error) {

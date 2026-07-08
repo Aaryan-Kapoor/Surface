@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -47,6 +48,20 @@ function readState(): any {
   return JSON.parse(fs.readFileSync(path.join(dataDir, "install-state.json"), "utf8"));
 }
 
+function sha256(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+// Simulate a stale copy WE wrote (an older release's text): write the content
+// and stamp its hash as skill_sha256, exactly like a previous version did.
+function plantStaleCanonical(content: string): void {
+  fs.writeFileSync(canonical, content);
+  const p = path.join(dataDir, "install-state.json");
+  const s = JSON.parse(fs.readFileSync(p, "utf8"));
+  s.skill_sha256 = sha256(content);
+  fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
+}
+
 function isLink(p: string): boolean {
   return fs.lstatSync(p).isSymbolicLink();
 }
@@ -71,6 +86,7 @@ try {
   const state = readState();
   assert.equal(state.skill_saved_to, canonical);
   assert.equal(state.skill_links.length, 2);
+  assert.equal(state.skill_sha256, sha256(pkgSkill), "the hash of what we wrote is stamped");
   assert.equal(state.tutorial, "pending", "fresh state file keeps the documented defaults");
 
   // ── idempotent: second run keeps links, changes nothing ──
@@ -176,8 +192,8 @@ try {
 
   // ── upgrade with a newer release: dev context skips npm but still converges ──
   const upgName = `surface-upg-test-${process.pid}`;
-  fs.writeFileSync(canonical, "stale skill text"); // sabotage the canonical copy
-  fs.writeFileSync(path.join(copiedTarget, "SKILL.md"), "stale copy"); // and a recorded copy
+  plantStaleCanonical("stale skill text"); // an older release's canonical copy
+  fs.writeFileSync(path.join(copiedTarget, "SKILL.md"), "stale copy"); // and a stale recorded copy
   const newer = await stubRegistry("99.0.0");
   try {
     const check2 = await run(["upgrade", "--check", "--json"], { SURFACE_NPM_REGISTRY: newer.url });
@@ -204,7 +220,7 @@ try {
   if (canChmod) {
     const lockedFile = path.join(copiedTarget, "SKILL.md");
     fs.chmodSync(lockedFile, 0o444);
-    fs.writeFileSync(canonical, "stale again");
+    plantStaleCanonical("stale again");
     const reg = await stubRegistry(pkgVersion);
     try {
       const partial = await run(["upgrade", "--json", "--name", upgName], { SURFACE_NPM_REGISTRY: reg.url });
@@ -252,6 +268,47 @@ try {
   const redirect = await run(["service", "upgrade"]);
   assert.equal(redirect.code, 2);
   assert.match(redirect.stderr, /did you mean: surface upgrade/);
+
+  // ── a user-edited canonical is kept, mirrored to targets, and only --force replaces it ──
+  const editedSkill = pkgSkill + "\n<!-- my local tweak -->\n";
+  fs.writeFileSync(canonical, editedSkill); // hash no longer matches skill_sha256
+  const keep = await run(["skill", "install", "--json"]);
+  assert.equal(keep.code, 0, keep.stderr);
+  const keptReport = JSON.parse(keep.stdout);
+  assert.equal(keptReport.edited, true, "an edited canonical is reported");
+  assert.equal(fs.readFileSync(canonical, "utf8"), editedSkill, "the edit is kept");
+  assert.equal(fs.readFileSync(path.join(copiedTarget, "SKILL.md"), "utf8"), editedSkill,
+    "managed copies mirror the canonical, edits included");
+  assert.equal(readState().skill_sha256, sha256(pkgSkill),
+    "the recorded hash still names OUR content — the edit is never adopted as ours");
+
+  const editedCheck = await stubRegistry(pkgVersion);
+  try {
+    const ec = await run(["upgrade", "--check", "--json"], { SURFACE_NPM_REGISTRY: editedCheck.url });
+    const e = JSON.parse(ec.stdout);
+    assert.equal(e.skill.fresh, false);
+    assert.equal(e.skill.edited, true, "--check tells edited apart from stale");
+
+    // upgrade keeps the edit too — it converges versions, not opinions
+    const upKeep = await run(["upgrade", "--json", "--name", upgName], { SURFACE_NPM_REGISTRY: editedCheck.url });
+    assert.equal(upKeep.code, 0, upKeep.stderr);
+    assert.equal(JSON.parse(upKeep.stdout).skill.edited, true);
+    assert.equal(fs.readFileSync(canonical, "utf8"), editedSkill, "upgrade never clobbers an edit");
+  } finally {
+    editedCheck.close();
+  }
+
+  // service health reports the edited state (dead port: only the skill fields matter)
+  const health = await run(["service", "health", "--json", "--port", "9"]);
+  assert.equal(JSON.parse(health.stdout).skill_copy_state, "edited");
+
+  const forced = await run(["skill", "install", "--force", "--json"]);
+  assert.equal(forced.code, 0, forced.stderr);
+  const forcedReport = JSON.parse(forced.stdout);
+  assert.equal(forcedReport.edited, false);
+  assert.equal(forcedReport.updated, true, "--force replaces the edit with the packaged skill");
+  assert.equal(fs.readFileSync(canonical, "utf8"), pkgSkill);
+  assert.equal(fs.readFileSync(path.join(copiedTarget, "SKILL.md"), "utf8"), pkgSkill, "copies re-mirror the package");
 
   // ── a registered but cleanly stopped service is left stopped ──
   const systemd = process.platform === "linux" && spawnSync("systemctl", ["--user", "show-environment"], { encoding: "utf8" }).status === 0;

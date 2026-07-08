@@ -170,17 +170,18 @@ const COMMANDS: Record<string, CommandSpec> = {
   },
   skill: {
     help: [
-      "surface skill install [--to <skills-dir>]... [--copy|--link] [--json]",
+      "surface skill install [--to <skills-dir>]... [--copy|--link] [--force] [--json]",
       "  Canonical copy: <data-dir>/skills/surface/SKILL.md (the service's data dir), linked",
       "  (junction on Windows) into ~/.agents/skills/surface (open standard: Codex, Cursor,",
       "  Gemini CLI, Copilot, Zed, Amp, Goose, OpenCode, Roo, Kilo, Windsurf) and",
       "  ~/.claude/skills/surface (Claude Code). --to adds a harness-native skills dir",
       "  (e.g. ~/.cline/skills). --copy/--link set the mode for this run's targets (the --to",
       "  dirs, or the defaults when no --to is given); each target's mode is remembered and",
-      "  kept by later runs and surface upgrade. Idempotent; where symlinks are forbidden it",
-      "  copies instead.",
+      "  kept by later runs and surface upgrade. A locally edited canonical copy is kept",
+      "  (and mirrored to every target) until --force replaces it with the packaged skill.",
+      "  Idempotent; where symlinks are forbidden it copies instead.",
     ].join("\n"),
-    flags: { to: MULTI, copy: BOOL, link: BOOL, json: BOOL },
+    flags: { to: MULTI, copy: BOOL, link: BOOL, force: BOOL, json: BOOL },
     run: (ctx) => runSkill(ctx),
   },
   upgrade: {
@@ -227,7 +228,7 @@ interface ParsedArgs {
 const BOOLEAN_FLAGS = new Set([
   "help", "json", "no-ack", "no-open", "no-qr", "include-hidden",
   "freetext", "wait", "md", "toc", "autoplay", "loop", "user", "clear",
-  "copy", "link", "check",
+  "copy", "link", "check", "force",
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.
