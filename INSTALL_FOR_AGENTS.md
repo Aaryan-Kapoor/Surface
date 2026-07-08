@@ -85,9 +85,10 @@ surface skill install
 ```
 
 One command. It keeps a canonical copy at `<data-dir>/skills/surface/SKILL.md`
-(data dir is `~/.surface` unless `SURFACE_DATA_DIR` is set) and links it —
-directory symlink, junction on Windows — into the two locations that cover
-almost every harness (paths verified against vendor docs, 2026-07):
+(the service's data dir: the one saved by `surface service install`, else
+`SURFACE_DATA_DIR`, else `~/.surface`) and links it — directory symlink,
+junction on Windows — into the two locations that cover almost every harness
+(paths verified against vendor docs, 2026-07):
 
 - `~/.agents/skills/surface/` — the neutral open standard (agentskills.io),
   read by Codex, Cursor, Gemini CLI, Copilot, Zed, Amp, Goose, OpenCode, Roo,
@@ -99,11 +100,16 @@ Because they are links to one canonical copy, `surface upgrade` refreshes the
 skill everywhere at once. Where symlinks aren't permitted it falls back to
 managed copies and records them, so upgrades rewrite those too. It stamps
 `skill_saved_to` and `skill_links` in the state file for you — no manual
-bookkeeping. It never touches a skill directory containing files it doesn't
-own. Idempotent; re-run any time.
+bookkeeping. Ownership rules: a skill directory containing anything besides a
+`SKILL.md` is never touched; a directory holding only a *Surface* `SKILL.md`
+(frontmatter `name: surface` — the legacy manual copies older instructions
+created) is adopted and upgraded to a link; a lone non-Surface `SKILL.md` is
+skipped. Idempotent; re-run any time.
 
-Your harness reads its own directory instead? Add it with `--to` (repeatable;
-`--copy` forces copies over links):
+Your harness reads its own directory instead? Add it with `--to` (repeatable).
+`--copy` / `--link` set copies-vs-links for the run's targets (the `--to`
+dirs, or the two defaults when no `--to` is given); each target's mode is
+remembered per target and kept by later runs and `surface upgrade`:
 
 ```bash
 surface skill install --to ~/.cline/skills
@@ -217,8 +223,10 @@ One command, three legs: updates `surface-display` to the latest npm release
 (global installs only — it detects and skips repo clones and project-local
 installs with advice), refreshes the canonical `SKILL.md` plus every recorded
 skill link/copy, and restarts the service if it is running an older version
-(health-gated). It is a converger — safe to run any time, including to finish
-a manual `npm update -g` someone ran without it.
+(health-gated; a cleanly stopped service is left stopped). It is a converger —
+safe to run any time, including to finish a manual `npm update -g` someone ran
+without it. A skill target that can't be written is reported and skipped (exit
+1 after everything else converges), never allowed to abort the run halfway.
 
 `surface upgrade --check` reports without changing anything. `surface service
 health` prints a note whenever the package, the running service, or the skill

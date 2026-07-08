@@ -16,8 +16,18 @@ All notable changes to Surface are recorded here.
   open standard read by Codex, Cursor, Gemini CLI, Copilot, Zed, Amp, Goose,
   OpenCode, Roo, Kilo, Windsurf — and `~/.claude/skills/` for Claude Code.
   `--to` adds harness-native dirs; targets are recorded in
-  `install-state.json` and refreshed by `surface upgrade`. Never touches a
-  skill directory containing files it doesn't own.
+  `install-state.json` and refreshed by `surface upgrade`. `--copy`/`--link`
+  set the mode for the run's targets and are remembered per target. Never
+  touches a skill directory containing files it doesn't own; a lone
+  non-Surface `SKILL.md` is skipped too (only legacy Surface copies are
+  adopted).
+- Upgrade/skill hardening (review findings): the registry-reported version is
+  semver-validated before it reaches `npm install`; the canonical skill and
+  `install-state.json` live in the service's saved data dir (matching
+  `service health`), and state writes are atomic; one unwritable skill target
+  no longer aborts `surface upgrade` halfway (reported, everything else still
+  converges, exit 1); a cleanly stopped service is left stopped instead of
+  being started by `upgrade`.
 - `surface service health` now also flags a stale/missing skill copy, and the
   CLI prints an actionable "service unreachable — is it running?" hint (with
   the install one-liner) instead of a bare `fetch failed` when the service is

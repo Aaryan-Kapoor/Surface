@@ -170,15 +170,17 @@ const COMMANDS: Record<string, CommandSpec> = {
   },
   skill: {
     help: [
-      "surface skill install [--to <skills-dir>]... [--copy] [--json]",
-      "  Canonical copy: <data-dir>/skills/surface/SKILL.md, linked (junction on Windows) into",
-      "  ~/.agents/skills/surface (open standard: Codex, Cursor, Gemini CLI, Copilot, Zed, Amp,",
-      "  Goose, OpenCode, Roo, Kilo, Windsurf) and ~/.claude/skills/surface (Claude Code).",
-      "  --to adds a harness-native skills dir (e.g. ~/.cline/skills); --copy writes copies",
-      "  instead of links for every target in the run. Idempotent; recorded targets are",
-      "  refreshed by surface upgrade.",
+      "surface skill install [--to <skills-dir>]... [--copy|--link] [--json]",
+      "  Canonical copy: <data-dir>/skills/surface/SKILL.md (the service's data dir), linked",
+      "  (junction on Windows) into ~/.agents/skills/surface (open standard: Codex, Cursor,",
+      "  Gemini CLI, Copilot, Zed, Amp, Goose, OpenCode, Roo, Kilo, Windsurf) and",
+      "  ~/.claude/skills/surface (Claude Code). --to adds a harness-native skills dir",
+      "  (e.g. ~/.cline/skills). --copy/--link set the mode for this run's targets (the --to",
+      "  dirs, or the defaults when no --to is given); each target's mode is remembered and",
+      "  kept by later runs and surface upgrade. Idempotent; where symlinks are forbidden it",
+      "  copies instead.",
     ].join("\n"),
-    flags: { to: MULTI, copy: BOOL, json: BOOL },
+    flags: { to: MULTI, copy: BOOL, link: BOOL, json: BOOL },
     run: (ctx) => runSkill(ctx),
   },
   upgrade: {
@@ -186,8 +188,9 @@ const COMMANDS: Record<string, CommandSpec> = {
       "surface upgrade [--check] [--json] [--timeout <s>] [--name <service>]",
       "  Everything at once: update surface-display to the latest npm release (global installs),",
       "  refresh the canonical SKILL.md copy + all recorded skill links, and restart the service",
-      "  if it is running an older version (health-gated). --check reports without changing anything;",
-      "  --name targets a service installed under a non-default name.",
+      "  if it is running an older version (health-gated; a cleanly stopped service is left",
+      "  stopped). --check reports without changing anything; --name targets a service installed",
+      "  under a non-default name.",
     ].join("\n"),
     flags: { check: BOOL, json: BOOL, timeout: NUM, name: STR },
     run: (ctx) => runUpgrade(ctx),
@@ -224,7 +227,7 @@ interface ParsedArgs {
 const BOOLEAN_FLAGS = new Set([
   "help", "json", "no-ack", "no-open", "no-qr", "include-hidden",
   "freetext", "wait", "md", "toc", "autoplay", "loop", "user", "clear",
-  "copy", "check",
+  "copy", "link", "check",
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.

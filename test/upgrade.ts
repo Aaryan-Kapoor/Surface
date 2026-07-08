@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -43,6 +43,14 @@ function stubRegistry(version: string): Promise<{ url: string; close: () => void
   });
 }
 
+function readState(): any {
+  return JSON.parse(fs.readFileSync(path.join(dataDir, "install-state.json"), "utf8"));
+}
+
+function isLink(p: string): boolean {
+  return fs.lstatSync(p).isSymbolicLink();
+}
+
 const canonical = path.join(dataDir, "skills", "surface", "SKILL.md");
 const agentsLink = path.join(home, ".agents", "skills", "surface");
 const claudeLink = path.join(home, ".claude", "skills", "surface");
@@ -55,12 +63,12 @@ try {
   assert.equal(report.canonical, canonical);
   assert.equal(fs.readFileSync(canonical, "utf8"), pkgSkill, "canonical copy matches the package SKILL.md");
   for (const link of [agentsLink, claudeLink]) {
-    assert.ok(fs.lstatSync(link).isSymbolicLink(), `${link} is a symlink`);
+    assert.ok(isLink(link), `${link} is a symlink`);
     assert.equal(fs.readFileSync(path.join(link, "SKILL.md"), "utf8"), pkgSkill, `${link} resolves to the skill`);
   }
 
   // install-state.json records the canonical path and the links
-  const state = JSON.parse(fs.readFileSync(path.join(dataDir, "install-state.json"), "utf8"));
+  const state = readState();
   assert.equal(state.skill_saved_to, canonical);
   assert.equal(state.skill_links.length, 2);
   assert.equal(state.tutorial, "pending", "fresh state file keeps the documented defaults");
@@ -73,13 +81,13 @@ try {
 
   // ── --to adds a harness dir; recorded for future refreshes ──
   const clineDir = path.join(home, ".cline", "skills");
+  const clineTarget = path.join(clineDir, "surface");
   const withTo = await run(["skill", "install", "--to", clineDir, "--json"]);
   assert.equal(withTo.code, 0, withTo.stderr);
-  assert.equal(fs.readFileSync(path.join(clineDir, "surface", "SKILL.md"), "utf8"), pkgSkill);
-  const state2 = JSON.parse(fs.readFileSync(path.join(dataDir, "install-state.json"), "utf8"));
-  assert.equal(state2.skill_links.length, 3);
+  assert.equal(fs.readFileSync(path.join(clineTarget, "SKILL.md"), "utf8"), pkgSkill);
+  assert.equal(readState().skill_links.length, 3);
 
-  // ── a foreign skill dir is never clobbered ──
+  // ── a foreign skill dir (extra files) is never clobbered ──
   const foreign = path.join(home, ".foreign", "skills");
   fs.mkdirSync(path.join(foreign, "surface"), { recursive: true });
   fs.writeFileSync(path.join(foreign, "surface", "SKILL.md"), "someone else's skill");
@@ -90,32 +98,23 @@ try {
   assert.equal(skipped.mode, "skipped");
   assert.equal(fs.readFileSync(path.join(foreign, "surface", "notes.txt"), "utf8"), "keep me");
 
-  // ── but a stale plain copy (only SKILL.md inside) is upgraded to a link ──
+  // ── a lone SKILL.md that is NOT a Surface skill is skipped too ──
+  const stranger = path.join(home, ".stranger", "skills");
+  fs.mkdirSync(path.join(stranger, "surface"), { recursive: true });
+  fs.writeFileSync(path.join(stranger, "surface", "SKILL.md"), "---\nname: not-ours\n---\ncustom skill");
+  const strangerRun = await run(["skill", "install", "--to", stranger, "--json"]);
+  const strangerLink = JSON.parse(strangerRun.stdout).links.find((l: any) => l.path === path.join(stranger, "surface"));
+  assert.equal(strangerLink.mode, "skipped", "lone non-Surface SKILL.md is not adopted");
+  assert.equal(fs.readFileSync(path.join(stranger, "surface", "SKILL.md"), "utf8"), "---\nname: not-ours\n---\ncustom skill");
+
+  // ── but a stale Surface copy (lone SKILL.md, name: surface) upgrades to a link ──
   const legacy = path.join(home, ".legacy", "skills");
   fs.mkdirSync(path.join(legacy, "surface"), { recursive: true });
-  fs.writeFileSync(path.join(legacy, "surface", "SKILL.md"), "old copy");
+  fs.writeFileSync(path.join(legacy, "surface", "SKILL.md"), "---\nname: surface\ndescription: old\n---\nold copy");
   const upgraded = await run(["skill", "install", "--to", legacy, "--json"]);
-  const upgradedReport = JSON.parse(upgraded.stdout);
-  const relinked = upgradedReport.links.find((l: any) => l.path === path.join(legacy, "surface"));
+  const relinked = JSON.parse(upgraded.stdout).links.find((l: any) => l.path === path.join(legacy, "surface"));
   assert.equal(relinked.mode, "linked");
   assert.equal(fs.readFileSync(path.join(legacy, "surface", "SKILL.md"), "utf8"), pkgSkill);
-
-  // ── --copy forces managed copies instead of links (all targets in the run) ──
-  const copyDir = path.join(home, ".copyharness", "skills");
-  const copied = await run(["skill", "install", "--to", copyDir, "--copy", "--json"]);
-  assert.equal(copied.code, 0, copied.stderr);
-  const copiedTarget = path.join(copyDir, "surface");
-  assert.ok(!fs.lstatSync(copiedTarget).isSymbolicLink(), "copy mode creates a real directory");
-  assert.equal(fs.readFileSync(path.join(copiedTarget, "SKILL.md"), "utf8"), pkgSkill);
-  assert.ok(!fs.lstatSync(agentsLink).isSymbolicLink(), "--copy converges default targets to copies too");
-  const state3 = JSON.parse(fs.readFileSync(path.join(dataDir, "install-state.json"), "utf8"));
-  assert.ok(state3.skill_links.some((l: any) => l.path === copiedTarget && l.mode === "copy"), "copy recorded as copy");
-
-  // ── and a plain run converges defaults back to links (copies hold their recorded mode) ──
-  const relink = await run(["skill", "install", "--json"]);
-  assert.equal(relink.code, 0, relink.stderr);
-  assert.ok(fs.lstatSync(agentsLink).isSymbolicLink(), "plain install converges defaults back to links");
-  assert.ok(!fs.lstatSync(copiedTarget).isSymbolicLink(), "recorded copy target stays a copy");
 
   // ── a wrong symlink is repaired ──
   fs.unlinkSync(agentsLink);
@@ -125,6 +124,42 @@ try {
   const repairedLink = JSON.parse(repaired.stdout).links.find((l: any) => l.path === agentsLink);
   assert.equal(repairedLink.mode, "linked", "misdirected symlink is repointed");
   assert.equal(fs.readFileSync(path.join(agentsLink, "SKILL.md"), "utf8"), pkgSkill);
+
+  // ── --copy scope: --to targets only; other recorded targets keep their modes ──
+  const copyDir = path.join(home, ".copyharness", "skills");
+  const copiedTarget = path.join(copyDir, "surface");
+  const copied = await run(["skill", "install", "--to", copyDir, "--copy", "--json"]);
+  assert.equal(copied.code, 0, copied.stderr);
+  assert.ok(!isLink(copiedTarget), "--copy creates a real directory for the --to target");
+  assert.equal(fs.readFileSync(path.join(copiedTarget, "SKILL.md"), "utf8"), pkgSkill);
+  assert.ok(isLink(agentsLink), "defaults are out of scope when --to is given — still links");
+  assert.ok(isLink(clineTarget), "other recorded targets keep their modes");
+  assert.ok(readState().skill_links.some((l: any) => l.path === copiedTarget && l.mode === "copy"), "copy recorded as copy");
+
+  // ── --copy without --to: defaults become copies; recorded extras stay put (mixed modes) ──
+  const copyDefaults = await run(["skill", "install", "--copy", "--json"]);
+  assert.equal(copyDefaults.code, 0, copyDefaults.stderr);
+  assert.ok(!isLink(agentsLink), "--copy converts the default targets");
+  assert.ok(!isLink(claudeLink), "--copy converts the default targets");
+  assert.ok(isLink(clineTarget), "recorded link outside the scope stays a link");
+  assert.ok(!isLink(copiedTarget), "recorded copy stays a copy");
+
+  // ── modes are sticky: a plain run reshapes nothing ──
+  const plain = await run(["skill", "install", "--json"]);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.ok(!isLink(agentsLink), "plain run keeps the recorded copy mode");
+  assert.ok(isLink(clineTarget), "plain run keeps the recorded link mode");
+
+  // ── --link converts the scope back; out-of-scope copies survive ──
+  const relink = await run(["skill", "install", "--link", "--json"]);
+  assert.equal(relink.code, 0, relink.stderr);
+  assert.ok(isLink(agentsLink), "--link converts the defaults back to links");
+  assert.ok(isLink(claudeLink), "--link converts the defaults back to links");
+  assert.ok(!isLink(copiedTarget), "recorded copy outside the scope stays a copy");
+
+  // ── --copy and --link together is an error ──
+  const both = await run(["skill", "install", "--copy", "--link"]);
+  assert.equal(both.code, 2);
 
   // ── upgrade --check against a stub registry ──
   const same = await stubRegistry(pkgVersion);
@@ -140,6 +175,7 @@ try {
   }
 
   // ── upgrade with a newer release: dev context skips npm but still converges ──
+  const upgName = `surface-upg-test-${process.pid}`;
   fs.writeFileSync(canonical, "stale skill text"); // sabotage the canonical copy
   fs.writeFileSync(path.join(copiedTarget, "SKILL.md"), "stale copy"); // and a recorded copy
   const newer = await stubRegistry("99.0.0");
@@ -151,7 +187,7 @@ try {
     assert.equal(fs.readFileSync(canonical, "utf8"), "stale skill text", "--check changes nothing");
 
     // --name keeps the test away from any real "surface" service on this machine
-    const up = await run(["upgrade", "--json", "--name", `surface-upg-test-${process.pid}`], { SURFACE_NPM_REGISTRY: newer.url });
+    const up = await run(["upgrade", "--json", "--name", upgName], { SURFACE_NPM_REGISTRY: newer.url });
     assert.equal(up.code, 0, up.stderr);
     const u = JSON.parse(up.stdout);
     assert.equal(u.package, "skipped (dev install)");
@@ -163,6 +199,50 @@ try {
     newer.close();
   }
 
+  // ── one unwritable target doesn't abort the converger ──
+  const canChmod = process.platform !== "win32" && !(typeof process.getuid === "function" && process.getuid() === 0);
+  if (canChmod) {
+    const lockedFile = path.join(copiedTarget, "SKILL.md");
+    fs.chmodSync(lockedFile, 0o444);
+    fs.writeFileSync(canonical, "stale again");
+    const reg = await stubRegistry(pkgVersion);
+    try {
+      const partial = await run(["upgrade", "--json", "--name", upgName], { SURFACE_NPM_REGISTRY: reg.url });
+      assert.equal(partial.code, 1, "a failed target makes upgrade exit 1");
+      const p = JSON.parse(partial.stdout);
+      const failed = p.skill.links.find((l: any) => l.path === copiedTarget);
+      assert.equal(failed.mode, "failed", "the unwritable target is reported, not thrown");
+      assert.equal(fs.readFileSync(canonical, "utf8"), pkgSkill, "canonical still converged");
+      assert.ok(p.service, "the service step still ran");
+      assert.ok(readState().skill_links.some((l: any) => l.path === copiedTarget && l.mode === "copy"),
+        "a failed target stays recorded for the next retry");
+
+      fs.chmodSync(lockedFile, 0o644);
+      const retry = await run(["upgrade", "--json", "--name", upgName], { SURFACE_NPM_REGISTRY: reg.url });
+      assert.equal(retry.code, 0, retry.stderr);
+      assert.equal(fs.readFileSync(lockedFile, "utf8"), pkgSkill, "the retried target converges");
+    } finally {
+      reg.close();
+      try {
+        fs.chmodSync(lockedFile, 0o644);
+      } catch {
+        // already restored
+      }
+    }
+  } else {
+    console.log("  SKIP  unwritable-target isolation (chmod ineffective here)");
+  }
+
+  // ── a garbage registry version never reaches npm ──
+  const evil = await stubRegistry('99.0.0"; calc.exe; "');
+  try {
+    const inj = await run(["upgrade", "--check"], { SURFACE_NPM_REGISTRY: evil.url });
+    assert.equal(inj.code, 1);
+    assert.match(inj.stderr, /invalid version/);
+  } finally {
+    evil.close();
+  }
+
   // ── registry unreachable → clear failure ──
   const dead = await run(["upgrade", "--check"], { SURFACE_NPM_REGISTRY: "http://127.0.0.1:9" });
   assert.equal(dead.code, 1);
@@ -172,6 +252,44 @@ try {
   const redirect = await run(["service", "upgrade"]);
   assert.equal(redirect.code, 2);
   assert.match(redirect.stderr, /did you mean: surface upgrade/);
+
+  // ── a registered but cleanly stopped service is left stopped ──
+  const systemd = process.platform === "linux" && spawnSync("systemctl", ["--user", "show-environment"], { encoding: "utf8" }).status === 0;
+  if (systemd) {
+    const stopName = `surface-upg-stop-${process.pid}`;
+    const unitDir = path.join(home, ".config", "systemd", "user");
+    fs.mkdirSync(unitDir, { recursive: true });
+    fs.writeFileSync(path.join(unitDir, `${stopName}.service`), "[Unit]\nDescription=surface upgrade test stub\n[Service]\nExecStart=/bin/true\n");
+    const reg = await stubRegistry(pkgVersion);
+    try {
+      const stopped = await run(["upgrade", "--json", "--name", stopName], { SURFACE_NPM_REGISTRY: reg.url });
+      assert.equal(stopped.code, 0, stopped.stderr);
+      const s = JSON.parse(stopped.stdout);
+      assert.equal(s.service.installed, true, "unit file counts as registered");
+      assert.equal(s.service.restarted, false, "a stopped service is never started by upgrade");
+      assert.equal(s.service.state, "inactive");
+    } finally {
+      reg.close();
+    }
+  } else {
+    console.log("  SKIP  stopped-service guard (no user systemd session)");
+  }
+
+  // ── the skill anchors in the service's saved data dir, matching service health ──
+  const altData = path.join(home, "alt-surface-data");
+  const servicesDir = path.join(home, ".surface", "services");
+  fs.mkdirSync(servicesDir, { recursive: true });
+  fs.writeFileSync(path.join(servicesDir, "surface.json"), JSON.stringify({ dataDir: altData }) + "\n");
+  try {
+    const anchored = await run(["skill", "install", "--json"]);
+    assert.equal(anchored.code, 0, anchored.stderr);
+    const a = JSON.parse(anchored.stdout);
+    assert.equal(a.canonical, path.join(altData, "skills", "surface", "SKILL.md"),
+      "saved service data dir beats SURFACE_DATA_DIR, like resolveConfig");
+    assert.equal(fs.readFileSync(a.canonical, "utf8"), pkgSkill);
+  } finally {
+    fs.rmSync(path.join(servicesDir, "surface.json"), { force: true });
+  }
 
   console.log("Upgrade/skill tests passed");
 } finally {

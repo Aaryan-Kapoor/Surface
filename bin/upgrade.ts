@@ -10,7 +10,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
-import { localVersion, restartServiceIfStale } from "./service.js";
+import { localVersion, restartServiceIfStale, savedServiceDataDir } from "./service.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,7 +32,12 @@ function packageSkillPath(): string {
   return path.join(packageRoot(), "SKILL.md");
 }
 
-export function dataDir(): string {
+export function dataDir(name = "surface"): string {
+  // Mirror resolveConfig in service.ts: the service's saved data dir wins,
+  // then SURFACE_DATA_DIR, then ~/.surface — so the canonical skill copy and
+  // install-state.json live where `surface service health` looks for them.
+  const saved = savedServiceDataDir(name);
+  if (saved) return saved;
   return process.env.SURFACE_DATA_DIR
     ? path.resolve(process.env.SURFACE_DATA_DIR)
     : path.join(os.homedir(), ".surface");
@@ -57,7 +62,7 @@ function defaultTargets(): string[] {
 
 interface LinkResult {
   path: string;
-  mode: "linked" | "copied" | "kept" | "skipped";
+  mode: "linked" | "copied" | "kept" | "skipped" | "failed";
   note?: string;
 }
 
@@ -68,12 +73,12 @@ interface SkillReport {
   links: LinkResult[];
 }
 
-function syncCanonical(): { canonical: string; updated: boolean } {
+function syncCanonical(base: string): { canonical: string; updated: boolean } {
   const src = packageSkillPath();
   if (!fs.existsSync(src)) {
     throw new Error(`SKILL.md not found at ${src} (broken install?)`);
   }
-  const dir = canonicalSkillDir();
+  const dir = canonicalSkillDir(base);
   const dest = path.join(dir, "SKILL.md");
   const next = fs.readFileSync(src);
   const prev = fs.existsSync(dest) ? fs.readFileSync(dest) : null;
@@ -93,13 +98,33 @@ function linksTo(target: string, canonical: string): boolean {
 
 function copyInto(target: string): void {
   fs.mkdirSync(target, { recursive: true });
-  fs.copyFileSync(packageSkillPath(), path.join(target, "SKILL.md"));
+  const dest = path.join(target, "SKILL.md");
+  try {
+    // never write through a planted symlink — replace it
+    if (fs.lstatSync(dest).isSymbolicLink()) fs.unlinkSync(dest);
+  } catch {
+    // dest missing — nothing to replace
+  }
+  fs.copyFileSync(packageSkillPath(), dest);
+}
+
+// A directory holding only a SKILL.md is adopted only when that file is a
+// Surface skill (legacy manual copies from older install instructions);
+// someone's unrelated single-file skill is left alone.
+function looksLikeSurfaceSkill(file: string): boolean {
+  try {
+    return /^\s*name:\s*surface\s*$/m.test(fs.readFileSync(file, "utf8").slice(0, 2048));
+  } catch {
+    return false;
+  }
 }
 
 // Ensure <skillsDir>/surface is a link to the canonical dir (or a managed
-// copy). Refuses to replace a directory holding anything besides SKILL.md —
-// that is someone else's skill.
-function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean): LinkResult {
+// copy). Refuses to replace a directory holding anything besides a Surface
+// SKILL.md — that is someone else's skill. `owned` = recorded in
+// install-state as ours, which skips the content check (a stale managed copy
+// may hold old text).
+function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean, owned: boolean): LinkResult {
   const target = path.join(skillsDir, "surface");
   let st: fs.Stats | null = null;
   try {
@@ -116,6 +141,10 @@ function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean): L
     const entries = fs.readdirSync(target).filter((e) => e !== "SKILL.md");
     if (entries.length > 0) {
       return { path: target, mode: "skipped", note: `contains other files (${entries[0]}…) — not managed by surface` };
+    }
+    const skillFile = path.join(target, "SKILL.md");
+    if (!owned && fs.existsSync(skillFile) && !looksLikeSurfaceSkill(skillFile)) {
+      return { path: target, mode: "skipped", note: "its SKILL.md is not a Surface skill — not managed by surface" };
     }
     if (copy) {
       copyInto(target);
@@ -145,13 +174,13 @@ function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean): L
 
 // ── install-state.json (the agent bootstrap contract in INSTALL_FOR_AGENTS.md) ──
 
-function installStatePath(): string {
-  return path.join(dataDir(), "install-state.json");
+function installStatePath(base: string): string {
+  return path.join(base, "install-state.json");
 }
 
-function readInstallState(): Record<string, unknown> | null {
+function readInstallState(base: string): Record<string, unknown> | null {
   try {
-    return JSON.parse(fs.readFileSync(installStatePath(), "utf8"));
+    return JSON.parse(fs.readFileSync(installStatePath(base), "utf8"));
   } catch (e: any) {
     if (e?.code === "ENOENT") return {
       service: "pending",
@@ -165,47 +194,80 @@ function readInstallState(): Record<string, unknown> | null {
   }
 }
 
-function recordSkillState(report: SkillReport): void {
-  const state = readInstallState();
+function recordSkillState(report: SkillReport, base: string, prev: Map<string, "copy" | "link">): void {
+  const state = readInstallState(base);
   if (!state) return;
   state.skill_saved_to = report.canonical;
-  state.skill_links = report.links
-    .filter((l) => l.mode !== "skipped")
+  const links = report.links
+    .filter((l) => l.mode !== "skipped" && l.mode !== "failed")
     .map((l) => ({ path: l.path, mode: l.mode === "copied" ? "copy" : "link" }));
-  fs.mkdirSync(dataDir(), { recursive: true });
-  fs.writeFileSync(installStatePath(), JSON.stringify(state, null, 2) + "\n");
+  for (const l of report.links) {
+    // a failed target stays recorded with its old mode so the next run retries it
+    if (l.mode === "failed" && prev.has(path.resolve(l.path))) {
+      links.push({ path: l.path, mode: prev.get(path.resolve(l.path))! });
+    }
+  }
+  state.skill_links = links;
+  fs.mkdirSync(base, { recursive: true });
+  const file = installStatePath(base);
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
+  fs.renameSync(tmp, file); // atomic: a concurrent reader never sees a partial write
 }
 
-function recordedLinks(): { path: string; mode: string }[] {
-  const state = readInstallState();
+function recordedLinks(base: string): { path: string; mode: string }[] {
+  const state = readInstallState(base);
   const links = (state as any)?.skill_links;
   return Array.isArray(links) ? links.filter((l) => typeof l?.path === "string") : [];
 }
 
-export function syncSkill(extraTo: string[], copy: boolean): SkillReport {
-  const { canonical, updated } = syncCanonical();
+// Mode rules: --copy/--link apply to this run's scope — the --to dirs when
+// given, else the default targets. Every other recorded target keeps its
+// recorded mode; new targets default to link. Modes are remembered per
+// target, so `surface upgrade` refreshes without reshaping anything.
+export function syncSkill(extraTo: string[], copy: boolean, link = false, name?: string): SkillReport {
+  const base = dataDir(name);
+  const { canonical, updated } = syncCanonical(base);
   const canonicalDir = path.dirname(canonical);
-  // Union: defaults + explicit --to + everything recorded by earlier installs
-  // (so copies made where symlinks failed keep getting refreshed).
+  const recorded = new Map<string, "copy" | "link">();
+  for (const l of recordedLinks(base)) recorded.set(path.resolve(l.path), l.mode === "copy" ? "copy" : "link");
+  const recCopy = (skillsDir: string) => recorded.get(path.join(skillsDir, "surface")) === "copy";
+  const modeFor = (skillsDir: string, inScope: boolean) =>
+    inScope && copy ? true : inScope && link ? false : recCopy(skillsDir);
+
   const targets = new Map<string, boolean>(); // skillsDir -> copy?
-  for (const dir of defaultTargets()) targets.set(path.resolve(dir), copy);
-  for (const dir of extraTo) targets.set(path.resolve(dir), copy);
-  for (const l of recordedLinks()) {
-    const skillsDir = path.dirname(path.resolve(l.path));
-    if (!targets.has(skillsDir)) targets.set(skillsDir, l.mode === "copy");
+  const explicit = extraTo.length > 0;
+  for (const dir of defaultTargets()) {
+    const d = path.resolve(dir);
+    targets.set(d, modeFor(d, !explicit));
   }
+  for (const dir of extraTo) {
+    const d = path.resolve(dir);
+    targets.set(d, modeFor(d, true));
+  }
+  for (const [t] of recorded) {
+    const skillsDir = path.dirname(t);
+    if (!targets.has(skillsDir)) targets.set(skillsDir, recCopy(skillsDir));
+  }
+
   const links: LinkResult[] = [];
   for (const [skillsDir, asCopy] of targets) {
-    if (path.resolve(path.join(skillsDir, "surface")) === path.resolve(canonicalDir)) continue;
-    links.push(ensureTarget(skillsDir, canonicalDir, asCopy));
+    const target = path.join(skillsDir, "surface");
+    if (path.resolve(target) === path.resolve(canonicalDir)) continue;
+    try {
+      links.push(ensureTarget(skillsDir, canonicalDir, asCopy, recorded.has(path.resolve(target))));
+    } catch (e: any) {
+      // one unwritable target must not abort the converger — report and move on
+      links.push({ path: target, mode: "failed", note: String(e?.code || e?.message || e) });
+    }
   }
   const report: SkillReport = { canonical, version: localVersion(), updated, links };
-  recordSkillState(report);
+  recordSkillState(report, base, recorded);
   return report;
 }
 
-export function skillFresh(): { canonical: string; fresh: boolean } {
-  const dest = path.join(canonicalSkillDir(), "SKILL.md");
+export function skillFresh(name?: string): { canonical: string; fresh: boolean } {
+  const dest = path.join(canonicalSkillDir(dataDir(name)), "SKILL.md");
   try {
     return { canonical: dest, fresh: fs.readFileSync(dest).equals(fs.readFileSync(packageSkillPath())) };
   } catch {
@@ -217,18 +279,25 @@ export function skillFresh(): { canonical: string; fresh: boolean } {
 
 export async function runSkill({ positional, flags, multi }: Ctx): Promise<void> {
   if (positional[0] !== "install") {
-    console.error("usage: surface skill install [--to <skills-dir>]... [--copy] [--json]");
+    console.error("usage: surface skill install [--to <skills-dir>]... [--copy|--link] [--json]");
     process.exit(2);
   }
-  const report = syncSkill(multi.to || [], flags.copy === true);
+  if (flags.copy === true && flags.link === true) {
+    console.error("--copy and --link are mutually exclusive");
+    process.exit(2);
+  }
+  const report = syncSkill(multi.to || [], flags.copy === true, flags.link === true);
+  const failed = report.links.filter((l) => l.mode === "failed");
   if (flags.json === true) {
     console.log(JSON.stringify(report, null, 2));
-    return;
+  } else {
+    console.log(`skill ${report.version} → ${report.canonical}${report.updated ? " (updated)" : ""}`);
+    for (const l of report.links) {
+      console.log(`  ${l.mode.padEnd(7)} ${l.path}${l.note ? `  (${l.note})` : ""}`);
+    }
+    if (failed.length) console.error(`${failed.length} target(s) could not be written — see notes above`);
   }
-  console.log(`skill ${report.version} → ${report.canonical}${report.updated ? " (updated)" : ""}`);
-  for (const l of report.links) {
-    console.log(`  ${l.mode.padEnd(7)} ${l.path}${l.note ? `  (${l.note})` : ""}`);
-  }
+  if (failed.length) process.exit(1);
 }
 
 // ── surface upgrade ──
@@ -236,6 +305,8 @@ export async function runSkill({ positional, flags, multi }: Ctx): Promise<void>
 function registryUrl(): string {
   return (process.env.SURFACE_NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
 }
+
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 async function latestVersion(): Promise<string> {
   const url = `${registryUrl()}/surface-display/latest`;
@@ -247,7 +318,10 @@ async function latestVersion(): Promise<string> {
   }
   if (!res.ok) throw new Error(`registry answered ${res.status} for ${url}`);
   const body: any = await res.json();
-  if (typeof body?.version !== "string") throw new Error(`no version in registry response from ${url}`);
+  // strict gate: this string reaches a shell-backed npm spawn on Windows
+  if (typeof body?.version !== "string" || !SEMVER.test(body.version)) {
+    throw new Error(`registry returned an invalid version (${JSON.stringify(body?.version).slice(0, 60)}) from ${url}`);
+  }
   return body.version;
 }
 
@@ -273,7 +347,10 @@ function installContext(): InstallContext {
   });
   const globalRoot = probe.status === 0 ? probe.stdout.trim() : "";
   try {
-    if (globalRoot && root.startsWith(fs.realpathSync(globalRoot))) return "global";
+    if (globalRoot) {
+      const rel = path.relative(fs.realpathSync(globalRoot), root);
+      if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) return "global";
+    }
   } catch {
     // global root missing — treat as local
   }
@@ -283,13 +360,14 @@ function installContext(): InstallContext {
 export async function runUpgrade({ flags }: Ctx): Promise<void> {
   const json = flags.json === true;
   const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 30;
+  const name = typeof flags.name === "string" ? flags.name : undefined;
   const current = localVersion();
   const latest = await latestVersion();
   const available = newerThan(latest, current);
   const context = installContext();
 
   if (flags.check === true) {
-    const skill = skillFresh();
+    const skill = skillFresh(name);
     const report = { current, latest, update_available: available, context, skill };
     if (json) console.log(JSON.stringify(report, null, 2));
     else {
@@ -320,12 +398,14 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
 
   // Always converge skill + service, even when already on the latest version —
   // this is what finishes a manual `npm update -g` someone ran without us.
-  const skill = syncSkill([], false);
-  const service = await restartServiceIfStale(timeoutSec, typeof flags.name === "string" ? flags.name : undefined);
+  const skill = syncSkill([], false, false, name);
+  const service = await restartServiceIfStale(timeoutSec, name);
+  const failedLinks = skill.links.filter((l) => l.mode === "failed");
 
   const report = { previous: current, installed, latest, package: packageStep, context, skill, service };
   if (json) {
     console.log(JSON.stringify(report, null, 2));
+    if ((service.restarted && service.error) || failedLinks.length) process.exit(1);
     return;
   }
   console.log(available && packageStep.startsWith("updated") ? packageStep : `package: ${packageStep === "unchanged" ? `up to date (${current})` : packageStep}`);
@@ -333,11 +413,16 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   console.log(`skill  : ${skill.version} → ${skill.canonical}${skill.updated ? " (updated)" : ""}`);
   for (const l of skill.links) console.log(`  ${l.mode.padEnd(7)} ${l.path}${l.note ? `  (${l.note})` : ""}`);
   if (!service.installed) console.log("service: not installed here — skipped");
-  else if (!service.restarted) console.log(`service: already on ${service.version} — no restart needed`);
-  else if (service.error) {
+  else if (service.restarted && service.error) {
     console.error(`service: restarted but not healthy — ${service.error}`);
     process.exit(1);
-  } else console.log(`service: restarted, now ${service.version}`);
+  } else if (service.restarted) console.log(`service: restarted, now ${service.version}`);
+  else if (service.version) console.log(`service: already on ${service.version} — no restart needed`);
+  else console.log(`service: ${service.state || "stopped"} — left as-is (start it with: surface service start)`);
+  if (failedLinks.length) {
+    console.error(`skill  : ${failedLinks.length} target(s) could not be written — see notes above`);
+    process.exit(1);
+  }
 }
 
 function contextAdvice(context: InstallContext): string {

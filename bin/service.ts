@@ -505,6 +505,13 @@ function loadSavedConfig(name: string): SavedConfig {
   }
 }
 
+// The skill/upgrade side (bin/upgrade.ts) anchors the canonical SKILL.md in
+// the same data dir the service actually uses — saved config beats
+// SURFACE_DATA_DIR, matching resolveConfig below.
+export function savedServiceDataDir(name = "surface"): string | undefined {
+  return loadSavedConfig(name).dataDir;
+}
+
 export function saveServiceConfig(cfg: ServiceConfig): void {
   const file = savedConfigPath(cfg.name);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -564,16 +571,26 @@ function skillCopyState(cfg: ServiceConfig): { path: string; state: "ok" | "stal
   }
 }
 
+// Supervisor states that mean "an operator stopped this on purpose":
+// systemd `inactive`, launchd unloaded (stop = bootout), Scheduled Task
+// Ready/Disabled. Crashed/hung states are NOT here — those still restart.
+const STOPPED_STATES = new Set(["inactive", "not loaded", "ready", "disabled"]);
+
 // Converge the running service onto the installed package version: restart
 // only when a service is registered AND it reports a different version than
-// this CLI (the post-`npm update -g` blind spot). Used by `surface upgrade`.
+// this CLI (the post-`npm update -g` blind spot). A cleanly stopped service
+// stays stopped — upgrade converges versions, it never overrides an
+// operator's stop. Used by `surface upgrade`.
 export async function restartServiceIfStale(
   timeoutSec = 20,
   name?: string,
-): Promise<{ installed: boolean; restarted: boolean; version?: string; error?: string }> {
+): Promise<{ installed: boolean; restarted: boolean; version?: string; state?: string; error?: string }> {
   const cfg = resolveConfig(name ? { name } : {});
   const st = backend().status(cfg);
   if (!st.registered) return { installed: false, restarted: false };
+  if (STOPPED_STATES.has(st.state.trim().toLowerCase())) {
+    return { installed: true, restarted: false, state: st.state };
+  }
   const mine = localVersion();
   const before = await checkHealth(cfg.port, healthHost(cfg.bind));
   if (before.ok && mine !== "unknown" && before.version === mine) {

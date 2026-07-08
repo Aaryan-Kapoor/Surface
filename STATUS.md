@@ -67,6 +67,15 @@ bash scripts/check-leaks.sh
   skill → service in one command. Chosen over `npx skills add` (tracks git
   master — breaks the version lock between skill text and installed binary)
   and over linking into `$(npm root -g)` (dangles when nvm switches node).
+  Hardened after a two-reviewer pass (Codex high-effort + Opus, 2026-07-07):
+  skill dir follows the service's *saved* data dir (matching `service
+  health`), registry version is semver-gated before `npm install` (Windows
+  `shell:true` injection), a cleanly stopped service is never started by
+  `upgrade`, per-target failures don't abort the converger (exit 1 after
+  everything else converges), `--copy`/`--link` modes are per-target sticky
+  (scope = `--to` dirs, else defaults), and a lone SKILL.md is only adopted
+  when it is a Surface skill (`name: surface` frontmatter) or already
+  recorded as ours.
 - The service is intended to run once as a per-user supervised service bound
   to `127.0.0.1` (`surface service install`; see Distribution above).
 - Pre-baseline SQLite databases are archived to `db.sqlite.bak` at boot and are not row-migrated.
