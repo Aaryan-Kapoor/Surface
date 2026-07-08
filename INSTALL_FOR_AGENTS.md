@@ -12,6 +12,7 @@ Install state lives outside the repo so the working tree stays clean:
 {
   "service": "pending",
   "skill_saved_to": null,
+  "skill_sha256": null,
   "tutorial": "pending",
   "surface_version": null,
   "installed_at": null,
@@ -20,7 +21,7 @@ Install state lives outside the repo so the working tree stays clean:
 ```
 
 - `service`: `pending | running | not_installed | failed` — is the Surface service reachable on `127.0.0.1:3000`?
-- `skill_saved_to`: the canonical `SKILL.md` copy (stamped by `surface skill install`, which also records its links under `skill_links`).
+- `skill_saved_to`: the canonical `SKILL.md` copy (stamped by `surface skill install`, which also records its links under `skill_links` and the hash of what it wrote under `skill_sha256` — never set these by hand; they are how upgrades tell their own stale copies from user edits).
 - `tutorial`: `pending | in_progress | complete | skipped`.
 - `surface_version`, `installed_at`: stamped on first complete install.
 - `notes`: anything the next agent should know.
@@ -104,7 +105,10 @@ bookkeeping. Ownership rules: a skill directory containing anything besides a
 `SKILL.md` is never touched; a directory holding only a *Surface* `SKILL.md`
 (frontmatter `name: surface` — the legacy manual copies older instructions
 created) is adopted and upgraded to a link; a lone non-Surface `SKILL.md` is
-skipped. Idempotent; re-run any time.
+skipped. A canonical copy the user edited is kept — and mirrored to every
+link and managed copy — until `surface skill install --force` replaces it
+with the packaged skill (`service health` reports it as `edited`).
+Idempotent; re-run any time.
 
 Your harness reads its own directory instead? Add it with `--to` (repeatable).
 `--copy` / `--link` set copies-vs-links for the run's targets (the `--to`
@@ -226,7 +230,9 @@ skill link/copy, and restarts the service if it is running an older version
 (health-gated; a cleanly stopped service is left stopped). It is a converger —
 safe to run any time, including to finish a manual `npm update -g` someone ran
 without it. A skill target that can't be written is reported and skipped (exit
-1 after everything else converges), never allowed to abort the run halfway.
+1 after everything else converges), never allowed to abort the run halfway. A
+user-edited skill is kept, reported as `edited` — upgrade converges versions,
+not opinions; only `surface skill install --force` replaces the edit.
 
 `surface upgrade --check` reports without changing anything. `surface service
 health` prints a note whenever the package, the running service, or the skill

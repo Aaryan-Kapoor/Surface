@@ -28,6 +28,12 @@ All notable changes to Surface are recorded here.
   no longer aborts `surface upgrade` halfway (reported, everything else still
   converges, exit 1); a cleanly stopped service is left stopped instead of
   being started by `upgrade`.
+- User-edited skills are never clobbered: `install-state.json` records the
+  hash of the `SKILL.md` Surface last wrote (`skill_sha256`), so upgrades can
+  tell their own stale copies (converged as before) from local edits (kept,
+  mirrored to every link/copy, reported as `edited` by `skill install`,
+  `upgrade`, `--check`, and `service health`). `surface skill install
+  --force` replaces an edit with the packaged skill.
 - `surface service health` now also flags a stale/missing skill copy, and the
   CLI prints an actionable "service unreachable — is it running?" hint (with
   the install one-liner) instead of a bare `fetch failed` when the service is

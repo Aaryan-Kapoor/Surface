@@ -75,7 +75,9 @@ bash scripts/check-leaks.sh
   everything else converges), `--copy`/`--link` modes are per-target sticky
   (scope = `--to` dirs, else defaults), and a lone SKILL.md is only adopted
   when it is a Surface skill (`name: surface` frontmatter) or already
-  recorded as ours.
+  recorded as ours. User edits to the canonical SKILL.md are hash-guarded
+  (`skill_sha256` in install-state): kept and mirrored everywhere until
+  `surface skill install --force`; health reports `edited` vs `stale`.
 - The service is intended to run once as a per-user supervised service bound
   to `127.0.0.1` (`surface service install`; see Distribution above).
 - Pre-baseline SQLite databases are archived to `db.sqlite.bak` at boot and are not row-migrated.
