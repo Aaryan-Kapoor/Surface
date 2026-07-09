@@ -152,6 +152,12 @@ function ensureTarget(skillsDir: string, canonicalDir: string, copy: boolean, ow
 
   if (st?.isSymbolicLink()) {
     if (!copy && linksTo(target, canonicalDir)) return { path: target, mode: "kept" };
+    // An unrecorded symlink may be the user's own arrangement (e.g. pointing
+    // at their custom skill fork) — only repair links that are ours or that
+    // resolve to a Surface skill.
+    if (!owned && !linksTo(target, canonicalDir) && !looksLikeSurfaceSkill(path.join(target, "SKILL.md"))) {
+      return { path: target, mode: "skipped", note: "symlink does not point at a Surface skill — not managed by surface" };
+    }
     fs.unlinkSync(target); // rmSync throws EISDIR on a symlink-to-directory
     st = null;
   } else if (st?.isDirectory()) {
@@ -418,10 +424,14 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   let packageStep = "unchanged";
   if (available && context === "global") {
     const res = spawnSync(npmCmd(), ["install", "-g", `surface-display@${latest}`], {
-      stdio: "inherit",
+      // --json promises pure JSON on stdout — npm's install chatter goes to
+      // stderr there instead of corrupting the report.
+      stdio: json ? ["ignore", "pipe", "inherit"] : "inherit",
+      encoding: "utf8",
       shell: process.platform === "win32",
     });
     if (res.status !== 0) {
+      if (json && res.stdout) process.stderr.write(res.stdout);
       console.error(`npm install -g surface-display@${latest} failed (exit ${res.status ?? "?"})`);
       process.exit(1);
     }

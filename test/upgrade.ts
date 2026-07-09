@@ -18,9 +18,9 @@ const baseEnv = {
   SURFACE_DATA_DIR: dataDir,
 };
 
-function run(args: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+function run(args: string[], env: Record<string, string> = {}, bin = cli): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    execFile("node", [cli, ...args], { cwd: REPO_ROOT, env: { ...process.env, ...baseEnv, ...env } }, (error, stdout, stderr) => {
+    execFile("node", [bin, ...args], { cwd: REPO_ROOT, env: { ...process.env, ...baseEnv, ...env } }, (error, stdout, stderr) => {
       resolve({ code: typeof (error as any)?.code === "number" ? (error as any).code : 0, stdout, stderr });
     });
   });
@@ -140,6 +140,21 @@ try {
   const repairedLink = JSON.parse(repaired.stdout).links.find((l: any) => l.path === agentsLink);
   assert.equal(repairedLink.mode, "linked", "misdirected symlink is repointed");
   assert.equal(fs.readFileSync(path.join(agentsLink, "SKILL.md"), "utf8"), pkgSkill);
+
+  // ── but a user's own symlink (unrecorded, non-Surface target) is left alone ──
+  const userSkillDir = path.join(home, "my-skill-fork");
+  fs.mkdirSync(userSkillDir, { recursive: true });
+  fs.writeFileSync(path.join(userSkillDir, "SKILL.md"), "---\nname: my-fork\n---\nthe user's own skill");
+  const userSymDir = path.join(home, ".usersym", "skills");
+  const userSymTarget = path.join(userSymDir, "surface");
+  fs.mkdirSync(userSymDir, { recursive: true });
+  fs.symlinkSync(userSkillDir, userSymTarget, process.platform === "win32" ? "junction" : "dir");
+  const guarded = await run(["skill", "install", "--to", userSymDir, "--json"]);
+  assert.equal(guarded.code, 0, guarded.stderr);
+  const guardedLink = JSON.parse(guarded.stdout).links.find((l: any) => l.path === userSymTarget);
+  assert.equal(guardedLink.mode, "skipped", "an unrecorded symlink to a foreign skill is not repointed");
+  assert.equal(fs.realpathSync(userSymTarget), fs.realpathSync(userSkillDir), "the user's symlink is untouched");
+  assert.equal(fs.readFileSync(path.join(userSymTarget, "SKILL.md"), "utf8"), "---\nname: my-fork\n---\nthe user's own skill");
 
   // ── --copy scope: --to targets only; other recorded targets keep their modes ──
   const copyDir = path.join(home, ".copyharness", "skills");
@@ -346,6 +361,43 @@ try {
     assert.equal(fs.readFileSync(a.canonical, "utf8"), pkgSkill);
   } finally {
     fs.rmSync(path.join(servicesDir, "surface.json"), { force: true });
+  }
+
+  // ── global install path: a fake npm on PATH updates the package, and npm's
+  // chatter never corrupts --json stdout (the bundle is self-contained, so a
+  // copy under node_modules/ behaves exactly like npm install -g put it there) ──
+  const fakePkgRoot = path.join(home, "fake-global", "node_modules", "surface-display");
+  fs.mkdirSync(path.join(fakePkgRoot, "dist"), { recursive: true });
+  fs.copyFileSync(cli, path.join(fakePkgRoot, "dist", "surface.mjs"));
+  fs.copyFileSync(path.join(REPO_ROOT, "package.json"), path.join(fakePkgRoot, "package.json"));
+  fs.copyFileSync(path.join(REPO_ROOT, "SKILL.md"), path.join(fakePkgRoot, "SKILL.md"));
+  const fakeGlobalRoot = path.dirname(fakePkgRoot);
+  const fakeBin = path.join(home, "fake-bin");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  if (process.platform === "win32") {
+    fs.writeFileSync(path.join(fakeBin, "npm.cmd"),
+      `@echo off\r\nif "%1"=="root" (\r\necho ${fakeGlobalRoot}\r\nexit /b 0\r\n)\r\necho added 1 package in 1s\r\nexit /b 0\r\n`);
+  } else {
+    fs.writeFileSync(path.join(fakeBin, "npm"),
+      `#!/bin/sh\nif [ "$1" = "root" ]; then\n  echo "${fakeGlobalRoot}"\n  exit 0\nfi\necho "added 1 package in 1s"\nexit 0\n`,
+      { mode: 0o755 });
+  }
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") || "PATH";
+  const globalEnv = {
+    [pathKey]: `${fakeBin}${path.delimiter}${process.env[pathKey] || ""}`,
+  };
+  const globalReg = await stubRegistry("99.0.0");
+  try {
+    const fakeCli = path.join(fakePkgRoot, "dist", "surface.mjs");
+    const globalUp = await run(["upgrade", "--json", "--name", upgName],
+      { ...globalEnv, SURFACE_NPM_REGISTRY: globalReg.url }, fakeCli);
+    assert.equal(globalUp.code, 0, globalUp.stderr);
+    const g = JSON.parse(globalUp.stdout); // throws if npm output leaked into stdout
+    assert.equal(g.context, "global", "a copy under the npm global root is detected as global");
+    assert.match(g.package, /^updated /, "npm install ran");
+    assert.ok(!globalUp.stdout.includes("added 1 package"), "npm chatter stays out of --json stdout");
+  } finally {
+    globalReg.close();
   }
 
   console.log("Upgrade/skill tests passed");
