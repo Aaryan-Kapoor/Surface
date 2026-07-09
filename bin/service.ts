@@ -1,4 +1,5 @@
 import { spawnSync } from "child_process";
+import { createHash } from "crypto";
 import fs from "fs";
 import net from "net";
 import os from "os";
@@ -349,7 +350,7 @@ export interface HealthReport {
   error?: string;
 }
 
-function localVersion(): string {
+export function localVersion(): string {
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
     return String(pkg.version || "unknown");
@@ -505,6 +506,13 @@ function loadSavedConfig(name: string): SavedConfig {
   }
 }
 
+// The skill/upgrade side (bin/upgrade.ts) anchors the canonical SKILL.md in
+// the same data dir the service actually uses — saved config beats
+// SURFACE_DATA_DIR, matching resolveConfig below.
+export function savedServiceDataDir(name = "surface"): string | undefined {
+  return loadSavedConfig(name).dataDir;
+}
+
 export function saveServiceConfig(cfg: ServiceConfig): void {
   const file = savedConfigPath(cfg.name);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -552,8 +560,67 @@ function resolveConfig(flags: Record<string, string | boolean>): ServiceConfig {
   };
 }
 
+// Is the skill copy agents read in sync with the package's SKILL.md?
+// "stale" = provably our old content (hash matches skill_sha256 in
+// install-state — upgrade will converge it); "edited" = the user changed it
+// (or its provenance is unknown) — upgrade keeps it.
+function skillCopyState(cfg: ServiceConfig): { path: string; state: "ok" | "stale" | "edited" | "missing" | "unknown" } {
+  const copy = path.join(cfg.dataDir, "skills", "surface", "SKILL.md");
+  try {
+    const pkgSkill = fs.readFileSync(path.join(__dirname, "..", "SKILL.md"));
+    if (!fs.existsSync(copy)) return { path: copy, state: "missing" };
+    const cur = fs.readFileSync(copy);
+    if (cur.equals(pkgSkill)) return { path: copy, state: "ok" };
+    let recorded: unknown;
+    try {
+      recorded = JSON.parse(fs.readFileSync(path.join(cfg.dataDir, "install-state.json"), "utf8")).skill_sha256;
+    } catch {
+      // no state file — unknown provenance
+    }
+    const mine = createHash("sha256").update(cur).digest("hex");
+    return { path: copy, state: recorded === mine ? "stale" : "edited" };
+  } catch {
+    return { path: copy, state: "unknown" };
+  }
+}
+
+// Supervisor states that mean "an operator stopped this on purpose":
+// systemd `inactive`, launchd unloaded (stop = bootout), Scheduled Task
+// Ready/Disabled. Crashed/hung states are NOT here — those still restart.
+const STOPPED_STATES = new Set(["inactive", "not loaded", "ready", "disabled"]);
+
+// Converge the running service onto the installed package version: restart
+// only when a service is registered AND it reports a different version than
+// this CLI (the post-`npm update -g` blind spot). A cleanly stopped service
+// stays stopped — upgrade converges versions, it never overrides an
+// operator's stop. Used by `surface upgrade`.
+export async function restartServiceIfStale(
+  timeoutSec = 20,
+  name?: string,
+): Promise<{ installed: boolean; restarted: boolean; version?: string; state?: string; error?: string }> {
+  const cfg = resolveConfig(name ? { name } : {});
+  const st = backend().status(cfg);
+  if (!st.registered) return { installed: false, restarted: false };
+  if (STOPPED_STATES.has(st.state.trim().toLowerCase())) {
+    return { installed: true, restarted: false, state: st.state };
+  }
+  const mine = localVersion();
+  const before = await checkHealth(cfg.port, healthHost(cfg.bind));
+  if (before.ok && mine !== "unknown" && before.version === mine) {
+    return { installed: true, restarted: false, version: before.version };
+  }
+  backend().restart(cfg);
+  const health = await waitHealthy(cfg.port, timeoutSec, healthHost(cfg.bind));
+  if (!health.ok) return { installed: true, restarted: true, error: String(health.error) };
+  return { installed: true, restarted: true, version: health.version };
+}
+
 export async function runService({ positional, flags }: ServiceCtx): Promise<void> {
   const sub = positional[0];
+  if (sub === "update" || sub === "upgrade") {
+    console.error("did you mean: surface upgrade — updates the package, refreshes the skill, and restarts the service");
+    process.exit(2);
+  }
   const subs = ["install", "uninstall", "start", "stop", "restart", "status", "health", "logs"];
   if (!sub || !subs.includes(sub)) {
     console.error(`usage:\n${SERVICE_HELP}`);
@@ -650,17 +717,26 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
     }
     case "health": {
       const health = await checkHealth(cfg.port, healthHost(cfg.bind));
+      const mine = localVersion();
+      const skill = skillCopyState(cfg);
       if (json) {
-        console.log(JSON.stringify(health, null, 2));
+        console.log(JSON.stringify({ ...health, cli_version: mine, skill_copy: skill.path, skill_copy_state: skill.state }, null, 2));
       } else if (health.ok) {
         console.log(`healthy: Surface ${health.version} on :${health.port} (content :${health.content_port}), pid ${health.pid}, up ${health.uptime_seconds}s`);
       } else {
         console.error(`unhealthy: ${health.error} (${health.url})`);
       }
-      // The npm-upgrade blind spot: package updated, service still running old code.
-      const mine = localVersion();
-      if (health.ok && mine !== "unknown" && health.version !== mine) {
-        console.error(`note: this CLI is ${mine} but the running service is ${health.version} — run: surface service restart`);
+      if (!json) {
+        // The npm-upgrade blind spot: package updated, service still running old code.
+        if (health.ok && mine !== "unknown" && health.version !== mine) {
+          console.error(`note: this CLI is ${mine} but the running service is ${health.version} — run: surface upgrade`);
+        }
+        // Same blind spot for the skill: the copy agents read must match the package.
+        if (skill.state === "stale" || skill.state === "missing") {
+          console.error(`note: skill copy at ${skill.path} is ${skill.state} — run: surface upgrade (or: surface skill install)`);
+        } else if (skill.state === "edited") {
+          console.error(`note: skill copy at ${skill.path} is locally edited — kept; surface skill install --force replaces it`);
+        }
       }
       process.exit(health.ok ? 0 : 1);
     }

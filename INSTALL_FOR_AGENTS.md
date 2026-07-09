@@ -12,6 +12,7 @@ Install state lives outside the repo so the working tree stays clean:
 {
   "service": "pending",
   "skill_saved_to": null,
+  "skill_sha256": null,
   "tutorial": "pending",
   "surface_version": null,
   "installed_at": null,
@@ -20,7 +21,7 @@ Install state lives outside the repo so the working tree stays clean:
 ```
 
 - `service`: `pending | running | not_installed | failed` — is the Surface service reachable on `127.0.0.1:3000`?
-- `skill_saved_to`: where you copied `SKILL.md` into your own skills directory.
+- `skill_saved_to`: the canonical `SKILL.md` copy (stamped by `surface skill install`, which also records its links under `skill_links` and the hash of what it wrote under `skill_sha256` — never set these by hand; they are how upgrades tell their own stale copies from user edits).
 - `tutorial`: `pending | in_progress | complete | skipped`.
 - `surface_version`, `installed_at`: stamped on first complete install.
 - `notes`: anything the next agent should know.
@@ -78,24 +79,62 @@ If the user declines: set `service: "not_installed"` and stop. Don't proceed wit
 
 > **Note (fresh-start schema, 2026-06):** the first boot of a current build archives any pre-existing database to `~/.surface/db.sqlite.bak` and starts clean. Surfaces from older versions are not migrated — re-link or re-create them (`surface sync` recreates anything a project declared in `.surface/`).
 
-## Step 2 — Save SKILL.md to your skills directory
-
-`SKILL.md` ships inside the installed package (`"$(npm root -g)/surface-display/SKILL.md"`; repo root if you're working from a clone). Copy it into your own agent's skill directory so you can read it on future sessions.
-
-Known agent skill directories:
-
-- **Claude Code**: `~/.claude/skills/surface/SKILL.md`
-- **Cursor**: `~/.cursor/skills/surface/SKILL.md` (or workspace `.cursor/skills/`)
-- **Generic**: whatever path your agent uses for ambient skills
+## Step 2 — Install SKILL.md into your skills directory
 
 ```bash
-mkdir -p ~/.claude/skills/surface
-cp "$(npm root -g)/surface-display/SKILL.md" ~/.claude/skills/surface/SKILL.md
+surface skill install
 ```
 
-Set `skill_saved_to: "<absolute path>"`.
+One command. It keeps a canonical copy at `<data-dir>/skills/surface/SKILL.md`
+(the service's data dir: the one saved by `surface service install`, else
+`SURFACE_DATA_DIR`, else `~/.surface`) and links it — directory symlink,
+junction on Windows — into the two locations that cover almost every harness
+(paths verified against vendor docs, 2026-07):
 
-If the agent has no skills directory convention, document the path in `notes` and read `SKILL.md` from the repo on every session.
+- `~/.agents/skills/surface/` — the neutral open standard (agentskills.io),
+  read by Codex, Cursor, Gemini CLI, Copilot, Zed, Amp, Goose, OpenCode, Roo,
+  Kilo, and Windsurf.
+- `~/.claude/skills/surface/` — Claude Code (it does **not** read
+  `~/.agents/`).
+
+Because they are links to one canonical copy, `surface upgrade` refreshes the
+skill everywhere at once. Where symlinks aren't permitted it falls back to
+managed copies and records them, so upgrades rewrite those too. It stamps
+`skill_saved_to` and `skill_links` in the state file for you — no manual
+bookkeeping. Ownership rules: a skill directory containing anything besides a
+`SKILL.md` is never touched; a directory holding only a *Surface* `SKILL.md`
+(frontmatter `name: surface` — the legacy manual copies older instructions
+created) is adopted and upgraded to a link; a lone non-Surface `SKILL.md` is
+skipped; an existing symlink is only repointed when it is recorded as ours or
+resolves to a Surface skill. A canonical copy the user edited is kept — and mirrored to every
+link and managed copy — until `surface skill install --force` replaces it
+with the packaged skill (`service health` reports it as `edited`).
+Idempotent; re-run any time.
+
+Your harness reads its own directory instead? Add it with `--to` (repeatable).
+`--copy` / `--link` set copies-vs-links for the run's targets (the `--to`
+dirs, or the two defaults when no `--to` is given); each target's mode is
+remembered per target and kept by later runs and `surface upgrade`:
+
+```bash
+surface skill install --to ~/.cline/skills
+```
+
+Native global dirs, for reference — every non-Claude harness here also reads
+`~/.agents/skills/`, so `--to` is rarely needed: Cursor
+`~/.cursor/skills/`, Copilot (VS Code) `~/.copilot/skills/`, Gemini CLI
+`~/.gemini/skills/`, Windsurf `~/.codeium/windsurf/skills/`, Cline
+`~/.cline/skills/` (off by default — enable Settings → Features → Skills,
+v3.48+), Roo Code `~/.roo/skills/`, Kilo Code `~/.kilo/skills/` (`.kilo`, not
+`.kilocode`), OpenCode `~/.config/opencode/skills/`, Goose
+`~/.config/goose/skills/`, Amp `~/.config/agents/skills/`. Project-scoped:
+the repo-relative equivalents (`.agents/skills/`, `.claude/skills/`, …) via
+`--to`.
+
+No skills convention (e.g. Aider)? Append a one-line pointer to the canonical
+copy in your agent's instructions file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+`.github/copilot-instructions.md`, Aider's `CONVENTIONS.md`), record the path
+in `notes`, and read `SKILL.md` from there on every session.
 
 ## Step 3 — Tutorial
 
@@ -182,16 +221,27 @@ Per-surface webhooks (with retry) are usually better: `surface bind <id> --webho
 ## Upgrading
 
 ```bash
-npm update -g surface-display
-surface service restart      # health-gated; the service keeps running old code until restarted
-surface service health       # warns if CLI and service versions still diverge
+surface upgrade
 ```
 
-Re-copy `SKILL.md` to the path recorded in `skill_saved_to` after upgrading —
-`surface service health` catching a version change is your cue.
+One command, three legs: updates `surface-display` to the latest npm release
+(global installs only — it detects and skips repo clones and project-local
+installs with advice), refreshes the canonical `SKILL.md` plus every recorded
+skill link/copy, and restarts the service if it is running an older version
+(health-gated; a cleanly stopped service is left stopped). It is a converger —
+safe to run any time, including to finish a manual `npm update -g` someone ran
+without it. A skill target that can't be written is reported and skipped (exit
+1 after everything else converges), never allowed to abort the run halfway. A
+user-edited skill is kept, reported as `edited` — upgrade converges versions,
+not opinions; only `surface skill install --force` replaces the edit.
+
+`surface upgrade --check` reports without changing anything. `surface service
+health` prints a note whenever the package, the running service, or the skill
+copies drift — that note is your cue.
 
 (Repo clone instead: `git pull && npm install && npm test`, then
-`surface service restart`.)
+`surface upgrade` — it skips the npm step but still converges skill and
+service.)
 
 Ask before restarting if the user has active work on the display.
 

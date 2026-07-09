@@ -2,6 +2,51 @@
 
 All notable changes to Surface are recorded here.
 
+## Unreleased
+
+- New `surface upgrade`: one command that updates `surface-display` to the
+  latest npm release (global installs; dev/local installs get advice instead),
+  refreshes the canonical skill copy plus every recorded skill link, and
+  restarts the service only when it is running an older version
+  (health-gated). `--check` reports without changing anything;
+  `surface service update`/`upgrade` redirect here.
+- New `surface skill install`: keeps one canonical `SKILL.md` at
+  `<data-dir>/skills/surface/` and links it (junction on Windows, managed copy
+  where symlinks are forbidden) into `~/.agents/skills/` — the agentskills.io
+  open standard read by Codex, Cursor, Gemini CLI, Copilot, Zed, Amp, Goose,
+  OpenCode, Roo, Kilo, Windsurf — and `~/.claude/skills/` for Claude Code.
+  `--to` adds harness-native dirs; targets are recorded in
+  `install-state.json` and refreshed by `surface upgrade`. `--copy`/`--link`
+  set the mode for the run's targets and are remembered per target. Never
+  touches a skill directory containing files it doesn't own; a lone
+  non-Surface `SKILL.md` is skipped too (only legacy Surface copies are
+  adopted).
+- Upgrade/skill hardening (review findings): the registry-reported version is
+  semver-validated before it reaches `npm install`; the canonical skill and
+  `install-state.json` live in the service's saved data dir (matching
+  `service health`), and state writes are atomic; one unwritable skill target
+  no longer aborts `surface upgrade` halfway (reported, everything else still
+  converges, exit 1); a cleanly stopped service is left stopped instead of
+  being started by `upgrade`; an unrecorded `surface` symlink pointing at a
+  non-Surface skill is skipped, never repointed; and `upgrade --json` keeps
+  npm's install output off stdout so the report stays machine-parsable.
+- User-edited skills are never clobbered: `install-state.json` records the
+  hash of the `SKILL.md` Surface last wrote (`skill_sha256`), so upgrades can
+  tell their own stale copies (converged as before) from local edits (kept,
+  mirrored to every link/copy, reported as `edited` by `skill install`,
+  `upgrade`, `--check`, and `service health`). `surface skill install
+  --force` replaces an edit with the packaged skill.
+- `surface service health` now also flags a stale/missing skill copy, and the
+  CLI prints an actionable "service unreachable — is it running?" hint (with
+  the install one-liner) instead of a bare `fetch failed` when the service is
+  down.
+- SKILL.md two-way-loop addition: "state is a claim, not an animation" — never
+  patch a status/progress/"running…" for work not actually executed or
+  observed.
+- INSTALL_FOR_AGENTS.md: skill installation and upgrading rewritten around the
+  two new commands; per-harness skill directory list verified against vendor
+  docs (2026-07).
+
 ## 0.2.2 - 2026-07-07
 
 - Fixed Windows `surface service stop`/`uninstall` leaving the server
