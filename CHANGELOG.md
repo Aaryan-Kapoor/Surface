@@ -27,7 +27,9 @@ All notable changes to Surface are recorded here.
   `service health`), and state writes are atomic; one unwritable skill target
   no longer aborts `surface upgrade` halfway (reported, everything else still
   converges, exit 1); a cleanly stopped service is left stopped instead of
-  being started by `upgrade`.
+  being started by `upgrade`; an unrecorded `surface` symlink pointing at a
+  non-Surface skill is skipped, never repointed; and `upgrade --json` keeps
+  npm's install output off stdout so the report stays machine-parsable.
 - User-edited skills are never clobbered: `install-state.json` records the
   hash of the `SKILL.md` Surface last wrote (`skill_sha256`), so upgrades can
   tell their own stale copies (converged as before) from local edits (kept,

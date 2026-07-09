@@ -75,7 +75,8 @@ bash scripts/check-leaks.sh
   everything else converges), `--copy`/`--link` modes are per-target sticky
   (scope = `--to` dirs, else defaults), and a lone SKILL.md is only adopted
   when it is a Surface skill (`name: surface` frontmatter) or already
-  recorded as ours. User edits to the canonical SKILL.md are hash-guarded
+  recorded as ours — same rule for repointing an existing symlink. `upgrade
+  --json` captures npm's install output so stdout stays pure JSON. User edits to the canonical SKILL.md are hash-guarded
   (`skill_sha256` in install-state): kept and mirrored everywhere until
   `surface skill install --force`; health reports `edited` vs `stale`.
 - The service is intended to run once as a per-user supervised service bound

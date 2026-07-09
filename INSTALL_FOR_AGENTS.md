@@ -105,7 +105,8 @@ bookkeeping. Ownership rules: a skill directory containing anything besides a
 `SKILL.md` is never touched; a directory holding only a *Surface* `SKILL.md`
 (frontmatter `name: surface` — the legacy manual copies older instructions
 created) is adopted and upgraded to a link; a lone non-Surface `SKILL.md` is
-skipped. A canonical copy the user edited is kept — and mirrored to every
+skipped; an existing symlink is only repointed when it is recorded as ours or
+resolves to a Surface skill. A canonical copy the user edited is kept — and mirrored to every
 link and managed copy — until `surface skill install --force` replaces it
 with the packaged skill (`service health` reports it as `edited`).
 Idempotent; re-run any time.
