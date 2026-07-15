@@ -17,6 +17,7 @@ import {
 } from "./startupAccess.js";
 import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
 import { closeSSEClients } from "./sse.js";
+import { closeCodexBridge } from "./codexBridge.js";
 import { setupFileLogging } from "./logging.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -366,6 +367,7 @@ function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`[startup] ${signal} received; shutting down`);
   closeSSEClients();
+  closeCodexBridge();
   contentServer.close(() => {});
   httpServer.close(() => {
     closeDb();

@@ -200,6 +200,15 @@ const migrations: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_agent_sessions_pid
         ON agent_sessions(pid);
+
+        -- Threads the codex bridge resumed headlessly. "Loaded in the daemon"
+        -- does not mean "a user is attached" once the bridge has resumed a
+        -- thread; this record keeps consent + approval fail-closed rules
+        -- correct across service restarts.
+        CREATE TABLE IF NOT EXISTS codex_bridge_threads (
+          thread_id TEXT PRIMARY KEY,
+          resumed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
       `);
     },
   },

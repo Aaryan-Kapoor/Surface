@@ -63,15 +63,14 @@ class MockDaemon {
 
   // Server → client request to every client; responses land in approvalResponses.
   // Uses the real id of the thread's latest turn, like the actual app-server.
-  requestApproval(threadId: string): void {
+  requestApproval(threadId: string, method = "item/commandExecution/requestApproval"): void {
     const id = this.nextServerRequestId++;
     const turnId = this.lastTurnIdByThread.get(threadId) || "turn-x";
+    const params = method.startsWith("item/")
+      ? { threadId, turnId, itemId: "exec-1", command: "touch /tmp/x", cwd: "/tmp" }
+      : { conversationId: threadId, callId: "call-1", command: ["touch", "/tmp/x"], cwd: "/tmp", parsedCmd: [] };
     for (const ws of this.sockets) {
-      this.send(ws, {
-        id,
-        method: "item/commandExecution/requestApproval",
-        params: { threadId, turnId, itemId: "exec-1", command: "touch /tmp/x", cwd: "/tmp" },
-      });
+      this.send(ws, { id, method, params });
     }
   }
 
@@ -120,7 +119,7 @@ class MockDaemon {
     }
   }
 
-  completeTurn(threadId: string, status: "completed" | "failed" = "completed"): void {
+  completeTurn(threadId: string, status: "completed" | "failed" | "interrupted" = "completed"): void {
     const turnId = this.lastTurnIdByThread.get(threadId) || "turn-done";
     this.broadcast("turn/completed", { threadId, turn: { id: turnId, status } });
   }
@@ -301,6 +300,82 @@ async function main() {
     daemon.autoCompleteTurns = true;
   });
 
+  await test("legacy + permissions approval methods get shape-correct denials on bridge-owned threads", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    daemon.approvalResponses = [];
+    daemon.loadedThreads.delete(DEAD_THREAD);
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "legacy", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "wake turn");
+    daemon.requestApproval(DEAD_THREAD, "execCommandApproval");
+    await waitFor(() => daemon.approvalResponses.length === 1, 5000, "legacy denial");
+    assert.equal(daemon.approvalResponses[0].result?.decision, "denied", "legacy shape uses 'denied'");
+    daemon.requestApproval(DEAD_THREAD, "item/permissions/requestApproval");
+    await waitFor(() => daemon.approvalResponses.length === 2, 5000, "permissions denial");
+    assert.deepEqual(daemon.approvalResponses[1].result, { permissions: {}, scope: "turn" }, "permissions denial grants nothing");
+    daemon.completeTurn(DEAD_THREAD);
+    daemon.autoCompleteTurns = true;
+  });
+
+  await test("revoking consent stops wakes on a bridge-resumed (still loaded) thread", async () => {
+    // DEAD_THREAD is loaded only because the bridge resumed it. Flip the
+    // project consent off: further clicks must hold, not start turns.
+    daemon.turnStarts = [];
+    fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: false } }));
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "revoked", data: {} });
+    assert.equal(act.status, 201);
+    await sleep(1000);
+    assert.equal(daemon.turnStarts.length, 0, "no turn without consent, even though the thread is loaded");
+    assert.ok((await pendingCount("cx-dead")) >= 1, "action holds in the inbox");
+    fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: true } }));
+    // Drain the held actions so later tests start clean.
+    const rows = (await api("GET", "/artifacts/cx-dead/actions")).json;
+    for (const row of rows) await api("POST", `/actions/${row.id}/ack`, {});
+  });
+
+  await test("an unrelated turn completing on the thread does NOT release the coalescing slot", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    const act = await api("POST", "/artifacts/cx-live/actions", { action: "q1", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "delivered turn");
+    await api("POST", "/artifacts/cx-live/actions", { action: "q2", data: {} });
+    // A DIFFERENT (user-owned) turn completes on the same thread.
+    daemon.broadcast("turn/completed", { threadId: LIVE_THREAD, turn: { id: "user-turn-999", status: "completed" } });
+    await sleep(700);
+    assert.equal(daemon.turnStarts.length, 1, "slot stays held for our own turn");
+    daemon.completeTurn(LIVE_THREAD); // completes OUR turn (real id)
+    await waitFor(() => daemon.turnStarts.length === 2, 10000, "coalesced follow-up after our turn ends");
+    daemon.completeTurn(LIVE_THREAD);
+    daemon.autoCompleteTurns = true;
+    await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "drained");
+  });
+
+  await test("an interrupted headless turn returns its batch; an attended interrupt keeps it acked", async () => {
+    // Headless: cx-dead's thread is bridge-owned.
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    let act = await api("POST", "/artifacts/cx-dead/actions", { action: "int-headless", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "headless turn");
+    await waitFor(async () => (await pendingCount("cx-dead")) === 0, 5000, "acked");
+    daemon.completeTurn(DEAD_THREAD, "interrupted");
+    await waitFor(async () => (await pendingCount("cx-dead")) === 1, 5000, "headless interrupt restores the batch");
+    const rows = (await api("GET", "/artifacts/cx-dead/actions")).json;
+    for (const row of rows) await api("POST", `/actions/${row.id}/ack`, {});
+
+    // Attended: cx-live's thread is genuinely loaded (never bridge-resumed).
+    daemon.turnStarts = [];
+    act = await api("POST", "/artifacts/cx-live/actions", { action: "int-live", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "attended turn");
+    daemon.completeTurn(LIVE_THREAD, "interrupted");
+    await sleep(700);
+    assert.equal(await pendingCount("cx-live"), 0, "attended interrupt keeps the batch acked (the user saw it)");
+    daemon.autoCompleteTurns = true;
+  });
+
   await test("approval on an attached (non-headless) thread is left for the user's client", async () => {
     daemon.approvalResponses = [];
     daemon.requestApproval(LIVE_THREAD);
@@ -332,23 +407,46 @@ async function main() {
     assert.equal(await pendingCount("cx-nocons"), 1, "action waits in the inbox");
   });
 
-  await test("session open in an unreachable TUI (live pid) is never woken", async () => {
+  await test("session open in an unreachable TUI (live codex pid) is never woken", async () => {
     daemon.turnStarts = [];
     daemon.resumeCalls = [];
-    const reg = await api("POST", "/codex/sessions/register", {
-      kind: "codex",
-      session_id: TUI_THREAD,
-      pid: process.pid, // this very test process: alive for sure
-      cwd: projectRoot,
-    });
-    assert.equal(reg.status, 204);
-    await createCodexSurface("cx-tui", TUI_THREAD);
-    const act = await api("POST", "/artifacts/cx-tui/actions", { action: "x", data: {} });
+    // The liveness guard also checks the process *name* (pid-reuse defense),
+    // so stand in with a live process whose comm matches /codex/i.
+    const fakeCodexBin = path.join(dataDir, "codex-stand-in");
+    fs.copyFileSync("/bin/sleep", fakeCodexBin);
+    fs.chmodSync(fakeCodexBin, 0o755);
+    const fakeTui = spawn(fakeCodexBin, ["120"], { stdio: "ignore" });
+    try {
+      const reg = await api("POST", "/codex/sessions/register", {
+        kind: "codex",
+        session_id: TUI_THREAD,
+        pid: fakeTui.pid,
+        cwd: projectRoot,
+      });
+      assert.equal(reg.status, 204);
+      await createCodexSurface("cx-tui", TUI_THREAD);
+      const act = await api("POST", "/artifacts/cx-tui/actions", { action: "x", data: {} });
+      assert.equal(act.status, 201);
+      await sleep(1000);
+      assert.equal(daemon.resumeCalls.length, 0, "no resume while the owning TUI lives");
+      assert.equal(daemon.turnStarts.length, 0, "no wake while the owning TUI lives");
+      assert.equal(await pendingCount("cx-tui"), 1, "action waits in the inbox");
+    } finally {
+      fakeTui.kill();
+    }
+  });
+
+  await test("a dead pid whose session was registered does not hold the wake", async () => {
+    // After the fake TUI dies, the same surface's next click must wake the
+    // thread (pid liveness, not registration, is what holds).
+    daemon.turnStarts = [];
+    daemon.resumeCalls = [];
+    await sleep(200); // let the killed stand-in reap
+    const act = await api("POST", "/artifacts/cx-tui/actions", { action: "y", data: {} });
     assert.equal(act.status, 201);
-    await sleep(1000);
-    assert.equal(daemon.resumeCalls.length, 0, "no resume while the owning TUI lives");
-    assert.equal(daemon.turnStarts.length, 0, "no wake while the owning TUI lives");
-    assert.equal(await pendingCount("cx-tui"), 1, "action waits in the inbox");
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "wake after the TUI died");
+    assert.deepEqual(daemon.resumeCalls, [TUI_THREAD]);
+    await waitFor(async () => (await pendingCount("cx-tui")) === 0, 5000, "drained");
   });
 
   await test("an explicit binding outranks the codex layer", async () => {

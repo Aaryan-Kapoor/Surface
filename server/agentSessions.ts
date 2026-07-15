@@ -1,3 +1,5 @@
+import { execFileSync } from "child_process";
+import fs from "fs";
 import type Database from "better-sqlite3";
 
 // Agent session capture (docs/interaction/codex.md): surfaces remember which
@@ -70,6 +72,9 @@ export function registerAgentSession(
        transcript_path = COALESCE(excluded.transcript_path, agent_sessions.transcript_path),
        last_seen_at = datetime('now')`,
   ).run(params.session_id, params.kind, pid, params.cwd || null, params.transcript_path || null);
+  // Opportunistic pruning: a registry entry that hasn't been seen in a month
+  // describes a session nobody is coming back to.
+  db.prepare(`DELETE FROM agent_sessions WHERE last_seen_at < datetime('now', '-30 days')`).run();
 }
 
 export function getAgentSession(db: Database.Database, sessionId: string): AgentSessionRow | undefined {
@@ -80,24 +85,55 @@ export function countAgentSessions(db: Database.Database): number {
   return (db.prepare(`SELECT count(*) AS n FROM agent_sessions`).get() as { n: number }).n;
 }
 
+// Codex always runs as this same user, so EPERM (alive, different user) means
+// the pid was recycled onto someone else's process — NOT a codex TUI.
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (err: any) {
-    return err?.code === "EPERM"; // alive but not ours
+  } catch {
+    return false;
   }
+}
+
+// Guard against pid reuse: the live process must actually look like codex,
+// or a recycled pid would strand actions in "held_live_tui" forever.
+function processLooksLikeCodex(pid: number): boolean {
+  try {
+    if (process.platform === "linux") {
+      return /codex/i.test(fs.readFileSync(`/proc/${pid}/comm`, "utf8"));
+    }
+    if (process.platform === "darwin") {
+      const out = execFileSync("ps", ["-o", "comm=", "-p", String(pid)], { timeout: 2_000 }).toString();
+      return /codex/i.test(out);
+    }
+  } catch {
+    return false;
+  }
+  return true; // other platforms: no cheap probe, trust the registration
 }
 
 // Is this session (still) the one its registered process is running? A pid is
 // reused by newer sessions when the user starts/resumes another thread in the
 // same TUI, so only the newest registration for a live pid counts as "open".
 export function sessionOpenInProcess(db: Database.Database, session: AgentSessionRow): boolean {
-  if (!session.pid || !pidAlive(session.pid)) return false;
+  if (!session.pid || !pidAlive(session.pid) || !processLooksLikeCodex(session.pid)) return false;
   const newest = db
     .prepare(
       `SELECT session_id FROM agent_sessions WHERE pid = ? ORDER BY last_seen_at DESC, created_at DESC LIMIT 1`,
     )
     .get(session.pid) as { session_id: string } | undefined;
   return newest?.session_id === session.session_id;
+}
+
+// ── codex bridge thread ownership ──
+
+export function markBridgeResumed(db: Database.Database, threadId: string): void {
+  db.prepare(
+    `INSERT INTO codex_bridge_threads (thread_id) VALUES (?) ON CONFLICT(thread_id) DO NOTHING`,
+  ).run(threadId);
+}
+
+export function isBridgeResumed(db: Database.Database, threadId: string): boolean {
+  return !!db.prepare(`SELECT 1 FROM codex_bridge_threads WHERE thread_id = ?`).get(threadId);
 }

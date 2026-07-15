@@ -428,6 +428,9 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
       res.status(404).json({ error: "Artifact not found" });
       return;
     }
+    // Updates re-stamp too: the session that just rewrote a surface is the
+    // freshest flowback target.
+    captureAgentLink(req, result.artifact.id);
     broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
     broadcastToSurface(result.artifact.id, "surface_updated", {
       id: result.artifact.id,

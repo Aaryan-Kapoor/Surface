@@ -167,10 +167,16 @@ function writeHooksFile(file: Record<string, any>): void {
 async function readStdinWithTimeout(ms: number): Promise<string> {
   return new Promise((resolve) => {
     let data = "";
-    const timer = setTimeout(() => resolve(data), ms);
+    const finish = () => {
+      clearTimeout(timer);
+      // Codex may hold our stdin open; stop it from keeping the process alive.
+      try { process.stdin.pause(); } catch {}
+      resolve(data);
+    };
+    const timer = setTimeout(finish, ms);
     process.stdin.on("data", (d) => { data += d.toString("utf8"); });
-    process.stdin.on("end", () => { clearTimeout(timer); resolve(data); });
-    process.stdin.on("error", () => { clearTimeout(timer); resolve(data); });
+    process.stdin.on("end", finish);
+    process.stdin.on("error", finish);
   });
 }
 
@@ -209,21 +215,27 @@ export function findCodexAncestorPid(startPid = process.ppid): number | null {
 }
 
 async function runHook(call: CallFn): Promise<void> {
-  // Never break a codex session start: swallow every error, always exit 0.
+  // Never break or stall a codex session start: swallow every error, cap
+  // every wait, always exit 0.
   try {
     const raw = await readStdinWithTimeout(2_000);
     const payload = JSON.parse(raw || "{}");
     const sessionId = payload.session_id || payload.thread_id || process.env.CODEX_THREAD_ID;
     if (!sessionId || typeof sessionId !== "string") return;
-    await call("POST", "/codex/sessions/register", {
-      kind: "codex",
-      session_id: sessionId,
-      pid: findCodexAncestorPid() ?? undefined,
-      cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
-      transcript_path: typeof payload.transcript_path === "string" ? payload.transcript_path : undefined,
-    });
+    await Promise.race([
+      call("POST", "/codex/sessions/register", {
+        kind: "codex",
+        session_id: sessionId,
+        pid: findCodexAncestorPid() ?? undefined,
+        cwd: typeof payload.cwd === "string" ? payload.cwd : undefined,
+        transcript_path: typeof payload.transcript_path === "string" ? payload.transcript_path : undefined,
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("register timeout")), 5_000).unref()),
+    ]);
   } catch {
     // silent by design
+  } finally {
+    process.exit(0); // a lingering stdin/socket must not eat the hook budget
   }
 }
 

@@ -57,7 +57,10 @@ Between explicit bindings and the inbox (`server/bindings.ts::dispatchAction`):
    - **Thread loaded in the daemon** (an attached TUI has it open, live):
      `turn/start` immediately with the action batch. Codex queues the turn
      natively if one is active. No consent needed — this is the
-     waiter-equivalent: the session is attached and listening.
+     waiter-equivalent: the session is attached and listening. "Loaded" only
+     counts as attended when the bridge itself didn't load it: threads the
+     bridge resumed are recorded in `codex_bridge_threads` and keep wake
+     semantics (consent + approval decline) forever, across service restarts.
    - **Session open in a plain in-process TUI** (registered pid alive, thread
      *not* in the daemon): **held in the inbox.** Resuming the thread in the
      daemon while another process owns the rollout would fork/dual-write it.
@@ -71,14 +74,23 @@ Between explicit bindings and the inbox (`server/bindings.ts::dispatchAction`):
 
 Delivery acks the batch (like a waiter delivery) once `turn/start` is
 accepted — but if the handling turn ends `failed` (usage limit, server
-error), the batch is un-acked back into the inbox: the agent demonstrably
-never processed it, and the inbox is the durable truth. There is no
-automatic redelivery — a failing turn must not become a spawn loop. Per
-surface, one delivery is in flight at a time: clicks arriving while the
-delivered turn runs coalesce into a single follow-up batch on
-`turn/completed`. `codex_bridge_status` SSE events (`delivered_live`,
-`delivered_wake`, `held_live_tui`, `held_no_consent`, `turn_failed`,
-`failed`) narrate the layer to the PWA.
+error), or `interrupted` while headless, the batch is un-acked back into the
+inbox: the agent demonstrably never processed it, and the inbox is the
+durable truth. (An *attended* interrupt keeps the ack: the user saw the batch
+in their transcript and chose to stop.) There is no automatic redelivery — a
+failing turn must not become a spawn loop. Per surface, one delivery is in
+flight at a time, keyed to the exact delivered turn id (an unrelated turn
+completing on a shared thread does not release the slot): clicks arriving
+while the delivered turn runs coalesce into a single follow-up batch on
+`turn/completed`. Daemon failures back off for 60s so a broken daemon never
+becomes a per-click `codex` spawn storm; a surface with a binding or codex
+delivery mid-flight is owned by exactly one channel at a time. Action `data`
+is embedded with an explicit untrusted-input preamble and a per-action size
+cap — click payloads are device-plane input and must read as data, not
+instructions. `codex_bridge_status` SSE events (`delivered_live`,
+`delivered_wake`, `turn_ended`, `held_live_tui`, `held_no_consent`,
+`turn_failed`, `failed`) narrate the layer; the PWA shows the same
+"⟳ handling…" indicator bindings get.
 
 ## Approvals: Surface never approves anything
 
@@ -91,7 +103,11 @@ client; the first response wins. Bridge policy:
 - Turns the bridge itself started headlessly: **decline**, immediately. A
   dead-session wake runs inside the thread's sandbox with whatever was already
   allowed; it must never gain privileges unattended. The model sees the
-  declined approval and adapts (verified live).
+  declined approval and adapts (verified live). Denials are shape-correct per
+  method family: v2 `item/*` methods get `{decision:"decline"}`,
+  `item/permissions/requestApproval` gets an empty grant, and the legacy
+  `execCommandApproval`/`applyPatchApproval` (matched by `conversationId`
+  against bridge-owned threads) get `{decision:"denied"}`.
 
 ## Wire protocol notes (verified against codex 0.144.1)
 

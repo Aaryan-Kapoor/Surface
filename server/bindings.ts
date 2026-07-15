@@ -10,7 +10,7 @@ import { getPendingActions, ackAction } from "./actionsStore.js";
 import { getArtifact } from "./artifacts.js";
 import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
 import { OutboundBlockedError, safeHttpRequest } from "./outbound.js";
-import { maybeDispatchCodex } from "./codexBridge.js";
+import { maybeDispatchCodex, codexInFlight } from "./codexBridge.js";
 
 // Layer 2 of the delivery ladder (docs/interaction/bindings.md): pre-registered
 // commands/webhooks Surface fires when an action arrives and no live waiter is
@@ -154,6 +154,21 @@ function setStatus(db: Database.Database, binding: BindingRow, status: string, e
 const inFlight = new Set<string>();
 const rerunRequested = new Set<string>();
 
+// The codex layer checks this so two channels never hand overlapping pending
+// batches to two agents at once.
+export function bindingInFlight(surfaceId: string): boolean {
+  return inFlight.has(surfaceId);
+}
+
+// Ask the running binding's coalescing tail for a follow-up pass (used by the
+// codex layer when it defers to an in-flight binding). Returns false when no
+// binding is actually in flight anymore.
+export function requestBindingFollowup(surfaceId: string): boolean {
+  if (!inFlight.has(surfaceId)) return false;
+  rerunRequested.add(surfaceId);
+  return true;
+}
+
 export function dispatchAction(surfaceId: string, action: string): void {
   // Layer 1 suppression: someone is live-waiting; they'll handle it.
   if (hasWaiter(surfaceId)) return;
@@ -170,6 +185,12 @@ export function dispatchAction(surfaceId: string, action: string): void {
       (b) => b.enabled && patternMatches(b.action_pattern, action),
     );
     if (bindings.length) {
+      // One channel owns a surface's pending set at a time: if a codex
+      // delivery is mid-flight, queue there instead of double-batching.
+      if (codexInFlight(surfaceId)) {
+        maybeDispatchCodex(surfaceId, consent);
+        return;
+      }
       if (inFlight.has(surfaceId)) {
         rerunRequested.add(surfaceId);
         return;
@@ -233,6 +254,12 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
           (b) => b.enabled && stillPending.some((a) => patternMatches(b.action_pattern, a.action)),
         );
         if (again.length) void runBindings(surfaceId, again);
+        else {
+          // Leftovers no binding matches: hand them to the codex layer so
+          // they don't strand until the next unrelated dispatch.
+          const artifact = getArtifact(db, surfaceId);
+          if (artifact) maybeDispatchCodex(surfaceId, projectAllowsBindings(artifact.project_root));
+        }
       }
     }
   }
