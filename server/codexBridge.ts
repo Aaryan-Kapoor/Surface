@@ -573,17 +573,20 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
     }
   }
 
-  // Re-check: a waiter may have connected while we were connecting.
-  if (hasWaiter(surfaceId)) return;
   const artifact = getArtifact(db, surfaceId);
   if (!artifact) return;
-  const pending = getPendingActions(db, surfaceId);
-  if (!pending.length) return;
 
   if (!loaded) {
     await resumeThread(threadId);
     markBridgeResumed(db, threadId);
   }
+
+  // Snapshot the batch only after every await that could take seconds: a
+  // waiter connecting during connect/resume may have drained these actions
+  // already, and layer 1 owns anything it consumed.
+  if (hasWaiter(surfaceId)) return;
+  const pending = getPendingActions(db, surfaceId);
+  if (!pending.length) return;
 
   const batch = pending.map((a) => ({
     id: a.id,
