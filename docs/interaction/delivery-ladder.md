@@ -1,15 +1,16 @@
 # The Delivery Ladder
 
-**Status:** Shipped (2026-06)
-**Code:** `bin/surface.ts` (`wait`), `server/bindings.ts` (`dispatchAction`), `server/sse.ts` (waiter registry), `server/routes/display.ts` (`/stream?wait_for=`), webhook fan-out in `server/routes/actions.ts`
+**Status:** Shipped (2026-06; codex flowback layer added 2026-07)
+**Code:** `bin/surface.ts` (`wait`), `server/bindings.ts` (`dispatchAction`), `server/codexBridge.ts` (codex layer), `server/sse.ts` (waiter registry), `server/routes/display.ts` (`/stream?wait_for=`), webhook fan-out in `server/routes/actions.ts`
 
 The central problem of agent↔screen interaction: **agent process lifetime ≪ surface lifetime.** A Claude Code session ends at 5pm; the user taps "regenerate report" on their phone at 11pm. Nothing is polling. Nothing will ever poll. Long-polling alone cannot solve this — and spawning a fresh agent for every click burns usage and loses context. The ladder resolves the tension by trying the cheapest, most-context-rich channel first and degrading gracefully.
 
 Surface is the only long-lived process on the machine, so Surface is the component that routes — and when necessary *starts* — agents.
 
-## The three layers
+## The layers
 
 When an action arrives for a surface, delivery resolves strictly in this order:
+waiter → explicit binding → codex flowback → inbox.
 
 ### Layer 1 — Live waiter (default, free, in-context)
 
@@ -35,7 +36,7 @@ Honest caveats: sessions end, laptops sleep, and harnesses cap background-task l
 | Harness | Verified wake shape | Recipe |
 |---|---|---|
 | Claude Code | Monitor can wake on each output line when persistent. | `surface wait --follow` under Monitor with a pattern for `"action":`; one-shot wait also works for a single expected answer. |
-| Codex CLI | Background terminal polling wakes on process exit, not on intermediate output. | Start `surface wait --id <id>` in the background, poll for process exit, handle the JSON, then re-arm. Avoid `--follow` as a wake mechanism. |
+| Codex CLI | Cannot wake on background output — so Surface delivers *into* the session instead ([codex.md](codex.md)). | One-time `surface codex setup`; after that no waiter is needed at all: clicks arrive as native turns in the live TUI, and consent-gated wakes revive dead threads. One-shot `surface wait` still works where the bridge is unavailable. |
 | Gemini CLI | Foreground commands can be killed after silence. | Use one-shot `surface wait --id <id> --heartbeat 60 --timeout <under-the-harness-cap>`; exit 3 means idle, so re-arm. |
 | Cline-style output injection | Running terminal output appears on later model turns. | `surface wait --follow` can be useful, but it may not wake an idle/completed task. |
 | Cursor / Windsurf / Copilot CLI / Aider | Completion or explicit polling is the reliable wake shape. | Use one-shot waits under the harness timeout; exit 3 means idle, so re-arm. |
@@ -43,13 +44,24 @@ Honest caveats: sessions end, laptops sleep, and harnesses cap background-task l
 
 ### Layer 2 — Binding (fires only when no waiter is connected)
 
-A pre-registered command or webhook that Surface executes on the action's behalf — `claude -p --resume <session-id>` to revive the *specific session that created the surface*, `codex exec` for Codex, or a webhook POST into an always-on gateway like OpenClaw. Full spec: [bindings.md](bindings.md).
+A pre-registered command or webhook that Surface executes on the action's behalf — `claude -p --resume <session-id>` to revive the *specific session that created the surface*, or a webhook POST into an always-on gateway like OpenClaw. (Codex surfaces usually don't need one: layer 2.5 resumes the creating thread automatically.) Full spec: [bindings.md](bindings.md).
 
 Cost rationale: headless spawns consume usage/quota, so layer 2 only fires when layer 1 is absent, and it can be disabled per project (`.surface/config.json → bindings.enabled: false`) for users who never want spawned sessions.
 
 Consent (decided 2026-06): binding registration is **opt-in, asked once per project**. The first time an agent creates an interactive surface in a project, it asks the user "want clicks to wake me when I'm offline? (costs a headless session per wake)" and records the answer as `bindings.enabled` in `.surface/config.json` — durable, committed, never re-asked. Agents must not auto-register wake bindings without that recorded consent; SKILL.md carries the script.
 
 While a binding runs, the card shows "⟳ handling…" — the user sees that their click *did something*, which is what makes the loop trustworthy.
+
+### Layer 2.5 — Codex flowback (automatic, for codex-created surfaces)
+
+Surfaces remember the codex thread that created them (`CODEX_THREAD_ID`,
+captured by the CLI at create time). When no waiter is connected and no
+explicit binding matches, Surface delivers the batch through the codex
+app-server daemon: a `turn/start` into the live attached TUI (waiter-
+equivalent, no consent needed), or a consent-gated `thread/resume` +
+`turn/start` wake when the session is dead — same consent bit as bindings.
+Sessions open in an unreachable plain TUI are held in the inbox. Full spec:
+[codex.md](codex.md).
 
 ### Layer 3 — Inbox (always)
 

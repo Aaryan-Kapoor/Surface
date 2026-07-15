@@ -7,7 +7,21 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
 - Artifacts are the only display content model: generated, presented, linked, templated, versioned, rolled back, and soft-deleted.
 - The PWA renders artifact cards, live previews, display slots, device presence, themes, and sandboxed artifact iframes.
 - `surface.js` provides state bindings, stream bindings, and `Surface.action()` for user-to-agent actions.
-- The delivery ladder routes actions through live waiters, consent-gated bindings, then the durable inbox.
+- The delivery ladder routes actions through live waiters, consent-gated bindings, the codex flowback layer, then the durable inbox.
+- Codex flowback (2026-07, `docs/interaction/codex.md`): surfaces remember the
+  codex thread that created them (`CODEX_THREAD_ID` captured by the CLI;
+  `CLAUDE_CODE_SESSION_ID` captured for future use). Actions are delivered
+  through the codex app-server daemon — live attached TUIs get an in-context
+  `turn/start` (waiter-equivalent, no consent), dead sessions get a
+  consent-gated `thread/resume`+wake (same `bindings.enabled` bit), sessions
+  open in an unreachable plain TUI are held in the inbox (pid registry via the
+  `surface codex setup` SessionStart hook). Surface never answers approvals
+  except to *decline* them on its own headless turns. Wire facts verified on
+  codex 0.144.1: WebSocket-over-unix-socket with permessage-deflate disabled,
+  `initialize` with `experimentalApi`, version-gated ≥ 0.144.0, `turn/start`
+  queues natively on busy threads, approvals broadcast to all clients.
+  SKILL.md deliberately untouched (benchmark-locked); agent-facing guidance
+  lives in docs + README until the next bench pass.
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
 - Content is served through a dedicated content origin when configured, with Host/Origin validation on the app plane.
 - Built-in templates include ask, stream, video, board, and doc. The report
