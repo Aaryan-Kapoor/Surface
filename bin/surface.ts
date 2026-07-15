@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
 import { runService, SERVICE_HELP } from "./service.js";
 import { runSkill, runUpgrade } from "./upgrade.js";
+import { runCodex, CODEX_HELP } from "./codex.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +74,7 @@ Commands:
   service <sub>              Manage the background service: install|uninstall|start|stop|
                              restart|status|health|logs (systemd / launchd / Scheduled Task)
   skill install              Link SKILL.md into agent skill dirs (canonical copy in the data dir)
+  codex <setup|status>       Codex integration: realtime flowback into the creating codex session
   upgrade                    Update to the latest release, refresh the skill, restart the service
   version                    Print the installed Surface version (also: --version)
 
@@ -183,6 +185,11 @@ const COMMANDS: Record<string, CommandSpec> = {
     ].join("\n"),
     flags: { to: MULTI, copy: BOOL, link: BOOL, force: BOOL, json: BOOL },
     run: (ctx) => runSkill(ctx),
+  },
+  codex: {
+    help: CODEX_HELP,
+    flags: { json: BOOL, "remove-hook": BOOL },
+    run: (ctx) => runCodex(ctx, call),
   },
   upgrade: {
     help: [
@@ -422,10 +429,35 @@ function attributionMetadata(flags: Record<string, string | boolean>): Record<st
   if (typeof flags.agent === "string" && flags.agent) {
     return { ...(metadata || {}), agent: flags.agent };
   }
+  const session = agentSessionFromEnv();
+  if (session) return { ...(metadata || {}), agent: session.kind };
   return metadata;
 }
 
+// The creating agent session, read from the harness-injected shell env. This
+// is what lets flowback target the exact session that made a surface without
+// anyone copying session ids around. Codex is checked first: when codex runs
+// inside a Claude session both vars are set, and the innermost agent is the
+// author.
+function agentSessionFromEnv(): { kind: "codex" | "claude"; session_id: string } | undefined {
+  const codex = process.env.CODEX_THREAD_ID;
+  if (codex && /^[0-9a-fA-F-]{8,64}$/.test(codex)) return { kind: "codex", session_id: codex };
+  const claude = process.env.CLAUDE_CODE_SESSION_ID;
+  if (claude && /^[0-9a-fA-F-]{8,64}$/.test(claude)) return { kind: "claude", session_id: claude };
+  return undefined;
+}
+
+// Creation endpoints get the agent session stamped into the body at the one
+// choke point every command funnels through.
+const AGENT_STAMPED_PATHS = new Set(["/artifacts", "/artifacts/link", "/artifacts/present-file"]);
+
 async function call(method: string, pathname: string, body?: unknown): Promise<any> {
+  if (method === "POST" && AGENT_STAMPED_PATHS.has(pathname) && body && typeof body === "object") {
+    const session = agentSessionFromEnv();
+    if (session && (body as Record<string, unknown>).agent_session === undefined) {
+      (body as Record<string, unknown>).agent_session = session;
+    }
+  }
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;

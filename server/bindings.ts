@@ -10,6 +10,7 @@ import { getPendingActions, ackAction } from "./actionsStore.js";
 import { getArtifact } from "./artifacts.js";
 import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
 import { OutboundBlockedError, safeHttpRequest } from "./outbound.js";
+import { maybeDispatchCodex } from "./codexBridge.js";
 
 // Layer 2 of the delivery ladder (docs/interaction/bindings.md): pre-registered
 // commands/webhooks Surface fires when an action arrives and no live waiter is
@@ -160,18 +161,28 @@ export function dispatchAction(surfaceId: string, action: string): void {
   const db = getDb();
   const artifact = getArtifact(db, surfaceId);
   if (!artifact) return;
-  if (!projectAllowsBindings(artifact.project_root)) return;
+  const consent = projectAllowsBindings(artifact.project_root);
 
-  const bindings = listBindings(db, surfaceId).filter(
-    (b) => b.enabled && patternMatches(b.action_pattern, action),
-  );
-  if (!bindings.length) return; // layer 3: stays in the inbox
-
-  if (inFlight.has(surfaceId)) {
-    rerunRequested.add(surfaceId);
-    return;
+  // Layer 2: explicit bindings, when consented. They take precedence over the
+  // automatic codex flowback below — registering one is a deliberate choice.
+  if (consent) {
+    const bindings = listBindings(db, surfaceId).filter(
+      (b) => b.enabled && patternMatches(b.action_pattern, action),
+    );
+    if (bindings.length) {
+      if (inFlight.has(surfaceId)) {
+        rerunRequested.add(surfaceId);
+        return;
+      }
+      void runBindings(surfaceId, bindings);
+      return;
+    }
   }
-  void runBindings(surfaceId, bindings);
+
+  // Layer 2.5: automatic codex flowback for surfaces created by a codex
+  // session (no-op for everything else). Consent gates headless wakes inside;
+  // without it, actions for dead sessions stay in the inbox (layer 3).
+  maybeDispatchCodex(surfaceId, consent);
 }
 
 async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<void> {

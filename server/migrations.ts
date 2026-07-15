@@ -168,6 +168,41 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 12,
+    description: "agent session capture (codex flowback)",
+    up: (db) => {
+      db.exec(`
+        -- Which agent session created a surface. Written once at creation from
+        -- the creating shell's environment (CODEX_THREAD_ID / CLAUDE_CODE_SESSION_ID);
+        -- the delivery ladder uses it to route actions back to that session.
+        CREATE TABLE IF NOT EXISTS agent_links (
+          surface_id TEXT PRIMARY KEY,
+          agent_kind TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (surface_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_links_session
+        ON agent_links(agent_kind, session_id);
+
+        -- Live-session registry, fed by the agent-side SessionStart hook.
+        -- pid liveness distinguishes "session open in a plain TUI" (hold the
+        -- action) from "session dead" (safe to wake headlessly).
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+          session_id TEXT PRIMARY KEY,
+          agent_kind TEXT NOT NULL,
+          pid INTEGER,
+          cwd TEXT,
+          transcript_path TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_pid
+        ON agent_sessions(pid);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
