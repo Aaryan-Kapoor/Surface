@@ -21,7 +21,17 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
   `initialize` with `experimentalApi`, version-gated ≥ 0.144.0, `turn/start`
   queues natively on busy threads, approvals broadcast to all clients.
   SKILL.md deliberately untouched (benchmark-locked); agent-facing guidance
-  lives in docs + README until the next bench pass.
+  lives in docs + README until the next bench pass. Verified e2e with a real
+  daemon-attached codex TUI (gpt-5.6-luna): live click → native in-context
+  turn; dead `codex exec` session → headless resume + wake; `codex resume`
+  shows the whole exchange. Hardened after a two-reviewer pass (gpt-5.6-sol
+  `codex review` + independent Claude agent, 2026-07-15): bridge-resumed
+  threads persisted (`codex_bridge_threads`) so consent + approval-decline
+  survive restarts; per-turn (not per-thread) coalescing slots; shape-correct
+  approval denials per method family; failed/headlessly-interrupted turns
+  return their batch to the inbox; 60s daemon backoff; single delivery
+  channel per surface across bindings/codex; pid-reuse-safe liveness; bridge
+  disabled on Windows (control socket is unix-only upstream).
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
 - Content is served through a dedicated content origin when configured, with Host/Origin validation on the app plane.
 - Built-in templates include ask, stream, video, board, and doc. The report
