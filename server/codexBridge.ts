@@ -137,7 +137,6 @@ class CodexConnection {
           });
           const version = parseVersionFromUserAgent(init?.userAgent || "");
           if (!version || !versionOk(version)) {
-            this.close();
             throw new Error(`codex app-server too old (need >= ${MIN_CODEX_VERSION.join(".")}): ${init?.userAgent || "unknown"}`);
           }
           this.daemonVersion = version.join(".");
@@ -146,6 +145,9 @@ class CodexConnection {
           resolve();
         } catch (err) {
           settled = true;
+          // Never leave a half-initialized socket behind: a later connect()
+          // would see readyState OPEN and treat it as ready.
+          this.close();
           reject(err as Error);
         }
       });
