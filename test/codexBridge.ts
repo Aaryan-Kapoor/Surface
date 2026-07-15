@@ -393,6 +393,75 @@ async function main() {
     assert.equal(meta.agent, "codex", "display label defaults to the captured kind");
   });
 
+  await test("surface codex setup installs the hook non-destructively; --remove-hook removes only ours", async () => {
+    const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "sfcx-home-"));
+    // Pre-existing foreign hook that must survive untouched.
+    const foreign = { type: "command", command: "python3 /tmp/other.py" };
+    fs.writeFileSync(path.join(codexHome, "hooks.json"), JSON.stringify({
+      description: "user file",
+      hooks: { SessionStart: [{ hooks: [foreign] }], PreToolUse: [{ matcher: "^Bash$", hooks: [foreign] }] },
+    }, null, 2));
+    // Fake codex binary: new enough version, daemon start succeeds.
+    const fakeCodex = path.join(codexHome, "codex");
+    fs.writeFileSync(fakeCodex, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "codex-cli 0.199.0"; exit 0; fi
+echo '{"status":"alreadyRunning"}'
+`);
+    fs.chmodSync(fakeCodex, 0o755);
+
+    const runCli = (args: string[]) => new Promise<{ code: number | null; out: string }>((resolve) => {
+      const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+      const child = spawn(process.execPath, [tsxCli, "bin/surface.ts", ...args], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, SURFACE_URL: BASE, CODEX_HOME: codexHome, SURFACE_CODEX_BIN: fakeCodex },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      child.stdout.on("data", (d) => { out += d; });
+      child.stderr.on("data", (d) => { out += d; });
+      child.on("exit", (code) => resolve({ code, out }));
+    });
+
+    const setup = await runCli(["codex", "setup"]);
+    assert.equal(setup.code, 0, `setup ok: ${setup.out}`);
+    let file = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
+    assert.equal(file.description, "user file", "top-level fields preserved");
+    assert.equal(file.hooks.PreToolUse[0].hooks[0].command, foreign.command, "foreign event untouched");
+    assert.equal(file.hooks.SessionStart.length, 2, "our group appended");
+    assert.ok(JSON.stringify(file.hooks.SessionStart).includes("surface codex hook"), "our hook present");
+
+    const again = await runCli(["codex", "setup"]);
+    assert.equal(again.code, 0);
+    file = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
+    assert.equal(file.hooks.SessionStart.length, 2, "setup is idempotent");
+
+    const remove = await runCli(["codex", "setup", "--remove-hook"]);
+    assert.equal(remove.code, 0);
+    file = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
+    assert.ok(!JSON.stringify(file).includes("surface codex hook"), "our hook removed");
+    assert.equal(file.hooks.SessionStart[0].hooks[0].command, foreign.command, "foreign SessionStart hook kept");
+    cleanupDir(codexHome);
+  });
+
+  await test("surface codex hook registers the session from the stdin payload", async () => {
+    const before = (await api("GET", "/codex/status")).json.registered_sessions;
+    const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+    const hookSession = "019f0000-0000-7000-8000-00000000000a";
+    const result = await new Promise<{ code: number | null }>((resolve) => {
+      const child = spawn(process.execPath, [tsxCli, "bin/surface.ts", "codex", "hook"], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, SURFACE_URL: BASE },
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      child.stdin.write(JSON.stringify({ session_id: hookSession, cwd: projectRoot, transcript_path: "/tmp/rollout.jsonl", hook_event_name: "SessionStart" }));
+      child.stdin.end();
+      child.on("exit", (code) => resolve({ code }));
+    });
+    assert.equal(result.code, 0, "hook exits 0");
+    const after = (await api("GET", "/codex/status")).json.registered_sessions;
+    assert.equal(after, before + 1, "session registered");
+  });
+
   await test("a live waiter outranks the codex layer", async () => {
     daemon.turnStarts = [];
     const ac = new AbortController();

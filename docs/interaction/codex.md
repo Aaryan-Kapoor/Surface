@@ -114,6 +114,21 @@ client; the first response wins. Bridge policy:
 | `SURFACE_CODEX_AUTOSTART=0` | Never spawn `codex app-server daemon start`. |
 | `CODEX_HOME` | Respected for the default socket + hooks.json location. |
 
+## Sandbox and environment reality (verified live)
+
+Daemon-attached sessions execute shell commands **inside the daemon process's
+environment**, not the terminal's: per-terminal env vars (`SURFACE_URL`, PATH
+tweaks) do not reach the agent's shells. Default setups are unaffected (global
+`surface` on PATH, service on :3000); the wake-turn text spells out the
+service URL for everything else.
+
+A wake turn runs under the thread's saved sandbox. If that sandbox has
+network access disabled, `surface` CLI calls from the woken agent are blocked
+and the escalation approval is auto-declined by the bridge (fail-closed, by
+design — verified live: the model adapts and reports honestly rather than
+fabricating progress). For full flowback on sandboxed threads, enable
+workspace network access in the codex config for surface projects.
+
 ## Failure modes, honestly
 
 - Daemon not running and autostart disabled/failing → wake path fails →

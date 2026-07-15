@@ -340,6 +340,10 @@ async function resumeThread(threadId: string): Promise<void> {
   throw lastErr || new Error("thread/resume failed");
 }
 
+function serviceBaseUrl(): string {
+  return `http://127.0.0.1:${process.env.PORT || 3000}`;
+}
+
 function buildTurnText(surfaceId: string, title: string, batch: Array<{ id: string; action: string; data: unknown; created_at: string }>): string {
   const payload = {
     type: "surface_action_batch",
@@ -347,8 +351,10 @@ function buildTurnText(surfaceId: string, title: string, batch: Array<{ id: stri
     surface_title: title,
     actions: batch,
   };
+  // Wake turns run with the daemon's env, not the creating shell's, so spell
+  // out the service URL. The batch is acked on delivery (waiter semantics).
   return [
-    `A user interacted with your surface "${title}" (${surfaceId}). Handle this action batch now, then update the surface so its state reflects reality (surface set/patch/reply). State is a claim, not an animation — only show progress you are actually making.`,
+    `A user interacted with your surface "${title}" (${surfaceId}). Handle this action batch now, then update the surface so its state reflects reality (surface set/patch/reply; the Surface service is at ${serviceBaseUrl()} — prefix commands with SURFACE_URL=${serviceBaseUrl()} if your shell lacks it). These actions are already acknowledged; do not run surface ack. State is a claim, not an animation — only show progress you are actually making.`,
     "```json",
     JSON.stringify(payload, null, 2),
     "```",
