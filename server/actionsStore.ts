@@ -49,6 +49,15 @@ export function ackAction(db: Database.Database, id: string): boolean {
   return result.changes > 0;
 }
 
+// Return a delivered action to the inbox — used when delivery was optimistic
+// and the handling turn demonstrably failed (codex bridge, failed wake turn).
+export function unackAction(db: Database.Database, id: string): boolean {
+  const result = db.prepare(
+    `UPDATE surface_actions SET status = 'pending', handled_at = NULL WHERE id = ? AND status = 'handled'`,
+  ).run(id);
+  return result.changes > 0;
+}
+
 export function cleanupActions(db: Database.Database): { handled: number; pending: number } {
   const handled = db.prepare(
     `DELETE FROM surface_actions WHERE status = 'handled' AND handled_at < datetime('now', '-7 days')`,

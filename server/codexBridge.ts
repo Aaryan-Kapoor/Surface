@@ -6,7 +6,7 @@ import WebSocket from "ws";
 import type Database from "better-sqlite3";
 import { getDb } from "./db.js";
 import { getArtifact } from "./artifacts.js";
-import { getPendingActions, ackAction } from "./actionsStore.js";
+import { getPendingActions, ackAction, unackAction } from "./actionsStore.js";
 import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
 import { getAgentLink, getAgentSession, sessionOpenInProcess } from "./agentSessions.js";
 import { projectAllowsBindings } from "./bindings.js";
@@ -253,6 +253,10 @@ let deliveriesFailed = 0;
 // and decline-never-grants is the safe direction.
 const bridgeResumedThreads = new Set<string>();
 const headlessTurnIds = new Set<string>();
+// turnId → the batch it delivered. Acking is optimistic (waiter semantics);
+// if the turn itself ends `failed`, the batch goes back to the inbox — the
+// agent never processed it. No auto-retry: the inbox is the durable truth.
+const deliveredBatches = new Map<string, { surfaceId: string; actionIds: string[] }>();
 // Per-surface single-flight until the delivered turn completes.
 const inFlight = new Set<string>();
 const rerunRequested = new Set<string>();
@@ -293,7 +297,22 @@ function installHandlers(): void {
       const threadId = msg.params?.threadId;
       if (!threadId) return;
       const turnId = msg.params?.turn?.id;
-      if (turnId) headlessTurnIds.delete(turnId);
+      if (turnId) {
+        headlessTurnIds.delete(turnId);
+        const delivered = deliveredBatches.get(turnId);
+        if (delivered) {
+          deliveredBatches.delete(turnId);
+          if (msg.params?.turn?.status === "failed") {
+            const db = getDb();
+            for (const id of delivered.actionIds) unackAction(db, id);
+            broadcastGlobal("actions_acked", {
+              surface_id: delivered.surfaceId,
+              pending_actions: getPendingActions(db, delivered.surfaceId).length,
+            });
+            status(delivered.surfaceId, "turn_failed", "the handling turn failed; the batch is back in the inbox");
+          }
+        }
+      }
       flushTurnWatchers(threadId);
     }
   });
@@ -302,6 +321,10 @@ function installHandlers(): void {
   // behind a 30-minute failsafe.
   connection.onClose(() => {
     for (const threadId of [...turnWatchers.keys()]) flushTurnWatchers(threadId);
+    // Outcomes of in-flight turns are unknowable now; keep them acked
+    // (delivered) and drop the tracking so the maps don't grow unbounded.
+    deliveredBatches.clear();
+    headlessTurnIds.clear();
   });
 }
 
@@ -478,7 +501,10 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
     input: [{ type: "text", text: buildTurnText(surfaceId, artifact.title, batch) }],
   });
   const turnId = started?.turn?.id;
-  if (headless && turnId) headlessTurnIds.add(turnId);
+  if (turnId) {
+    if (headless) headlessTurnIds.add(turnId);
+    deliveredBatches.set(turnId, { surfaceId, actionIds: pending.map((a) => a.id) });
+  }
 
   // Delivered to the agent: ack, mirroring waiter/binding semantics.
   for (const a of pending) ackAction(db, a.id);

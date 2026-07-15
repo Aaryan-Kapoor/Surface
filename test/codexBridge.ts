@@ -120,8 +120,9 @@ class MockDaemon {
     }
   }
 
-  completeTurn(threadId: string): void {
-    this.broadcast("turn/completed", { threadId, turn: { id: "turn-done", status: "completed" } });
+  completeTurn(threadId: string, status: "completed" | "failed" = "completed"): void {
+    const turnId = this.lastTurnIdByThread.get(threadId) || "turn-done";
+    this.broadcast("turn/completed", { threadId, turn: { id: turnId, status } });
   }
 
   close(): Promise<void> {
@@ -481,6 +482,24 @@ echo '{"status":"alreadyRunning"}'
     assert.equal(result.code, 0, "hook exits 0");
     const after = (await api("GET", "/codex/status")).json.registered_sessions;
     assert.equal(after, before + 1, "session registered");
+  });
+
+  await test("a failed handling turn returns the batch to the inbox", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    const act = await api("POST", "/artifacts/cx-live/actions", { action: "doomed", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "turn/start");
+    await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "optimistically acked");
+    daemon.completeTurn(LIVE_THREAD, "failed");
+    await waitFor(async () => (await pendingCount("cx-live")) === 1, 5000, "batch back in the inbox after the failed turn");
+    // Drain so later tests start clean: complete-turn cycle with a fresh delivery.
+    daemon.autoCompleteTurns = true;
+    // The failed batch does NOT auto-retry (no loop): it sits in the inbox.
+    await sleep(600);
+    assert.equal(daemon.turnStarts.length, 1, "no automatic redelivery loop");
+    const pendingRows = (await api("GET", "/artifacts/cx-live/actions")).json;
+    for (const row of pendingRows) await api("POST", `/actions/${row.id}/ack`, {});
   });
 
   await test("a live waiter outranks the codex layer", async () => {
