@@ -36,6 +36,7 @@ class MockDaemon {
   turnStarts: TurnStartCall[] = [];
   approvalResponses: any[] = [];
   autoCompleteTurns = true;
+  lastTurnIdByThread = new Map<string, string>();
   private nextServerRequestId = 1000;
 
   constructor(public sockPath: string) {
@@ -61,13 +62,15 @@ class MockDaemon {
   }
 
   // Server → client request to every client; responses land in approvalResponses.
+  // Uses the real id of the thread's latest turn, like the actual app-server.
   requestApproval(threadId: string): void {
     const id = this.nextServerRequestId++;
+    const turnId = this.lastTurnIdByThread.get(threadId) || "turn-x";
     for (const ws of this.sockets) {
       this.send(ws, {
         id,
         method: "item/commandExecution/requestApproval",
-        params: { threadId, turnId: "turn-x", itemId: "exec-1", command: "touch /tmp/x", cwd: "/tmp" },
+        params: { threadId, turnId, itemId: "exec-1", command: "touch /tmp/x", cwd: "/tmp" },
       });
     }
   }
@@ -103,8 +106,10 @@ class MockDaemon {
         const threadId = msg.params.threadId;
         const text = msg.params.input?.[0]?.text || "";
         this.turnStarts.push({ threadId, text });
-        this.send(ws, { id: msg.id, result: { turn: { id: `turn-${this.turnStarts.length}`, status: "inProgress" } } });
-        this.broadcast("turn/started", { threadId, turn: { id: `turn-${this.turnStarts.length}` } });
+        const turnId = `turn-${this.turnStarts.length}`;
+        this.lastTurnIdByThread.set(threadId, turnId);
+        this.send(ws, { id: msg.id, result: { turn: { id: turnId, status: "inProgress" } } });
+        this.broadcast("turn/started", { threadId, turn: { id: turnId } });
         if (this.autoCompleteTurns) {
           setTimeout(() => this.completeTurn(threadId), 150);
         }
@@ -272,6 +277,22 @@ async function main() {
     const act = await api("POST", "/artifacts/cx-dead/actions", { action: "again", data: {} });
     assert.equal(act.status, 201);
     await waitFor(() => daemon.turnStarts.length === 1, 10000, "second wake turn");
+    daemon.requestApproval(DEAD_THREAD);
+    await waitFor(() => daemon.approvalResponses.length === 1, 5000, "decline response");
+    assert.equal(daemon.approvalResponses[0].result?.decision, "decline");
+    daemon.completeTurn(DEAD_THREAD);
+    daemon.autoCompleteTurns = true;
+  });
+
+  await test("follow-up turns on a bridge-resumed thread stay headless (approvals still declined)", async () => {
+    // DEAD_THREAD is now loaded because the bridge resumed it — but nobody is
+    // attached, so approvals on further wake turns must still be declined.
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    daemon.approvalResponses = [];
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "third", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "third wake turn");
     daemon.requestApproval(DEAD_THREAD);
     await waitFor(() => daemon.approvalResponses.length === 1, 5000, "decline response");
     assert.equal(daemon.approvalResponses[0].result?.decision, "decline");

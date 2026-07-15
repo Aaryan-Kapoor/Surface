@@ -9,6 +9,7 @@ import { getArtifact } from "./artifacts.js";
 import { getPendingActions, ackAction } from "./actionsStore.js";
 import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
 import { getAgentLink, getAgentSession, sessionOpenInProcess } from "./agentSessions.js";
+import { projectAllowsBindings } from "./bindings.js";
 
 // Codex flowback layer (docs/interaction/codex.md): route surface actions back
 // into the Codex session that created the surface, through the codex
@@ -155,6 +156,9 @@ class CodexConnection {
       ws.on("close", () => {
         if (this.ws === ws) this.ws = null;
         this.failAllPending(new Error("codex app-server connection closed"));
+        for (const fn of this.closeHandlers) {
+          try { fn(); } catch {}
+        }
         if (!settled) { settled = true; reject(new Error("codex app-server connection closed during handshake")); }
       });
     });
@@ -195,6 +199,11 @@ class CodexConnection {
     }
     this.pending.clear();
   }
+
+  onClose(fn: () => void): void {
+    this.closeHandlers.add(fn);
+  }
+  private closeHandlers = new Set<() => void>();
 
   send(msg: JsonRpcMessage): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error("codex app-server not connected");
@@ -237,15 +246,26 @@ let lastError: string | null = null;
 let deliveriesOk = 0;
 let deliveriesFailed = 0;
 
-// Turns this bridge started on threads that were not previously loaded (i.e.
-// nobody is attached): approval requests for these are declined, fail-closed.
-const headlessTurnThreads = new Set<string>();
+// Threads this bridge resumed itself (nobody was attached). Turns we start on
+// them are "headless": approval requests for those exact turn ids are
+// declined, fail-closed. A thread stays bridge-owned for the process
+// lifetime — a user attaching to it later is indistinguishable from nobody,
+// and decline-never-grants is the safe direction.
+const bridgeResumedThreads = new Set<string>();
+const headlessTurnIds = new Set<string>();
 // Per-surface single-flight until the delivered turn completes.
 const inFlight = new Set<string>();
 const rerunRequested = new Set<string>();
 // threadId → callbacks waiting for the current turn to end (several surfaces
 // can share one creating thread).
 const turnWatchers = new Map<string, Set<() => void>>();
+
+function flushTurnWatchers(threadId: string): void {
+  const watchers = turnWatchers.get(threadId);
+  if (!watchers) return;
+  turnWatchers.delete(threadId);
+  for (const done of watchers) done();
+}
 
 const APPROVAL_METHODS = new Set([
   "item/commandExecution/requestApproval",
@@ -260,8 +280,8 @@ function installHandlers(): void {
   handlersInstalled = true;
   connection.onServerRequest((msg) => {
     if (!APPROVAL_METHODS.has(msg.method!)) return false;
-    const threadId = msg.params?.threadId;
-    if (threadId && headlessTurnThreads.has(threadId)) {
+    const turnId = msg.params?.turnId;
+    if (turnId && headlessTurnIds.has(turnId)) {
       // Fail closed: a headless wake must never gain privileges unattended.
       connection.respond(msg.id!, { decision: "decline" });
       return true;
@@ -272,13 +292,16 @@ function installHandlers(): void {
     if (msg.method === "turn/completed" || msg.method === "thread/closed") {
       const threadId = msg.params?.threadId;
       if (!threadId) return;
-      if (msg.method === "turn/completed") headlessTurnThreads.delete(threadId);
-      const watchers = turnWatchers.get(threadId);
-      if (watchers) {
-        turnWatchers.delete(threadId);
-        for (const done of watchers) done();
-      }
+      const turnId = msg.params?.turn?.id;
+      if (turnId) headlessTurnIds.delete(turnId);
+      flushTurnWatchers(threadId);
     }
+  });
+  // A dropped daemon connection means turn/completed will never arrive:
+  // release every single-flight slot so coalesced batches aren't stranded
+  // behind a 30-minute failsafe.
+  connection.onClose(() => {
+    for (const threadId of [...turnWatchers.keys()]) flushTurnWatchers(threadId);
   });
 }
 
@@ -390,8 +413,14 @@ export function maybeDispatchCodex(surfaceId: string, consent: boolean): void {
     .finally(() => {
       inFlight.delete(surfaceId);
       if (rerunRequested.delete(surfaceId)) {
-        const stillPending = getPendingActions(getDb(), surfaceId);
-        if (stillPending.length && !hasWaiter(surfaceId)) maybeDispatchCodex(surfaceId, consent);
+        const rdb = getDb();
+        const stillPending = getPendingActions(rdb, surfaceId);
+        if (stillPending.length && !hasWaiter(surfaceId)) {
+          // Recompute consent — .surface/config.json may have changed while
+          // the previous delivery was in flight.
+          const artifact = getArtifact(rdb, surfaceId);
+          if (artifact) maybeDispatchCodex(surfaceId, projectAllowsBindings(artifact.project_root));
+        }
       }
     });
 }
@@ -433,8 +462,9 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
 
   if (!loaded) {
     await resumeThread(threadId);
-    headlessTurnThreads.add(threadId);
+    bridgeResumedThreads.add(threadId);
   }
+  const headless = bridgeResumedThreads.has(threadId);
 
   const batch = pending.map((a) => ({
     id: a.id,
@@ -443,15 +473,12 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
     created_at: a.created_at,
   }));
 
-  try {
-    await connection.request("turn/start", {
-      threadId,
-      input: [{ type: "text", text: buildTurnText(surfaceId, artifact.title, batch) }],
-    });
-  } catch (err) {
-    headlessTurnThreads.delete(threadId);
-    throw err;
-  }
+  const started = await connection.request("turn/start", {
+    threadId,
+    input: [{ type: "text", text: buildTurnText(surfaceId, artifact.title, batch) }],
+  });
+  const turnId = started?.turn?.id;
+  if (headless && turnId) headlessTurnIds.add(turnId);
 
   // Delivered to the agent: ack, mirroring waiter/binding semantics.
   for (const a of pending) ackAction(db, a.id);
