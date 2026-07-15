@@ -70,11 +70,15 @@ Between explicit bindings and the inbox (`server/bindings.ts::dispatchAction`):
 4. **Inbox** — unchanged, still catches everything else.
 
 Delivery acks the batch (like a waiter delivery) once `turn/start` is
-accepted. Per surface, one delivery is in flight at a time: clicks arriving
-while the delivered turn runs coalesce into a single follow-up batch on
+accepted — but if the handling turn ends `failed` (usage limit, server
+error), the batch is un-acked back into the inbox: the agent demonstrably
+never processed it, and the inbox is the durable truth. There is no
+automatic redelivery — a failing turn must not become a spawn loop. Per
+surface, one delivery is in flight at a time: clicks arriving while the
+delivered turn runs coalesce into a single follow-up batch on
 `turn/completed`. `codex_bridge_status` SSE events (`delivered_live`,
-`delivered_wake`, `held_live_tui`, `held_no_consent`, `failed`) narrate the
-layer to the PWA.
+`delivered_wake`, `held_live_tui`, `held_no_consent`, `turn_failed`,
+`failed`) narrate the layer to the PWA.
 
 ## Approvals: Surface never approves anything
 

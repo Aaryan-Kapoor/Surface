@@ -251,7 +251,9 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     try {
       service = await call("GET", "/codex/status");
     } catch (err: any) {
-      serviceError = err?.message || String(err);
+      serviceError = err?.status === 404
+        ? "service predates the codex bridge — run: surface upgrade"
+        : err?.message || String(err);
     }
     const result = { ...local, service, service_error: serviceError };
     if (ctx.flags.json === true) {
