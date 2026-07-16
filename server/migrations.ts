@@ -195,6 +195,7 @@ const migrations: Migration[] = [
           pid INTEGER,
           cwd TEXT,
           transcript_path TEXT,
+          registration_order INTEGER NOT NULL DEFAULT 0,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
         );

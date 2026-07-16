@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import Database from "better-sqlite3";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -154,6 +155,7 @@ const TUI_THREAD = "019f0000-0000-7000-8000-000000000003";
 const NOCONSENT_THREAD = "019f0000-0000-7000-8000-000000000004";
 const RETRY_THREAD = "019f0000-0000-7000-8000-000000000005";
 const CLI_THREAD = "019f0000-0000-7000-8000-000000000006";
+const STALE_TUI_THREAD = "019f0000-0000-7000-8000-000000000007";
 
 async function api(method: string, p: string, body?: unknown): Promise<{ status: number; json: any }> {
   const res = await call(method, p, { body });
@@ -407,7 +409,7 @@ async function main() {
     assert.equal(await pendingCount("cx-nocons"), 1, "action waits in the inbox");
   });
 
-  await test("session open in an unreachable TUI (live codex pid) is never woken", async () => {
+  await test("only the latest session registered by a live TUI is held", async () => {
     daemon.turnStarts = [];
     daemon.resumeCalls = [];
     // The liveness guard also checks the process *name* (pid-reuse defense),
@@ -417,20 +419,47 @@ async function main() {
     fs.chmodSync(fakeCodexBin, 0o755);
     const fakeTui = spawn(fakeCodexBin, ["120"], { stdio: "ignore" });
     try {
-      const reg = await api("POST", "/codex/sessions/register", {
+      const staleReg = await api("POST", "/codex/sessions/register", {
+        kind: "codex",
+        session_id: STALE_TUI_THREAD,
+        pid: fakeTui.pid,
+        cwd: projectRoot,
+      });
+      assert.equal(staleReg.status, 204);
+      const currentReg = await api("POST", "/codex/sessions/register", {
         kind: "codex",
         session_id: TUI_THREAD,
         pid: fakeTui.pid,
         cwd: projectRoot,
       });
-      assert.equal(reg.status, 204);
+      assert.equal(currentReg.status, 204);
+
+      // Reproduce the review finding deterministically: SQLite's datetime()
+      // timestamps have only second precision, so both registrations can tie.
+      const testDb = new Database(path.join(dataDir, "db.sqlite"));
+      testDb.prepare(
+        `UPDATE agent_sessions SET created_at = datetime('now'), last_seen_at = datetime('now')
+         WHERE session_id IN (?, ?)`,
+      ).run(STALE_TUI_THREAD, TUI_THREAD);
+      testDb.close();
+
+      await createCodexSurface("cx-stale-tui", STALE_TUI_THREAD);
       await createCodexSurface("cx-tui", TUI_THREAD);
-      const act = await api("POST", "/artifacts/cx-tui/actions", { action: "x", data: {} });
-      assert.equal(act.status, 201);
+
+      const staleAction = await api("POST", "/artifacts/cx-stale-tui/actions", { action: "x", data: {} });
+      assert.equal(staleAction.status, 201);
+      await waitFor(() => daemon.turnStarts.length === 1, 10000, "older TUI session to wake");
+      assert.deepEqual(daemon.resumeCalls, [STALE_TUI_THREAD], "older session is no longer owned by the TUI");
+      await waitFor(async () => (await pendingCount("cx-stale-tui")) === 0, 5000, "older session drained");
+
+      daemon.turnStarts = [];
+      daemon.resumeCalls = [];
+      const currentAction = await api("POST", "/artifacts/cx-tui/actions", { action: "y", data: {} });
+      assert.equal(currentAction.status, 201);
       await sleep(1000);
-      assert.equal(daemon.resumeCalls.length, 0, "no resume while the owning TUI lives");
-      assert.equal(daemon.turnStarts.length, 0, "no wake while the owning TUI lives");
-      assert.equal(await pendingCount("cx-tui"), 1, "action waits in the inbox");
+      assert.equal(daemon.resumeCalls.length, 0, "current session is not resumed while its TUI lives");
+      assert.equal(daemon.turnStarts.length, 0, "current session is not woken while its TUI lives");
+      assert.equal(await pendingCount("cx-tui"), 1, "current session action waits in the inbox");
     } finally {
       fakeTui.kill();
     }

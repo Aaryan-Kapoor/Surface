@@ -19,6 +19,7 @@ export interface AgentSessionRow {
   pid: number | null;
   cwd: string | null;
   transcript_path: string | null;
+  registration_order: number;
   created_at: string;
   last_seen_at: string;
 }
@@ -63,13 +64,14 @@ export function registerAgentSession(
   }
   const pid = Number.isInteger(params.pid) && (params.pid as number) > 0 ? params.pid : null;
   db.prepare(
-    `INSERT INTO agent_sessions (session_id, agent_kind, pid, cwd, transcript_path)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO agent_sessions (session_id, agent_kind, pid, cwd, transcript_path, registration_order)
+     VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(registration_order), 0) + 1 FROM agent_sessions))
      ON CONFLICT(session_id) DO UPDATE SET
        agent_kind = excluded.agent_kind,
        pid = COALESCE(excluded.pid, agent_sessions.pid),
        cwd = COALESCE(excluded.cwd, agent_sessions.cwd),
        transcript_path = COALESCE(excluded.transcript_path, agent_sessions.transcript_path),
+       registration_order = excluded.registration_order,
        last_seen_at = datetime('now')`,
   ).run(params.session_id, params.kind, pid, params.cwd || null, params.transcript_path || null);
   // Opportunistic pruning: a registry entry that hasn't been seen in a month
@@ -120,7 +122,7 @@ export function sessionOpenInProcess(db: Database.Database, session: AgentSessio
   if (!session.pid || !pidAlive(session.pid) || !processLooksLikeCodex(session.pid)) return false;
   const newest = db
     .prepare(
-      `SELECT session_id FROM agent_sessions WHERE pid = ? ORDER BY last_seen_at DESC, created_at DESC LIMIT 1`,
+      `SELECT session_id FROM agent_sessions WHERE pid = ? ORDER BY registration_order DESC LIMIT 1`,
     )
     .get(session.pid) as { session_id: string } | undefined;
   return newest?.session_id === session.session_id;
