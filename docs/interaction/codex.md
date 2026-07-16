@@ -1,7 +1,7 @@
 # Codex Flowback Bridge
 
 **Status:** Shipped (2026-07)
-**Code:** `server/codexBridge.ts` (bridge + ladder layer), `server/agentSessions.ts` (session capture), `bin/codex.ts` (`surface codex`), migration v12 (`agent_links`, `agent_sessions`)
+**Code:** `server/codexBridge.ts` (bridge + ladder layer), `server/agentSessions.ts` (session capture), `bin/codex.ts` (`surface codex`), migrations v12–v13 (session capture + durable delivery leases)
 **Tests:** `test/codexBridge.ts` (mock app-server daemon speaking the real wire protocol)
 
 Claude Code gets realtime two-way flow from a background Monitor waiter. Codex
@@ -72,17 +72,20 @@ Between explicit bindings and the inbox (`server/bindings.ts::dispatchAction`):
      without it the action stays in the inbox.
 4. **Inbox** — unchanged, still catches everything else.
 
-Delivery acks the batch (like a waiter delivery) once `turn/start` is
-accepted — but if the handling turn ends `failed` (usage limit, server
-error), or `interrupted` while headless, the batch is un-acked back into the
-inbox: the agent demonstrably never processed it, and the inbox is the
-durable truth. (An *attended* interrupt keeps the ack: the user saw the batch
-in their transcript and chose to stop.) There is no automatic redelivery — a
+Live delivery acks the batch (like a waiter) once `turn/start` is accepted.
+Headless delivery first moves the batch into a durable `delivering` lease and
+only marks it handled when the turn completes. A failed/interrupted turn,
+connection loss, request timeout, or service restart returns that lease to the
+inbox (at-least-once is safer than silently losing a click). An *attended*
+interrupt keeps the ack: the user saw the batch in their transcript and chose
+to stop. There is no automatic redelivery — a
 failing turn must not become a spawn loop. Per surface, one delivery is in
 flight at a time, keyed to the exact delivered turn id (an unrelated turn
 completing on a shared thread does not release the slot): clicks arriving
 while the delivered turn runs coalesce into a single follow-up batch on
-`turn/completed`. Daemon failures back off for 60s so a broken daemon never
+`turn/completed`. Transitions are also serialized per Codex thread so two
+surfaces cannot race `thread/resume`. Batches are bounded to 20 actions, with
+bounded action names and data. Daemon failures back off for 60s so a broken daemon never
 becomes a per-click `codex` spawn storm; a surface with a binding or codex
 delivery mid-flight is owned by exactly one channel at a time. Action `data`
 is embedded with an explicit untrusted-input preamble and a per-action size

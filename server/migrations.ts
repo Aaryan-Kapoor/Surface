@@ -213,6 +213,34 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 13,
+    description: "durable codex delivery leases",
+    up: (db) => {
+      // Early checkouts of the v12 branch may already have user_version=12
+      // without this review-added column. Keep the upgrade append-only and
+      // tolerate fresh v12 databases that already include it.
+      const columns = db.pragma("table_info(agent_sessions)") as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "registration_order")) {
+        db.exec(`ALTER TABLE agent_sessions ADD COLUMN registration_order INTEGER NOT NULL DEFAULT 0`);
+      }
+      db.exec(`
+        -- Headless turn delivery is at-least-once. Actions move from pending
+        -- to delivering before turn/start and return to pending after an
+        -- uncertain outcome, including a service restart.
+        CREATE TABLE IF NOT EXISTS codex_action_deliveries (
+          action_id TEXT PRIMARY KEY,
+          surface_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          turn_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (action_id) REFERENCES surface_actions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_codex_action_deliveries_surface
+        ON codex_action_deliveries(surface_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

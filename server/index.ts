@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initDb, getDb, closeDb } from "./db.js";
-import { cleanupActions } from "./actionsStore.js";
+import { cleanupActions, recoverCodexActions } from "./actionsStore.js";
 import { router } from "./routes/index.js";
 import { gcArtifactStorage, listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
@@ -97,6 +97,10 @@ const TRUST_LOOPBACK = !["0", "false", "no"].includes(
 const PUBLIC_BASE_URL = process.env.SURFACE_PUBLIC_URL?.replace(/\/$/, "");
 
 initDb();
+const recoveredCodexActions = recoverCodexActions(getDb());
+if (recoveredCodexActions) {
+  console.warn(`[codex] restored ${recoveredCodexActions} interrupted delivery action(s) to the inbox`);
+}
 gcArtifactStorage(getDb());
 
 // Inbox TTL sweep: at boot and hourly.

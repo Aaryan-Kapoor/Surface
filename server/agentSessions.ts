@@ -74,6 +74,11 @@ export function registerAgentSession(
        registration_order = excluded.registration_order,
        last_seen_at = datetime('now')`,
   ).run(params.session_id, params.kind, pid, params.cwd || null, params.transcript_path || null);
+  // A SessionStart with a real Codex pid means a user has attached to this
+  // thread again. It is no longer bridge-owned/headless.
+  if (params.kind === "codex" && pid) {
+    db.prepare(`DELETE FROM codex_bridge_threads WHERE thread_id = ?`).run(params.session_id);
+  }
   // Opportunistic pruning: a registry entry that hasn't been seen in a month
   // describes a session nobody is coming back to.
   db.prepare(`DELETE FROM agent_sessions WHERE last_seen_at < datetime('now', '-30 days')`).run();

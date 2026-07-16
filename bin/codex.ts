@@ -286,6 +286,14 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
   }
 
   if (sub === "setup") {
+    // Removal must remain available after Codex is uninstalled or downgraded;
+    // it only edits Surface's own hook entry.
+    if (ctx.flags["remove-hook"] === true) {
+      const { changed } = removeHook();
+      console.log(changed ? "SessionStart hook removed." : "No Surface SessionStart hook to remove.");
+      return;
+    }
+
     const version = codexVersion();
     if (!version) {
       console.error(`codex CLI not found (looked for \`${codexBin()}\`). Install codex first: https://developers.openai.com/codex/cli`);
@@ -298,12 +306,6 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
       return;
     }
     console.log(`codex v${version.join(".")} ok`);
-
-    if (ctx.flags["remove-hook"] === true) {
-      const { changed } = removeHook();
-      console.log(changed ? "SessionStart hook removed." : "No Surface SessionStart hook to remove.");
-      return;
-    }
 
     const daemon = startDaemon();
     if (!daemon.ok) {

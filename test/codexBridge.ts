@@ -6,6 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
+import { recoverCodexActions } from "../server/actionsStore.js";
 import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady, REPO_ROOT } from "./helpers.js";
 
 // The codex flowback layer (docs/interaction/codex.md), tested against a mock
@@ -36,7 +37,11 @@ class MockDaemon {
   resumeCalls: string[] = [];
   turnStarts: TurnStartCall[] = [];
   approvalResponses: any[] = [];
+  approvalBeforeStartResponse = false;
   autoCompleteTurns = true;
+  resumeDelayMs = 0;
+  activeResumes = 0;
+  maxConcurrentResumes = 0;
   lastTurnIdByThread = new Map<string, string>();
   private nextServerRequestId = 1000;
 
@@ -93,13 +98,20 @@ class MockDaemon {
       case "thread/resume": {
         const threadId = msg.params.threadId;
         this.resumeCalls.push(threadId);
-        if (this.resumeFailures > 0) {
-          this.resumeFailures--;
-          this.send(ws, { id: msg.id, error: { code: -32600, message: `no rollout found for thread id ${threadId}` } });
-          return;
-        }
-        this.loadedThreads.add(threadId);
-        this.send(ws, { id: msg.id, result: { thread: { id: threadId } } });
+        this.activeResumes++;
+        this.maxConcurrentResumes = Math.max(this.maxConcurrentResumes, this.activeResumes);
+        const finish = () => {
+          this.activeResumes--;
+          if (this.resumeFailures > 0) {
+            this.resumeFailures--;
+            this.send(ws, { id: msg.id, error: { code: -32600, message: `no rollout found for thread id ${threadId}` } });
+            return;
+          }
+          this.loadedThreads.add(threadId);
+          this.send(ws, { id: msg.id, result: { thread: { id: threadId } } });
+        };
+        if (this.resumeDelayMs) setTimeout(finish, this.resumeDelayMs);
+        else finish();
         return;
       }
       case "turn/start": {
@@ -108,6 +120,10 @@ class MockDaemon {
         this.turnStarts.push({ threadId, text });
         const turnId = `turn-${this.turnStarts.length}`;
         this.lastTurnIdByThread.set(threadId, turnId);
+        if (this.approvalBeforeStartResponse) {
+          this.approvalBeforeStartResponse = false;
+          this.requestApproval(threadId);
+        }
         this.send(ws, { id: msg.id, result: { turn: { id: turnId, status: "inProgress" } } });
         this.broadcast("turn/started", { threadId, turn: { id: turnId } });
         if (this.autoCompleteTurns) {
@@ -130,6 +146,10 @@ class MockDaemon {
     this.wss.close();
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
+
+  dropConnections(): void {
+    for (const ws of this.sockets) ws.terminate();
+  }
 }
 
 // ── harness ──
@@ -138,6 +158,7 @@ let PORT = 0;
 let BASE = "";
 let CONTENT_BASE = "";
 let server: ChildProcess | null = null;
+let liveTui: ChildProcess | null = null;
 let call: ReturnType<typeof makeClient>;
 let daemon: MockDaemon;
 
@@ -156,13 +177,24 @@ const NOCONSENT_THREAD = "019f0000-0000-7000-8000-000000000004";
 const RETRY_THREAD = "019f0000-0000-7000-8000-000000000005";
 const CLI_THREAD = "019f0000-0000-7000-8000-000000000006";
 const STALE_TUI_THREAD = "019f0000-0000-7000-8000-000000000007";
+const SHARED_THREAD = "019f0000-0000-7000-8000-000000000008";
+const UNREGISTERED_THREAD = "019f0000-0000-7000-8000-000000000009";
+const STALE_LOADED_THREAD = "019f0000-0000-7000-8000-00000000000b";
 
 async function api(method: string, p: string, body?: unknown): Promise<{ status: number; json: any }> {
   const res = await call(method, p, { body });
   return { status: res.status, json: res.body };
 }
 
-async function createCodexSurface(id: string, threadId: string, root = projectRoot): Promise<void> {
+async function createCodexSurface(id: string, threadId: string, root = projectRoot, register = true): Promise<void> {
+  if (register) {
+    const registered = await api("POST", "/codex/sessions/register", {
+      kind: "codex",
+      session_id: threadId,
+      cwd: root,
+    });
+    assert.equal(registered.status, 204, `session ${threadId} registered`);
+  }
   const created = await api("POST", "/artifacts", {
     id,
     title: `Codex ${id}`,
@@ -215,6 +247,18 @@ async function main() {
     SURFACE_CODEX_AUTOSTART: "0",
   }, ports.contentPort);
   await waitForReady(BASE, "/artifacts");
+
+  const liveCodexBin = path.join(dataDir, "codex-live-stand-in");
+  fs.copyFileSync("/bin/sleep", liveCodexBin);
+  fs.chmodSync(liveCodexBin, 0o755);
+  liveTui = spawn(liveCodexBin, ["120"], { stdio: "ignore" });
+  const liveRegistration = await api("POST", "/codex/sessions/register", {
+    kind: "codex",
+    session_id: LIVE_THREAD,
+    pid: liveTui.pid,
+    cwd: projectRoot,
+  });
+  assert.equal(liveRegistration.status, 204, "live session registered");
 
   console.log("\n=== Codex flowback bridge Tests ===\n");
 
@@ -281,6 +325,19 @@ async function main() {
     await waitFor(() => daemon.turnStarts.length === 1, 10000, "second wake turn");
     daemon.requestApproval(DEAD_THREAD);
     await waitFor(() => daemon.approvalResponses.length === 1, 5000, "decline response");
+    assert.equal(daemon.approvalResponses[0].result?.decision, "decline");
+    daemon.completeTurn(DEAD_THREAD);
+    daemon.autoCompleteTurns = true;
+  });
+
+  await test("an approval arriving before the turn/start response is still declined", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    daemon.approvalResponses = [];
+    daemon.approvalBeforeStartResponse = true;
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "early-approval", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.approvalResponses.length === 1, 5000, "early approval denial");
     assert.equal(daemon.approvalResponses[0].result?.decision, "decline");
     daemon.completeTurn(DEAD_THREAD);
     daemon.autoCompleteTurns = true;
@@ -378,6 +435,20 @@ async function main() {
     daemon.autoCompleteTurns = true;
   });
 
+  await test("a dropped codex connection restores a headless delivery lease", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "disconnect", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "headless turn before disconnect");
+    await waitFor(async () => (await pendingCount("cx-dead")) === 0, 5000, "batch leased out of pending");
+    daemon.dropConnections();
+    await waitFor(async () => (await pendingCount("cx-dead")) === 1, 5000, "lease restored after disconnect");
+    const rows = (await api("GET", "/artifacts/cx-dead/actions")).json;
+    for (const row of rows) await api("POST", `/actions/${row.id}/ack`, {});
+    daemon.autoCompleteTurns = true;
+  });
+
   await test("approval on an attached (non-headless) thread is left for the user's client", async () => {
     daemon.approvalResponses = [];
     daemon.requestApproval(LIVE_THREAD);
@@ -407,6 +478,43 @@ async function main() {
     assert.equal(daemon.resumeCalls.length, 0, "no resume without consent");
     assert.equal(daemon.turnStarts.length, 0, "no wake without consent");
     assert.equal(await pendingCount("cx-nocons"), 1, "action waits in the inbox");
+  });
+
+  await test("daemon-loaded without a live TUI still requires wake consent", async () => {
+    daemon.turnStarts = [];
+    daemon.resumeCalls = [];
+    await createCodexSurface("cx-stale-loaded", STALE_LOADED_THREAD);
+    daemon.loadedThreads.add(STALE_LOADED_THREAD);
+    fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: false } }));
+    const act = await api("POST", "/artifacts/cx-stale-loaded/actions", { action: "x", data: {} });
+    assert.equal(act.status, 201);
+    await sleep(800);
+    assert.equal(daemon.turnStarts.length, 0, "stale loaded thread did not bypass consent");
+    assert.equal(await pendingCount("cx-stale-loaded"), 1, "action remains durable");
+    fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: true } }));
+    const rows = (await api("GET", "/artifacts/cx-stale-loaded/actions")).json;
+    for (const row of rows) await api("POST", `/actions/${row.id}/ack`, {});
+  });
+
+  await test("two surfaces sharing a dead thread serialize resume and delivery", async () => {
+    daemon.turnStarts = [];
+    daemon.resumeCalls = [];
+    daemon.maxConcurrentResumes = 0;
+    daemon.resumeDelayMs = 150;
+    daemon.loadedThreads.delete(SHARED_THREAD);
+    await createCodexSurface("cx-shared-a", SHARED_THREAD);
+    await createCodexSurface("cx-shared-b", SHARED_THREAD);
+    await Promise.all([
+      api("POST", "/artifacts/cx-shared-a/actions", { action: "a", data: {} }),
+      api("POST", "/artifacts/cx-shared-b/actions", { action: "b", data: {} }),
+    ]);
+    await waitFor(() => daemon.turnStarts.length === 2, 10000, "both serialized turns");
+    assert.equal(daemon.maxConcurrentResumes, 1, "at most one resume in flight for the thread");
+    assert.deepEqual(daemon.resumeCalls, [SHARED_THREAD], "the second surface observes the first resume");
+    await waitFor(async () =>
+      (await pendingCount("cx-shared-a")) === 0 && (await pendingCount("cx-shared-b")) === 0,
+    5000, "shared-thread batches drained");
+    daemon.resumeDelayMs = 0;
   });
 
   await test("only the latest session registered by a live TUI is held", async () => {
@@ -443,8 +551,8 @@ async function main() {
       ).run(STALE_TUI_THREAD, TUI_THREAD);
       testDb.close();
 
-      await createCodexSurface("cx-stale-tui", STALE_TUI_THREAD);
-      await createCodexSurface("cx-tui", TUI_THREAD);
+      await createCodexSurface("cx-stale-tui", STALE_TUI_THREAD, projectRoot, false);
+      await createCodexSurface("cx-tui", TUI_THREAD, projectRoot, false);
 
       const staleAction = await api("POST", "/artifacts/cx-stale-tui/actions", { action: "x", data: {} });
       assert.equal(staleAction.status, 201);
@@ -517,9 +625,44 @@ async function main() {
     assert.equal(await pendingCount("cx-device"), 1, "action stays in the inbox");
   });
 
+  await test("an unregistered system session cannot plant a codex flowback link", async () => {
+    daemon.turnStarts = [];
+    daemon.resumeCalls = [];
+    await createCodexSurface("cx-unregistered", UNREGISTERED_THREAD, projectRoot, false);
+    const act = await api("POST", "/artifacts/cx-unregistered/actions", { action: "x", data: {} });
+    assert.equal(act.status, 201);
+    await sleep(800);
+    assert.equal(daemon.turnStarts.length, 0, "no delivery without SessionStart registration");
+    assert.equal(daemon.resumeCalls.length, 0, "no unsafe resume without liveness registration");
+    assert.equal(await pendingCount("cx-unregistered"), 1, "action stays in the inbox");
+  });
+
+  await test("startup reconciliation restores durable delivery leases", async () => {
+    const testDb = new Database(path.join(dataDir, "db.sqlite"));
+    const row = testDb.prepare(
+      `SELECT id FROM surface_actions WHERE surface_id = ? AND status = 'pending' LIMIT 1`,
+    ).get("cx-unregistered") as { id: string };
+    testDb.transaction(() => {
+      testDb.prepare(`UPDATE surface_actions SET status = 'delivering' WHERE id = ?`).run(row.id);
+      testDb.prepare(
+        `INSERT INTO codex_action_deliveries (action_id, surface_id, thread_id) VALUES (?, ?, ?)`,
+      ).run(row.id, "cx-unregistered", UNREGISTERED_THREAD);
+    })();
+    assert.equal(recoverCodexActions(testDb), 1, "one interrupted lease recovered");
+    testDb.close();
+    assert.equal(await pendingCount("cx-unregistered"), 1, "recovered action is pending again");
+  });
+
   await test("CLI stamps CODEX_THREAD_ID automatically on create", async () => {
     daemon.loadedThreads.add(CLI_THREAD);
     daemon.turnStarts = [];
+    const registered = await api("POST", "/codex/sessions/register", {
+      kind: "codex",
+      session_id: CLI_THREAD,
+      pid: liveTui?.pid,
+      cwd: projectRoot,
+    });
+    assert.equal(registered.status, 204, "CLI thread registered like SessionStart");
     const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
     const out = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
       const child = spawn(process.execPath, [tsxCli, "bin/surface.ts", "create", "CLI codex surface", "--id", "cx-cli", "--content", "<p>hi</p>", "--mime", "text/html"], {
@@ -558,11 +701,11 @@ echo '{"status":"alreadyRunning"}'
 `);
     fs.chmodSync(fakeCodex, 0o755);
 
-    const runCli = (args: string[]) => new Promise<{ code: number | null; out: string }>((resolve) => {
+    const runCli = (args: string[], codexBin = fakeCodex) => new Promise<{ code: number | null; out: string }>((resolve) => {
       const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
       const child = spawn(process.execPath, [tsxCli, "bin/surface.ts", ...args], {
         cwd: REPO_ROOT,
-        env: { ...process.env, SURFACE_URL: BASE, CODEX_HOME: codexHome, SURFACE_CODEX_BIN: fakeCodex },
+        env: { ...process.env, SURFACE_URL: BASE, CODEX_HOME: codexHome, SURFACE_CODEX_BIN: codexBin },
         stdio: ["ignore", "pipe", "pipe"],
       });
       let out = "";
@@ -589,6 +732,15 @@ echo '{"status":"alreadyRunning"}'
     file = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
     assert.ok(!JSON.stringify(file).includes("surface codex hook"), "our hook removed");
     assert.equal(file.hooks.SessionStart[0].hooks[0].command, foreign.command, "foreign SessionStart hook kept");
+
+    await runCli(["codex", "setup"]);
+    const removeWithoutCodex = await runCli(
+      ["codex", "setup", "--remove-hook"],
+      path.join(codexHome, "missing-codex"),
+    );
+    assert.equal(removeWithoutCodex.code, 0, "hook removal does not require an installed codex binary");
+    file = JSON.parse(fs.readFileSync(path.join(codexHome, "hooks.json"), "utf8"));
+    assert.ok(!JSON.stringify(file).includes("surface codex hook"), "hook removed without codex");
     cleanupDir(codexHome);
   });
 
@@ -629,6 +781,25 @@ echo '{"status":"alreadyRunning"}'
     for (const row of pendingRows) await api("POST", `/actions/${row.id}/ack`, {});
   });
 
+  await test("SessionStart clears stale bridge ownership when the user reattaches", async () => {
+    daemon.autoCompleteTurns = true;
+    daemon.turnStarts = [];
+    daemon.approvalResponses = [];
+    const registered = await api("POST", "/codex/sessions/register", {
+      kind: "codex",
+      session_id: DEAD_THREAD,
+      pid: liveTui?.pid,
+      cwd: projectRoot,
+    });
+    assert.equal(registered.status, 204);
+    fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: false } }));
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "reattached", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "live delivery after reattach");
+    assert.equal(daemon.turnStarts[0].threadId, DEAD_THREAD);
+    fs.writeFileSync(path.join(projectRoot, ".surface", "config.json"), JSON.stringify({ bindings: { enabled: true } }));
+  });
+
   await test("a live waiter outranks the codex layer", async () => {
     daemon.turnStarts = [];
     const ac = new AbortController();
@@ -652,6 +823,7 @@ main()
   .catch(async (err) => { console.error(err); await cleanup(); process.exit(1); });
 
 async function cleanup() {
+  liveTui?.kill();
   await killServer(server, PORT).catch(() => {});
   await daemon?.close().catch(() => {});
   cleanupDir(dataDir);

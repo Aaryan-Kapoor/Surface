@@ -33,7 +33,7 @@ import { getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
 import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
 import { planeOf, requireSystem, targetOf } from "./helpers.js";
-import { isValidAgentSession, recordAgentLink } from "../agentSessions.js";
+import { getAgentSession, isValidAgentSession, recordAgentLink } from "../agentSessions.js";
 
 // Devices may freely CRUD their own (device-authored) artifacts, but must not
 // mutate system-authored ones: a system artifact can hold a display_role slot
@@ -67,6 +67,9 @@ function captureAgentLink(req: Request, surfaceId: string): void {
   if (!session) return;
   if (planeOf(req) !== "system") return;
   if (!isValidAgentSession(session)) return;
+  // A missing SessionStart registration makes TUI liveness unknowable. Fail
+  // closed to the ordinary inbox rather than risk resuming a live rollout.
+  if (session.kind === "codex" && !getAgentSession(getDb(), session.session_id)) return;
   recordAgentLink(getDb(), surfaceId, session);
 }
 
