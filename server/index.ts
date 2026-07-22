@@ -17,7 +17,7 @@ import {
 } from "./startupAccess.js";
 import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
 import { closeSSEClients } from "./sse.js";
-import { closeCodexBridge } from "./codexBridge.js";
+import { closeCodexBridge, startCodexBridgeHost, redispatchPendingCodex } from "./codexBridge.js";
 import { setupFileLogging } from "./logging.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -305,6 +305,14 @@ app.use(jsonErrorMiddleware);
 const httpServer = app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
   setThumbServerPort(PORT);
+  void startCodexBridgeHost().catch((err) => {
+    console.error("[codex] managed app-server startup failed:", err);
+  });
+  // Pending actions are the durable truth. Give Desktop a moment to reconnect
+  // to a restarted managed host, then replay the normal delivery decision.
+  // Attendance and project-consent checks still apply; this does not bypass
+  // the delivery ladder or wake a non-consented dead session.
+  setTimeout(() => redispatchPendingCodex(), 3_000).unref();
 
   // Print a one-time pairing token when reachable beyond loopback (or when
   // explicitly requested) so a fresh browser can pair without a prior session.

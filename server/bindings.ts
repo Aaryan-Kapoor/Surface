@@ -95,11 +95,27 @@ export function tokenizeCommand(command: string): string[] {
   const argv: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
-  let escaped = false;
   let started = false;
-  for (const ch of command) {
-    if (escaped) { current += ch; escaped = false; continue; }
-    if (ch === "\\" && quote !== "'") { escaped = true; continue; }
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === "\\" && quote !== "'") {
+      const next = command[i + 1];
+      // Preserve ordinary backslashes so quoted Windows paths remain valid.
+      // A backslash is an escape only where it is useful to this tokenizer:
+      // a quote, or unquoted whitespace. Literal and UNC separators survive.
+      const escapable = next !== undefined && (
+        next === '"' || (!quote && (next === "'" || /\s/.test(next)))
+      );
+      if (escapable) {
+        current += next;
+        started = true;
+        i++;
+      } else {
+        current += ch;
+        started = true;
+      }
+      continue;
+    }
     if (quote) {
       if (ch === quote) quote = null;
       else current += ch;

@@ -13,17 +13,28 @@ const suites = [
   "test:upgrade",
   "test:bindings",
   "test:codex-bridge",
+  "test:codex-desktop-attendance",
+  "test:codex-desktop-safety",
   "test:artifacts",
   "test:e2e",
 ];
 
 function runScript(script: string): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
-    const child = execFile("npm", ["run", script], {
+    // npm's .cmd shim cannot be passed directly to execFile on Windows. When
+    // this runner was itself launched by npm, invoke its JS entrypoint through
+    // the current Node executable; this also keeps Unix behavior unchanged.
+    const npmEntry = process.env.npm_execpath;
+    const executable = npmEntry ? process.execPath : "npm";
+    const args = npmEntry ? [npmEntry, "run", script] : ["run", script];
+    const child = execFile(executable, args, {
       env: { ...process.env },
       maxBuffer: 20 * 1024 * 1024,
     }, (error, stdout, stderr) => {
-      resolve({ code: typeof (error as any)?.code === "number" ? (error as any).code : 0, output: stdout + stderr });
+      const code = error
+        ? (typeof (error as any).code === "number" ? (error as any).code : 1)
+        : 0;
+      resolve({ code, output: stdout + stderr });
     });
     child.stdout?.pipe(process.stdout);
     child.stderr?.pipe(process.stderr);

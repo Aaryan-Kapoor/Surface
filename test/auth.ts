@@ -108,8 +108,8 @@ async function waitForReady(req: ReturnType<typeof makeClient>, timeoutMs = 1500
 // can take down the whole tree — killing a wrapper while the real server
 // survives is how orphaned test servers kept squatting on ports.
 function spawnServer(port: number, contentPort: number, dataDir: string, env: Record<string, string>): ChildProcess {
-  const tsxBin = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-  const child = spawn(tsxBin, ["server/index.ts"], {
+  const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  const child = spawn(process.execPath, [tsxCli, "server/index.ts"], {
     cwd: REPO_ROOT,
     detached: true,
     env: {

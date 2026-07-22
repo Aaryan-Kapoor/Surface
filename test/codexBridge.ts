@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { recoverCodexActions } from "../server/actionsStore.js";
-import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady, REPO_ROOT } from "./helpers.js";
+import { cleanupDir, freePort, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady, REPO_ROOT } from "./helpers.js";
 
 // The codex flowback layer (docs/interaction/codex.md), tested against a mock
 // codex app-server daemon speaking the real wire protocol: JSON-RPC over a
@@ -45,7 +45,7 @@ class MockDaemon {
   lastTurnIdByThread = new Map<string, string>();
   private nextServerRequestId = 1000;
 
-  constructor(public sockPath: string) {
+  constructor(public listenTarget: string | number) {
     this.server = http.createServer();
     this.wss = new WebSocketServer({ server: this.server, perMessageDeflate: false });
     this.wss.on("connection", (ws) => {
@@ -56,7 +56,9 @@ class MockDaemon {
   }
 
   listen(): Promise<void> {
-    return new Promise((resolve) => this.server.listen(this.sockPath, resolve as () => void));
+    return new Promise((resolve) => typeof this.listenTarget === "number"
+      ? this.server.listen(this.listenTarget, "127.0.0.1", resolve as () => void)
+      : this.server.listen(this.listenTarget, resolve as () => void));
   }
 
   private send(ws: WebSocket, msg: unknown): void {
@@ -239,19 +241,26 @@ async function main() {
   CONTENT_BASE = `http://127.0.0.1:${ports.contentPort}`;
   call = makeClient(BASE);
 
-  daemon = new MockDaemon(sockPath);
+  const daemonPort = process.platform === "win32" ? await freePort() : 0;
+  daemon = new MockDaemon(process.platform === "win32" ? daemonPort : sockPath);
   await daemon.listen();
 
   server = spawnServer(PORT, dataDir, {
-    SURFACE_CODEX_SOCKET: sockPath,
+    ...(process.platform === "win32"
+      ? { SURFACE_CODEX_ENDPOINT: `ws://127.0.0.1:${daemonPort}` }
+      : { SURFACE_CODEX_SOCKET: sockPath }),
     SURFACE_CODEX_AUTOSTART: "0",
   }, ports.contentPort);
   await waitForReady(BASE, "/artifacts");
 
-  const liveCodexBin = path.join(dataDir, "codex-live-stand-in");
-  fs.copyFileSync("/bin/sleep", liveCodexBin);
-  fs.chmodSync(liveCodexBin, 0o755);
-  liveTui = spawn(liveCodexBin, ["120"], { stdio: "ignore" });
+  if (process.platform === "win32") {
+    liveTui = spawn(process.execPath, ["-e", "setTimeout(()=>{},120000)"], { stdio: "ignore" });
+  } else {
+    const liveCodexBin = path.join(dataDir, "codex-live-stand-in");
+    fs.copyFileSync("/bin/sleep", liveCodexBin);
+    fs.chmodSync(liveCodexBin, 0o755);
+    liveTui = spawn(liveCodexBin, ["120"], { stdio: "ignore" });
+  }
   const liveRegistration = await api("POST", "/codex/sessions/register", {
     kind: "codex",
     session_id: LIVE_THREAD,
@@ -522,10 +531,15 @@ async function main() {
     daemon.resumeCalls = [];
     // The liveness guard also checks the process *name* (pid-reuse defense),
     // so stand in with a live process whose comm matches /codex/i.
-    const fakeCodexBin = path.join(dataDir, "codex-stand-in");
-    fs.copyFileSync("/bin/sleep", fakeCodexBin);
-    fs.chmodSync(fakeCodexBin, 0o755);
-    const fakeTui = spawn(fakeCodexBin, ["120"], { stdio: "ignore" });
+    let fakeTui: ChildProcess;
+    if (process.platform === "win32") {
+      fakeTui = spawn(process.execPath, ["-e", "setTimeout(()=>{},120000)"], { stdio: "ignore" });
+    } else {
+      const fakeCodexBin = path.join(dataDir, "codex-stand-in");
+      fs.copyFileSync("/bin/sleep", fakeCodexBin);
+      fs.chmodSync(fakeCodexBin, 0o755);
+      fakeTui = spawn(fakeCodexBin, ["120"], { stdio: "ignore" });
+    }
     try {
       const staleReg = await api("POST", "/codex/sessions/register", {
         kind: "codex",
@@ -589,10 +603,11 @@ async function main() {
   await test("an explicit binding outranks the codex layer", async () => {
     daemon.turnStarts = [];
     const captureOut = path.join(dataDir, "bind-capture.json");
+    const captureArg = captureOut.replace(/\\/g, "/");
     await createCodexSurface("cx-bound", LIVE_THREAD);
     const bind = await api("POST", "/artifacts/cx-bound/bindings", {
       action_pattern: "*",
-      run: `node -e "require('fs').writeFileSync(process.argv[1], require('fs').readFileSync(0, 'utf8'))" "${captureOut}"`,
+      run: `node -e "require('fs').writeFileSync(process.argv[1], require('fs').readFileSync(0, 'utf8'))" "${captureArg}"`,
     });
     assert.equal(bind.status, 201);
     const act = await api("POST", "/artifacts/cx-bound/actions", { action: "z", data: {} });
@@ -685,7 +700,7 @@ async function main() {
     assert.equal(meta.agent, "codex", "display label defaults to the captured kind");
   });
 
-  await test("surface codex setup installs the hook non-destructively; --remove-hook removes only ours", async () => {
+  if (process.platform !== "win32") await test("surface codex setup installs the hook non-destructively; --remove-hook removes only ours", async () => {
     const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "sfcx-home-"));
     // Pre-existing foreign hook that must survive untouched.
     const foreign = { type: "command", command: "python3 /tmp/other.py" };

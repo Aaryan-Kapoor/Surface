@@ -18,6 +18,13 @@ import {
 import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
 import { getAgentLink, getAgentSession, sessionOpenInProcess, markBridgeResumed, isBridgeResumed } from "./agentSessions.js";
 import { projectAllowsBindings, bindingInFlight, requestBindingFollowup } from "./bindings.js";
+import {
+  configuredCodexEndpoint,
+  ensureCodexManagedHost,
+  codexManagedHostStatus,
+  closeCodexManagedHost,
+  stopCodexManagedHost,
+} from "./codexManagedHost.js";
 
 // Codex flowback layer (docs/interaction/codex.md): route surface actions back
 // into the Codex session that created the surface, through the codex
@@ -58,11 +65,14 @@ interface JsonRpcMessage {
 export interface CodexBridgeStatus {
   enabled: boolean;
   socket_path: string;
+  endpoint: string;
+  transport: "unix" | "websocket";
   connected: boolean;
   daemon_version: string | null;
   last_error: string | null;
   deliveries_ok: number;
   deliveries_failed: number;
+  managed_host: ReturnType<typeof codexManagedHostStatus>;
 }
 
 function codexHome(): string {
@@ -74,15 +84,30 @@ export function codexSocketPath(): string {
     || path.join(codexHome(), "app-server-control", "app-server-control.sock");
 }
 
+export function codexEndpoint(): string {
+  return configuredCodexEndpoint() || codexSocketPath();
+}
+
+function websocketTransport(): boolean {
+  return /^wss?:\/\//.test(codexEndpoint());
+}
+
+function managedWebsocketTransport(): boolean {
+  return websocketTransport() && codexManagedHostStatus().configured;
+}
+
 function codexBin(): string {
   return process.env.SURFACE_CODEX_BIN || "codex";
 }
 
 function bridgeDisabled(): boolean {
   if (process.env.SURFACE_CODEX_DISABLE === "1") return true;
-  // The codex app-server control socket is unix-only upstream; on Windows the
-  // layer is a clean no-op unless an explicit socket path says otherwise.
-  return process.platform === "win32" && !process.env.SURFACE_CODEX_SOCKET;
+  // Upstream's daemon lifecycle is Unix-only. Windows is enabled when setup
+  // has provisioned the managed loopback WebSocket host (or an endpoint was
+  // explicitly supplied); an explicit socket remains useful for tests.
+  return process.platform === "win32"
+    && !process.env.SURFACE_CODEX_SOCKET
+    && !configuredCodexEndpoint();
 }
 
 function autostartEnabled(): boolean {
@@ -127,17 +152,18 @@ class CodexConnection {
     this.serverRequestHandlers.add(fn);
   }
 
-  async connect(socketPath: string): Promise<void> {
+  async connect(endpoint: string): Promise<void> {
     if (this.connected) return;
     if (this.connecting) return this.connecting;
-    this.connecting = this.doConnect(socketPath).finally(() => { this.connecting = null; });
+    this.connecting = this.doConnect(endpoint).finally(() => { this.connecting = null; });
     return this.connecting;
   }
 
-  private doConnect(socketPath: string): Promise<void> {
+  private doConnect(endpoint: string): Promise<void> {
     return new Promise((resolve, reject) => {
       // tungstenite rejects permessage-deflate offers on this socket.
-      const ws = new WebSocket(`ws+unix:${socketPath}:/`, { perMessageDeflate: false, handshakeTimeout: 5_000 });
+      const url = /^wss?:\/\//.test(endpoint) ? endpoint : `ws+unix:${endpoint}:/`;
+      const ws = new WebSocket(url, { perMessageDeflate: false, handshakeTimeout: 5_000 });
       let settled = false;
       ws.on("open", async () => {
         this.ws = ws;
@@ -436,11 +462,65 @@ function installHandlers(): void {
 
 async function ensureConnected(): Promise<void> {
   installHandlers();
-  await connection.connect(codexSocketPath());
+  await connection.connect(codexEndpoint());
 }
 
-function daemonSocketExists(): boolean {
+function endpointAvailableWithoutStart(): boolean {
+  if (websocketTransport()) {
+    const host = codexManagedHostStatus();
+    return connection.connected || host.running || host.reachable || !!process.env.SURFACE_CODEX_ENDPOINT;
+  }
   try { return fs.existsSync(codexSocketPath()); } catch { return false; }
+}
+
+let desktopLivenessCache: { at: number; endpoint: string; value: boolean } | null = null;
+
+function execFileText(file: string, args: string[], timeout: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { timeout, windowsHide: true }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
+}
+
+export async function windowsCodexDesktopConnected(endpoint: string): Promise<boolean> {
+  let url: URL;
+  try { url = new URL(endpoint); } catch { return false; }
+  const port = url.port || (url.protocol === "wss:" ? "443" : "80");
+  try {
+    // Native Windows tools return in a few hundred milliseconds. The former
+    // PowerShell + Get-NetTCPConnection + CIM probe consistently exceeded its
+    // 2s budget on normal machines, turning every live click into a false
+    // unattended wake. Inspect the client side of loopback TCP connections,
+    // then ask tasklist for only those candidate pids.
+    const netstat = await execFileText("netstat.exe", ["-ano", "-p", "TCP"], 1_000);
+    const pids = new Set<string>();
+    for (const line of netstat.split(/\r?\n/)) {
+      const fields = line.trim().split(/\s+/);
+      if (fields.length < 5 || fields[0].toUpperCase() !== "TCP" || fields[3].toUpperCase() !== "ESTABLISHED") continue;
+      const remote = fields[2].toLowerCase();
+      if ((remote === `127.0.0.1:${port}` || remote === `[::1]:${port}`) && /^\d+$/.test(fields[4])) {
+        pids.add(fields[4]);
+      }
+    }
+    const rows = await Promise.all([...pids].map((pid) =>
+      execFileText("tasklist.exe", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], 1_000).catch(() => ""),
+    ));
+    return rows.some((row) => /^"ChatGPT\.exe"\s*,/i.test(row.trim()));
+  } catch {
+    return false;
+  }
+}
+
+async function codexDesktopConnected(endpoint: string): Promise<boolean> {
+  if (desktopLivenessCache && desktopLivenessCache.endpoint === endpoint && Date.now() - desktopLivenessCache.at < 2_000) {
+    return desktopLivenessCache.value;
+  }
+  if (process.platform !== "win32") return false;
+  const value = await windowsCodexDesktopConnected(endpoint);
+  desktopLivenessCache = { at: Date.now(), endpoint, value };
+  return value;
 }
 
 // `codex app-server daemon start` is idempotent ("alreadyRunning").
@@ -469,7 +549,12 @@ async function connectMaybeStarting(allowStart: boolean): Promise<void> {
     } catch (err) {
       if (!allowStart || !autostartEnabled()) throw err;
     }
-    await startDaemon();
+    if (websocketTransport()) {
+      const ready = await ensureCodexManagedHost();
+      if (!ready) throw new Error(codexManagedHostStatus().last_error || "managed codex app-server failed to start");
+    } else {
+      await startDaemon();
+    }
     await ensureConnected();
   } catch (err) {
     daemonUnavailableUntil = Date.now() + DAEMON_BACKOFF_MS;
@@ -593,7 +678,7 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
   const session = getAgentSession(db, threadId);
 
   // Fast local pre-checks before touching (or starting) the daemon.
-  const daemonUp = daemonSocketExists();
+  const daemonUp = endpointAvailableWithoutStart();
   if (!daemonUp && session && sessionOpenInProcess(db, session)) {
     status(surfaceId, "held_live_tui", "session is open in a codex TUI that Surface cannot reach; actions stay in the inbox");
     return;
@@ -610,7 +695,13 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
   // a bridge-resumed thread stays in the daemon with nobody watching, and
   // that state must keep wake semantics (consent + approval decline) forever
   // — including across service restarts, hence the persisted record.
-  const sessionIsOpen = !!session && sessionOpenInProcess(db, session);
+  // In managed-WebSocket mode the hook is spawned by the shared app-server,
+  // so its ancestor pid describes the host, not the Desktop client. Use the
+  // actual Desktop process as the attendance signal; otherwise a host kept
+  // alive by Surface would make a disconnected thread look attended forever.
+  const sessionIsOpen = managedWebsocketTransport()
+    ? !!session && await codexDesktopConnected(codexEndpoint())
+    : !!session && sessionOpenInProcess(db, session);
   const attended = loaded && sessionIsOpen && !isBridgeResumed(db, threadId);
   if (!attended) {
     if (!loaded && sessionIsOpen) {
@@ -744,15 +835,55 @@ export function codexBridgeStatus(): CodexBridgeStatus {
   return {
     enabled: !bridgeDisabled(),
     socket_path: codexSocketPath(),
+    endpoint: codexEndpoint(),
+    transport: websocketTransport() ? "websocket" : "unix",
     connected: connection.connected,
     daemon_version: connection.daemonVersion,
     last_error: lastError,
     deliveries_ok: deliveriesOk,
     deliveries_failed: deliveriesFailed,
+    managed_host: codexManagedHostStatus(),
   };
+}
+
+export function redispatchPendingCodex(sessionId?: string): number {
+  if (bridgeDisabled()) return 0;
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT DISTINCT l.surface_id
+       FROM agent_links l
+       JOIN surface_actions a ON a.surface_id = l.surface_id AND a.status = 'pending'
+      WHERE l.agent_kind = 'codex'${sessionId ? " AND l.session_id = ?" : ""}`,
+  ).all(...(sessionId ? [sessionId] : [])) as Array<{ surface_id: string }>;
+  for (const row of rows) {
+    if (hasWaiter(row.surface_id)) continue;
+    const artifact = getArtifact(db, row.surface_id);
+    if (artifact) maybeDispatchCodex(row.surface_id, projectAllowsBindings(artifact.project_root));
+  }
+  return rows.length;
 }
 
 export function closeCodexBridge(): void {
   reconcileConnectionLoss();
   connection.close();
+  closeCodexManagedHost();
+}
+
+export async function startCodexBridgeHost(): Promise<boolean> {
+  // Setup can write the config while the service is already running. Drop a
+  // connection to any former endpoint before converging onto the new one.
+  connection.close();
+  daemonUnavailableUntil = 0;
+  if (!configuredCodexEndpoint()) {
+    closeCodexManagedHost();
+    return false;
+  }
+  return ensureCodexManagedHost();
+}
+
+export function stopCodexBridgeHost(): boolean {
+  reconcileConnectionLoss();
+  connection.close();
+  daemonUnavailableUntil = 0;
+  return stopCodexManagedHost();
 }
