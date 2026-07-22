@@ -1,7 +1,7 @@
 # Codex Flowback Bridge
 
 **Status:** Shipped (2026-07)
-**Code:** `server/codexBridge.ts` (bridge + ladder layer), `server/agentSessions.ts` (session capture), `bin/codex.ts` (`surface codex`), migrations v12–v13 (session capture + durable delivery leases)
+**Code:** `server/codexBridge.ts` (bridge + ladder layer), `server/codexManagedHost.ts` (Windows Desktop host), `server/agentSessions.ts` (session capture), `bin/codex.ts` (`surface codex`), migrations v12–v13 (session capture + durable delivery leases)
 **Tests:** `test/codexBridge.ts` (mock app-server daemon speaking the real wire protocol)
 
 Claude Code gets realtime two-way flow from a background Monitor waiter. Codex
@@ -31,12 +31,20 @@ agent session — a paired device cannot point flowback at someone's session.
 surface codex setup
 ```
 
-does three things:
+does three things. The command is idempotent and selects the native path for
+the current OS:
 
-1. **Starts the codex app-server daemon** (`codex app-server daemon start`,
-   idempotent). Plain `codex` runs auto-attach to a running daemon — that is
-   stock codex behavior, not a Surface patch — which is what makes live
-   injection possible. No wrapper command, no `--remote` flags.
+1. **Starts a shared codex app-server.** Linux and macOS use the stock Unix
+   daemon (`codex app-server daemon start`, idempotent); plain `codex`
+   auto-attaches to it. Windows uses a Surface-managed app-server on a random,
+   persisted loopback WebSocket port because upstream's daemon lifecycle is
+   Unix-only. Surface installs a private current Codex runtime under its data
+   directory, leaving the user's global CLI untouched. The host is detached
+   from the Surface service lifecycle and is adopted by endpoint probe after a
+   Surface restart, so an attached Desktop is not disconnected. Setup never
+   persists `CODEX_APP_SERVER_WS_URL`: after quitting Desktop, `surface codex
+   launch` first verifies the host and then applies the endpoint only to that
+   Desktop process. Normal Start-menu launches remain independent of Surface.
 2. **Installs a `SessionStart` hook** (`surface codex hook` in
    `~/.codex/hooks.json`, merged non-destructively) that registers each
    session's `{ session_id, pid, cwd, transcript_path }` with the Surface
@@ -44,7 +52,12 @@ does three things:
 3. Prints the consent story (below).
 
 `surface codex status` shows both halves: local (codex version, daemon socket,
-hook) and service-side (bridge connectivity, delivery counters).
+managed endpoint/launch mode when applicable, hook) and service-side
+(bridge connectivity, host status, delivery counters). `surface codex setup
+--remove` stops the managed host and removes only Surface's hook/config. It
+refuses while Codex Desktop is running. Setup also removes the exact stale
+user-environment value written by the early Windows prototype, but never
+touches an unrelated user-managed endpoint.
 
 ## The delivery ladder with the codex layer
 
@@ -114,10 +127,10 @@ client; the first response wins. Bridge policy:
 
 ## Wire protocol notes (verified against codex 0.144.1)
 
-- Transport: WebSocket over the daemon's unix control socket
-  (`$CODEX_HOME/app-server-control/app-server-control.sock`). The client must
-  disable `permessage-deflate` (tungstenite's `accept_async` drops the
-  connection when the extension is offered).
+- Transport: WebSocket over the daemon's Unix control socket
+  (`$CODEX_HOME/app-server-control/app-server-control.sock`) on Linux/macOS,
+  or an ordinary loopback-only WebSocket on Windows. The client disables
+  `permessage-deflate` in both cases.
 - Handshake: `initialize` (with `capabilities.experimentalApi: true` for the
   v2 thread/turn API) → `initialized` notification. The server's version is
   parsed from `userAgent` and gated (`>= 0.144.0`), fail-closed to the inbox.
@@ -133,6 +146,7 @@ client; the first response wins. Bridge policy:
 |---|---|
 | `SURFACE_CODEX_DISABLE=1` | Kill switch: the layer becomes a no-op. |
 | `SURFACE_CODEX_SOCKET` | Override the daemon socket path (tests use this). |
+| `SURFACE_CODEX_ENDPOINT` | Override with a `ws://`/`wss://` app-server endpoint (advanced/testing). |
 | `SURFACE_CODEX_BIN` | Codex binary (default `codex`). |
 | `SURFACE_CODEX_AUTOSTART=0` | Never spawn `codex app-server daemon start`. |
 | `CODEX_HOME` | Respected for the default socket + hooks.json location. |
@@ -162,8 +176,11 @@ workspace network access in the codex config for surface projects.
   wakes still work; the one risky case (plain TUI alive, consent granted,
   wake resumes a rollout another process owns) is why setup installs the hook
   rather than treating it as optional garnish.
-- Daemon restarts → the bridge reconnects lazily on the next delivery; no
-  reconnect replay, no state to reconcile (the inbox is the durable truth).
+- Daemon/managed-host restarts → the bridge reconnects lazily on the next
+  delivery. The Windows host is detached from Surface service restarts and is
+  adopted by endpoint probe; an unexpected host exit is restarted with bounded
+  backoff. Pending actions are redispatched from the durable inbox after host
+  and session registration, without bypassing attendance or consent checks.
 
 ## Related
 

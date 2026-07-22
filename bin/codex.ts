@@ -1,7 +1,15 @@
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import fs from "fs";
+import net from "net";
 import os from "os";
 import path from "path";
+import { dataDir } from "./upgrade.js";
+import {
+  codexBridgeConfigPath,
+  readCodexBridgeConfig,
+  writeCodexBridgeConfig,
+  type CodexBridgeConfig,
+} from "../shared/codexBridgeConfig.js";
 
 // Codex integration management (docs/interaction/codex.md).
 //
@@ -13,13 +21,16 @@ import path from "path";
 //                          never fails the codex session)
 
 export const CODEX_HELP = [
-  "surface codex setup [--remove-hook]",
-  "  One-time integration setup: starts the codex app-server daemon (plain `codex`",
-  "  sessions auto-attach to it, which is what makes realtime flowback possible) and",
+  "surface codex setup [--remove|--remove-hook]",
+  "  One-time integration setup: starts a shared codex app-server (native daemon on",
+  "  Linux/macOS; Surface-managed loopback host for Codex Desktop on Windows) and",
   "  installs a SessionStart hook that registers each codex session with Surface.",
   "  Codex will ask you to trust the new hook on its next start — that prompt is codex's,",
   "  not Surface's. Headless wakes of dead sessions additionally need per-project consent",
   "  (bindings.enabled in .surface/config.json), same as wake bindings.",
+  "surface codex launch",
+  "  Windows: starts Codex Desktop with the bridge endpoint scoped to that process.",
+  "  Quit any running Codex Desktop window first. Normal app launches stay unchanged.",
   "surface codex status [--json]",
   "surface codex hook   (internal: SessionStart hook target, reads the payload on stdin)",
 ].join("\n");
@@ -35,6 +46,22 @@ type CallFn = (method: string, pathname: string, body?: unknown) => Promise<any>
 
 const MIN_CODEX_VERSION = [0, 144, 0] as const;
 const HOOK_COMMAND = "surface codex hook";
+const DESKTOP_WS_ENV = "CODEX_APP_SERVER_WS_URL";
+
+export function createWindowsBridgeConfig(endpoint: string, codexBinary: string): CodexBridgeConfig {
+  return {
+    version: 1,
+    transport: "websocket",
+    endpoint,
+    codex_bin: codexBinary,
+    managed: true,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function desktopLaunchEnvironment(base: NodeJS.ProcessEnv, endpoint: string): NodeJS.ProcessEnv {
+  return { ...base, [DESKTOP_WS_ENV]: endpoint };
+}
 
 function codexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
@@ -49,14 +76,18 @@ function codexBin(): string {
   return process.env.SURFACE_CODEX_BIN || "codex";
 }
 
-function codexVersion(): [number, number, number] | null {
+function codexVersionForBin(bin: string): [number, number, number] | null {
   try {
-    const out = execFileSync(codexBin(), ["--version"], { timeout: 15_000, stdio: ["ignore", "pipe", "ignore"] }).toString();
+    const out = execFileSync(bin, ["--version"], { timeout: 15_000, stdio: ["ignore", "pipe", "ignore"] }).toString();
     const m = /(\d+)\.(\d+)\.(\d+)/.exec(out);
     return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
   } catch {
     return null;
   }
+}
+
+function codexVersion(): [number, number, number] | null {
+  return codexVersionForBin(codexBin());
 }
 
 function versionOk(v: [number, number, number]): boolean {
@@ -79,6 +110,201 @@ function startDaemon(): { ok: boolean; detail: string } {
   } catch (err: any) {
     return { ok: false, detail: err?.stderr?.toString?.() || err?.message || "failed" };
   }
+}
+
+function findNativeCodexBinary(root: string): string | null {
+  const wanted = process.platform === "win32" ? "codex.exe" : "codex";
+  const openai = path.join(root, "node_modules", "@openai");
+  if (!fs.existsSync(openai)) return null;
+  const stack = [openai];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) stack.push(full);
+      else if (entry.isFile() && entry.name === wanted && path.basename(path.dirname(full)) === "bin") return full;
+    }
+  }
+  return null;
+}
+
+function provisionCodexRuntime(): string {
+  if (process.env.SURFACE_CODEX_BIN) {
+    const explicit = path.resolve(process.env.SURFACE_CODEX_BIN);
+    if (!versionOk(codexVersionForBin(explicit) || [0, 0, 0])) {
+      throw new Error(`SURFACE_CODEX_BIN is missing or older than ${MIN_CODEX_VERSION.join(".")}: ${explicit}`);
+    }
+    return explicit;
+  }
+  const root = path.join(dataDir(), "codex-runtime");
+  const existing = findNativeCodexBinary(root);
+  if (existing && versionOk(codexVersionForBin(existing) || [0, 0, 0])) return existing;
+
+  fs.mkdirSync(root, { recursive: true });
+  const npmArgs = ["install", "--prefix", root, "--no-save", "--omit=dev", "--no-audit", "--no-fund", "@openai/codex@latest"];
+  const npmCli = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  const npmCommand = fs.existsSync(npmCli) ? process.execPath : "npm";
+  const args = fs.existsSync(npmCli) ? [npmCli, ...npmArgs] : npmArgs;
+  try {
+    execFileSync(npmCommand, args, {
+      timeout: 5 * 60_000,
+      stdio: ["ignore", "inherit", "inherit"],
+      windowsHide: true,
+    });
+  } catch (err: any) {
+    throw new Error(`could not install Surface's private Codex runtime: ${err?.message || err}`);
+  }
+  const installed = findNativeCodexBinary(root);
+  if (!installed || !versionOk(codexVersionForBin(installed) || [0, 0, 0])) {
+    throw new Error(`npm completed but no compatible native Codex binary was found under ${root}`);
+  }
+  return installed;
+}
+
+function allocateLoopbackEndpoint(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((err) => err ? reject(err) : resolve(`ws://127.0.0.1:${port}`));
+    });
+  });
+}
+
+function windowsUserEnv(name: string): string | null {
+  try {
+    const out = execFileSync("reg.exe", ["query", "HKCU\\Environment", "/v", name], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+    const m = new RegExp(`^\\s*${name}\\s+REG_\\w+\\s+(.*)$`, "mi").exec(out);
+    return m ? m[1].trim() : null;
+  } catch { return null; }
+}
+
+function clearWindowsUserEnv(name: string): void {
+  if (windowsUserEnv(name) === null) return;
+  execFileSync("reg.exe", ["delete", "HKCU\\Environment", "/v", name, "/f"], {
+    timeout: 15_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  // Broadcast an environment refresh without recreating the dangerous value.
+  const marker = "SURFACE_ENVIRONMENT_REFRESH";
+  execFileSync("setx.exe", [marker, String(Date.now())], { timeout: 15_000, stdio: ["ignore", "pipe", "pipe"] });
+  execFileSync("reg.exe", ["delete", "HKCU\\Environment", "/v", marker, "/f"], { timeout: 15_000, stdio: ["ignore", "pipe", "pipe"] });
+  if (windowsUserEnv(name) !== null) throw new Error(`failed to remove ${name} from the user environment`);
+}
+
+function clearLegacyDesktopEnvironment(existing: CodexBridgeConfig | null): boolean {
+  if (process.platform !== "win32") return false;
+  const current = windowsUserEnv(DESKTOP_WS_ENV);
+  // Migrate only the value that this Surface config previously installed.
+  // An unrelated user-managed endpoint is left untouched.
+  if (current && (current === existing?.desktop_env_set || current === existing?.endpoint)) {
+    clearWindowsUserEnv(DESKTOP_WS_ENV);
+    return true;
+  }
+  return false;
+}
+
+function removeManagedDesktopBridge(existing: CodexBridgeConfig | null): void {
+  clearLegacyDesktopEnvironment(existing);
+  try { fs.unlinkSync(codexBridgeConfigPath(dataDir())); } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+}
+
+export function findCodexDesktopExecutable(): string | null {
+  const explicit = process.env.SURFACE_CODEX_DESKTOP_BIN;
+  if (explicit) return fs.existsSync(explicit) ? path.resolve(explicit) : null;
+  if (process.platform !== "win32") return null;
+  try {
+    const script = [
+      "$p = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1",
+      "if ($p) { Join-Path $p.InstallLocation 'app\\ChatGPT.exe' }",
+    ].join("; ");
+    const result = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+      timeout: 15_000,
+      windowsHide: true,
+      encoding: "utf8",
+    }).trim();
+    return result && fs.existsSync(result) ? result : null;
+  } catch {
+    return null;
+  }
+}
+
+function codexDesktopRunning(): boolean {
+  if (process.platform !== "win32") return false;
+  try {
+    const rows = execFileSync("tasklist.exe", ["/FI", "IMAGENAME eq ChatGPT.exe", "/FO", "CSV", "/NH"], {
+      timeout: 2_000,
+      windowsHide: true,
+      encoding: "utf8",
+    });
+    return /^"ChatGPT\.exe"\s*,/im.test(rows);
+  } catch {
+    return false;
+  }
+}
+
+async function launchCodexDesktop(call: CallFn): Promise<void> {
+  if (process.platform !== "win32") {
+    console.error("surface codex launch is only needed for Codex Desktop on Windows.");
+    process.exitCode = 1;
+    return;
+  }
+  const managed = readCodexBridgeConfig(dataDir());
+  if (!managed) {
+    console.error("Codex Desktop bridge is not configured. Run: surface codex setup");
+    process.exitCode = 1;
+    return;
+  }
+  if (codexDesktopRunning()) {
+    console.error("Codex Desktop is already running. Quit it completely, then run: surface codex launch");
+    process.exitCode = 1;
+    return;
+  }
+  clearLegacyDesktopEnvironment(managed);
+  let service: any;
+  try {
+    service = await call("POST", "/codex/host/start", {});
+  } catch (err: any) {
+    console.error(`Could not start the Codex bridge host: ${err?.message || err}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (!service?.managed_host?.reachable && !service?.managed_host?.running) {
+    console.error("The Codex bridge host did not become reachable; Desktop was not launched.");
+    process.exitCode = 1;
+    return;
+  }
+  const desktop = findCodexDesktopExecutable();
+  if (!desktop) {
+    console.error("Codex Desktop is not installed (expected the OpenAI.Codex Windows package).");
+    process.exitCode = 1;
+    return;
+  }
+  const child = spawn(desktop, [], {
+    cwd: path.dirname(desktop),
+    detached: true,
+    stdio: "ignore",
+    windowsHide: false,
+    env: desktopLaunchEnvironment(process.env, managed.endpoint),
+  });
+  await new Promise<void>((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  }).catch((err) => {
+    console.error(`Could not launch Codex Desktop: ${err?.message || err}`);
+    process.exitCode = 1;
+  });
+  if (process.exitCode) return;
+  child.unref();
+  console.log(`Codex Desktop launched with Surface flowback (${managed.endpoint}).`);
+  console.log("This endpoint is process-scoped; normal Codex Desktop startup remains independent.");
 }
 
 // ── hooks.json management ──
@@ -249,13 +475,22 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     return;
   }
 
+  if (sub === "launch") {
+    await launchCodexDesktop(call);
+    return;
+  }
+
   if (sub === "status" || sub === undefined) {
-    const version = codexVersion();
+    const managed = readCodexBridgeConfig(dataDir());
+    const version = managed ? codexVersionForBin(managed.codex_bin) : codexVersion();
     const local = {
       codex_version: version ? version.join(".") : null,
       codex_version_ok: version ? versionOk(version) : false,
       daemon_socket: daemonSocketPath(),
       daemon_socket_exists: fs.existsSync(daemonSocketPath()),
+      managed_endpoint: managed?.endpoint || null,
+      managed_config: managed ? codexBridgeConfigPath(dataDir()) : null,
+      desktop_environment: process.platform === "win32" ? windowsUserEnv(DESKTOP_WS_ENV) : null,
       hook_installed: hookInstalled(),
     };
     let service: any = null;
@@ -273,7 +508,19 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
       return;
     }
     console.log(`codex:          ${local.codex_version ? `v${local.codex_version}` : "not found"}${local.codex_version && !local.codex_version_ok ? ` (need >= ${MIN_CODEX_VERSION.join(".")})` : ""}`);
-    console.log(`daemon socket:  ${local.daemon_socket} ${local.daemon_socket_exists ? "(present)" : "(missing — run: surface codex setup)"}`);
+    if (local.managed_endpoint) {
+      console.log(`app-server:     ${local.managed_endpoint} (managed by Surface)`);
+      if (process.platform === "win32") {
+        const desktopState = local.desktop_environment === local.managed_endpoint
+          ? "unsafe legacy value detected — rerun setup to remove it"
+          : local.desktop_environment
+            ? "user-defined (Surface does not modify it)"
+            : "not persisted (safe; use: surface codex launch)";
+        console.log(`desktop env:    ${desktopState}`);
+      }
+    } else {
+      console.log(`daemon socket:  ${local.daemon_socket} ${local.daemon_socket_exists ? "(present)" : "(missing — run: surface codex setup)"}`);
+    }
     console.log(`session hook:   ${local.hook_installed ? "installed" : "not installed — run: surface codex setup"}`);
     if (service) {
       console.log(`bridge:         ${service.connected ? `connected (codex ${service.daemon_version})` : "not connected yet (connects on first delivery)"}`);
@@ -291,6 +538,80 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     if (ctx.flags["remove-hook"] === true) {
       const { changed } = removeHook();
       console.log(changed ? "SessionStart hook removed." : "No Surface SessionStart hook to remove.");
+      return;
+    }
+
+    if (ctx.flags.remove === true) {
+      const existing = readCodexBridgeConfig(dataDir());
+      if (process.platform === "win32" && existing && codexDesktopRunning()) {
+        console.error("Quit Codex Desktop before removing its Surface bridge; removal stops the shared host.");
+        process.exitCode = 1;
+        return;
+      }
+      try { await call("POST", "/codex/host/stop", {}); } catch {}
+      removeManagedDesktopBridge(existing);
+      const { changed } = removeHook();
+      console.log(existing ? "Managed Codex Desktop bridge removed." : "No managed Codex Desktop bridge was configured.");
+      console.log(changed ? "SessionStart hook removed." : "No Surface SessionStart hook to remove.");
+      return;
+    }
+
+    // The upstream daemon lifecycle is Unix-only. On Windows, provision a
+    // private native runtime and let the Surface background service start a
+    // detached loopback WebSocket app-server. Desktop receives the endpoint
+    // only from `surface codex launch`; setup never changes its global env.
+    if (process.platform === "win32" && !process.env.SURFACE_CODEX_SOCKET) {
+      const existing = readCodexBridgeConfig(dataDir());
+      console.log("Preparing a private Codex runtime for Surface (your global Codex install is unchanged)...");
+      let nativeBin: string;
+      try {
+        nativeBin = provisionCodexRuntime();
+      } catch (err: any) {
+        console.error(err.message);
+        process.exitCode = 1;
+        return;
+      }
+      const version = codexVersionForBin(nativeBin)!;
+      const endpoint = existing?.endpoint || await allocateLoopbackEndpoint();
+      try {
+        clearLegacyDesktopEnvironment(existing);
+        writeCodexBridgeConfig(dataDir(), createWindowsBridgeConfig(endpoint, nativeBin));
+      } catch (err: any) {
+        console.error(`could not configure Codex Desktop: ${err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      let hook: { changed: boolean };
+      try { hook = installHook(); }
+      catch (err: any) {
+        try {
+          if (existing) {
+            writeCodexBridgeConfig(dataDir(), existing);
+          } else {
+            try { fs.unlinkSync(codexBridgeConfigPath(dataDir())); } catch {}
+          }
+          await call("POST", "/codex/host/start", {});
+        } catch {}
+        console.error(`could not update ${hooksJsonPath()}: ${err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      let hostReady = false;
+      try {
+        const service = await call("POST", "/codex/host/start", {});
+        hostReady = service?.managed_host?.reachable === true || service?.managed_host?.running === true || service?.connected === true;
+      } catch (err: any) {
+        console.error(`bridge configured, but the Surface service could not start it: ${err?.message || err}`);
+      }
+      console.log(`codex v${version.join(".")} ready at ${endpoint}`);
+      console.log(`Surface service host: ${hostReady ? "running" : "configured; restart the Surface service after fixing its health"}`);
+      console.log(hook.changed
+        ? `SessionStart hook installed in ${hooksJsonPath()}.`
+        : "SessionStart hook already installed.");
+      console.log("Quit Codex Desktop completely, then run `surface codex launch` to open it with flowback.");
+      console.log("Normal Start-menu launches remain independent and can never fail because Surface is down.");
       return;
     }
 

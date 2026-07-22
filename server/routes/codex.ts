@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { getDb } from "../db.js";
 import { registerAgentSession, countAgentSessions } from "../agentSessions.js";
-import { codexBridgeStatus } from "../codexBridge.js";
+import { codexBridgeStatus, startCodexBridgeHost, stopCodexBridgeHost, redispatchPendingCodex } from "../codexBridge.js";
 import { requireSystem } from "./helpers.js";
 
 // Agent-session registry + bridge introspection (docs/interaction/codex.md).
@@ -22,6 +22,7 @@ codexRouter.post("/codex/sessions/register", (req, res) => {
       transcript_path: typeof transcript_path === "string" ? transcript_path : undefined,
     });
     res.status(204).end();
+    setImmediate(() => redispatchPendingCodex(session_id));
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -33,4 +34,16 @@ codexRouter.get("/codex/status", (req, res) => {
     ...codexBridgeStatus(),
     registered_sessions: countAgentSessions(getDb()),
   });
+});
+
+codexRouter.post("/codex/host/start", async (req, res) => {
+  if (!requireSystem(req, res)) return;
+  const ready = await startCodexBridgeHost();
+  const status = codexBridgeStatus();
+  res.status(ready ? 200 : 503).json(status);
+});
+
+codexRouter.post("/codex/host/stop", (req, res) => {
+  if (!requireSystem(req, res)) return;
+  res.json({ stopped: stopCodexBridgeHost() });
 });
