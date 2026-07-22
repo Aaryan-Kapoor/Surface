@@ -168,6 +168,79 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 12,
+    description: "agent session capture (codex flowback)",
+    up: (db) => {
+      db.exec(`
+        -- Which agent session created a surface. Written once at creation from
+        -- the creating shell's environment (CODEX_THREAD_ID / CLAUDE_CODE_SESSION_ID);
+        -- the delivery ladder uses it to route actions back to that session.
+        CREATE TABLE IF NOT EXISTS agent_links (
+          surface_id TEXT PRIMARY KEY,
+          agent_kind TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (surface_id) REFERENCES artifacts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_links_session
+        ON agent_links(agent_kind, session_id);
+
+        -- Live-session registry, fed by the agent-side SessionStart hook.
+        -- pid liveness distinguishes "session open in a plain TUI" (hold the
+        -- action) from "session dead" (safe to wake headlessly).
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+          session_id TEXT PRIMARY KEY,
+          agent_kind TEXT NOT NULL,
+          pid INTEGER,
+          cwd TEXT,
+          transcript_path TEXT,
+          registration_order INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_pid
+        ON agent_sessions(pid);
+
+        -- Threads the codex bridge resumed headlessly. "Loaded in the daemon"
+        -- does not mean "a user is attached" once the bridge has resumed a
+        -- thread; this record keeps consent + approval fail-closed rules
+        -- correct across service restarts.
+        CREATE TABLE IF NOT EXISTS codex_bridge_threads (
+          thread_id TEXT PRIMARY KEY,
+          resumed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
+  {
+    version: 13,
+    description: "durable codex delivery leases",
+    up: (db) => {
+      // Early checkouts of the v12 branch may already have user_version=12
+      // without this review-added column. Keep the upgrade append-only and
+      // tolerate fresh v12 databases that already include it.
+      const columns = db.pragma("table_info(agent_sessions)") as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "registration_order")) {
+        db.exec(`ALTER TABLE agent_sessions ADD COLUMN registration_order INTEGER NOT NULL DEFAULT 0`);
+      }
+      db.exec(`
+        -- Headless turn delivery is at-least-once. Actions move from pending
+        -- to delivering before turn/start and return to pending after an
+        -- uncertain outcome, including a service restart.
+        CREATE TABLE IF NOT EXISTS codex_action_deliveries (
+          action_id TEXT PRIMARY KEY,
+          surface_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          turn_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (action_id) REFERENCES surface_actions(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_codex_action_deliveries_surface
+        ON codex_action_deliveries(surface_id);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

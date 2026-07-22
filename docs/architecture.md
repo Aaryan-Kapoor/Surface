@@ -35,7 +35,7 @@ The product thesis: **agent-generated UI doesn't mean agents writing HTML — it
 | **State** | Per-surface JSON doc; `surface set` patches it; displays re-render live | [state/stateful-surfaces.md](state/stateful-surfaces.md) |
 | **Action** | A user interaction flowing back: click, form, answer | [interaction/actions-inbox.md](interaction/actions-inbox.md) |
 | **Binding** | Pre-registered command/webhook Surface fires when an action arrives and no agent is listening | [interaction/bindings.md](interaction/bindings.md) |
-| **Delivery ladder** | waiter → binding → inbox: a click is never lost | [interaction/delivery-ladder.md](interaction/delivery-ladder.md) |
+| **Delivery ladder** | waiter → binding → Codex flowback → inbox: a click is never lost | [interaction/delivery-ladder.md](interaction/delivery-ladder.md) |
 | **`.surface/`** | Surface definitions committed in the project; `surface sync` reconciles | [state/project-directory.md](state/project-directory.md) |
 
 ## The core loop
@@ -45,6 +45,7 @@ create:   agent ── surface link/create/ask ──► service ── SSE ─�
 update:   agent ── surface set/touch/append ─► service ── patch ─► bound elements re-render
 react:    user clicks ──► action ──► waiter (live session)
                                   └► binding (spawn/resume agent, e.g. claude -p --resume)
+                                  └► Codex flowback (live turn or consented wake)
                                   └► inbox (badge; drained next session)
 respond:  agent ── surface reply/set/update ──► user sees the result of their click
 ```

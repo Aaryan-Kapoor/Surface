@@ -1700,6 +1700,14 @@ function connectGlobalSSE() {
     setCardHandling(d.surface_id, d.status === "running");
   });
 
+  // Codex flowback narration: a delivered batch shows the same "⟳ handling…"
+  // indicator as a running binding, cleared when the turn ends or is held.
+  globalSSE.addEventListener("codex_bridge_status", (e) => {
+    const d = JSON.parse(e.data);
+    if (!d.surface_id) return;
+    setCardHandling(d.surface_id, d.state === "delivered_live" || d.state === "delivered_wake");
+  });
+
   globalSSE.addEventListener("thumb_ready", (e) => {
     const data = JSON.parse(e.data);
     if (!data || !data.id) return;

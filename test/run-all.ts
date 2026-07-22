@@ -12,6 +12,7 @@ const suites = [
   "test:service",
   "test:upgrade",
   "test:bindings",
+  "test:codex-bridge",
   "test:artifacts",
   "test:e2e",
 ];

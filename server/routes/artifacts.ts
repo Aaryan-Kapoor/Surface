@@ -33,6 +33,7 @@ import { getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
 import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
 import { planeOf, requireSystem, targetOf } from "./helpers.js";
+import { getAgentSession, isValidAgentSession, recordAgentLink } from "../agentSessions.js";
 
 // Devices may freely CRUD their own (device-authored) artifacts, but must not
 // mutate system-authored ones: a system artifact can hold a display_role slot
@@ -56,6 +57,20 @@ export const artifactsRouter = Router();
 export function cardPayload(id: string) {
   const card = getArtifactCard(getDb(), id);
   return card || { id };
+}
+
+// Remember which agent session created (or re-rendered) a surface, so the
+// delivery ladder can route actions back to it. System plane only — a paired
+// device must not be able to point flowback at an arbitrary session.
+function captureAgentLink(req: Request, surfaceId: string): void {
+  const session = req.body?.agent_session;
+  if (!session) return;
+  if (planeOf(req) !== "system") return;
+  if (!isValidAgentSession(session)) return;
+  // A missing SessionStart registration makes TUI liveness unknowable. Fail
+  // closed to the ordinary inbox rather than risk resuming a live rollout.
+  if (session.kind === "codex" && !getAgentSession(getDb(), session.session_id)) return;
+  recordAgentLink(getDb(), surfaceId, session);
 }
 
 function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string): void {
@@ -101,6 +116,7 @@ artifactsRouter.post("/artifacts/present-file", (req, res) => {
   }
   try {
     const result = presentFile(getDb(), { filePath, title, metadata, copy, open, project_root });
+    captureAgentLink(req, result.artifact.id);
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
@@ -127,6 +143,7 @@ artifactsRouter.post("/artifacts/link", (req, res) => {
       ? { ...(metadata || {}), template_params: params || {} }
       : metadata;
     const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata: mergedMetadata, project_root, template });
+    captureAgentLink(req, result.artifact.id);
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
@@ -195,6 +212,9 @@ function instantiateTemplate(req: Request, res: Response): void {
       const currentEntry = getArtifactFile(db, id, "index.html");
       const renderedSha = crypto.createHash("sha256").update(rendered.html).digest("hex");
       if (currentEntry?.sha256 === renderedSha && (title ?? existing.title) === existing.title) {
+        // Content unchanged, but the calling session may be new — re-stamp so
+        // flowback targets the session that just re-synced this surface.
+        captureAgentLink(req, id);
         res.json({ ...readArtifact(db, id)!, unchanged: true });
         return;
       }
@@ -224,6 +244,9 @@ function instantiateTemplate(req: Request, res: Response): void {
       }
       broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     }
+    // Re-renders re-stamp the link: `surface sync` runs at session start, so
+    // the freshest session becomes the flowback target.
+    captureAgentLink(req, result.artifact.id);
     enqueueThumb(result.artifact.id);
     res.status(existing ? 200 : 201).json(result);
   } catch (err: any) {
@@ -265,6 +288,7 @@ artifactsRouter.post("/artifacts", (req, res) => {
       reason: "artifact_create",
       author_plane: planeOf(req),
     });
+    captureAgentLink(req, result.artifact.id);
     broadcastGlobal("surface_created", cardPayload(result.artifact.id));
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
@@ -407,6 +431,9 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
       res.status(404).json({ error: "Artifact not found" });
       return;
     }
+    // Updates re-stamp too: the session that just rewrote a surface is the
+    // freshest flowback target.
+    captureAgentLink(req, result.artifact.id);
     broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
     broadcastToSurface(result.artifact.id, "surface_updated", {
       id: result.artifact.id,
