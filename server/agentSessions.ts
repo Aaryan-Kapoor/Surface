@@ -105,14 +105,19 @@ function pidAlive(pid: number): boolean {
 
 // Guard against pid reuse: the live process must actually look like codex,
 // or a recycled pid would strand actions in "held_live_tui" forever.
+export function executableLooksLikeCodex(command: string): boolean {
+  const executable = command.trim().split(/[\\/]/).pop() || "";
+  return /^codex(?:$|[-_.])/i.test(executable);
+}
+
 function processLooksLikeCodex(pid: number): boolean {
   try {
     if (process.platform === "linux") {
-      return /codex/i.test(fs.readFileSync(`/proc/${pid}/comm`, "utf8"));
+      return executableLooksLikeCodex(fs.readFileSync(`/proc/${pid}/comm`, "utf8"));
     }
     if (process.platform === "darwin") {
       const out = execFileSync("ps", ["-o", "comm=", "-p", String(pid)], { timeout: 2_000 }).toString();
-      return /codex/i.test(out);
+      return executableLooksLikeCodex(out);
     }
   } catch {
     return false;

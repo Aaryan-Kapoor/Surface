@@ -18,6 +18,7 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
   const fetchCalls: FetchCall[] = [];
   const postMessages: any[] = [];
   const eventSourceUrls: string[] = [];
+  const windowListeners = new Map<string, Array<(event?: any) => void>>();
   let hostEventHandler: ((name: string, data: any) => void) | null = null;
 
   const fetchMock = (url: string, opts?: any) => {
@@ -56,6 +57,11 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
     document: documentStub,
     setTimeout,
     clearTimeout,
+    addEventListener(name: string, handler: (event?: any) => void) {
+      const listeners = windowListeners.get(name) || [];
+      listeners.push(handler);
+      windowListeners.set(name, listeners);
+    },
   };
   // window IS the global. Actions post directly to the artifact origin in every
   // mode; the PWA postMessage bridge only remains for legacy surfaces.
@@ -89,9 +95,13 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
     fetchCalls,
     postMessages,
     eventSourceUrls,
+    hostSubscribed: () => hostEventHandler !== null,
     emitHostEvent(name: string, data: any) {
       if (!hostEventHandler) throw new Error("runtime did not subscribe to the host event stream");
       hostEventHandler(name, data);
+    },
+    emitWindowEvent(name: string, event: any = { type: name, persisted: false }) {
+      for (const handler of [...(windowListeners.get(name) || [])]) handler(event);
     },
   };
 }
@@ -225,6 +235,23 @@ await test("same-origin PWA iframe reuses the parent stream instead of opening E
 
   assert.deepEqual(plain(Surface.state), { coach: { ready: true } });
   assert.deepEqual(patches, [{ coach: { ready: true } }]);
+});
+
+await test("same-origin iframe releases its host subscription when removed", () => {
+  const runtime = loadRuntime({ parent: "same-origin" });
+  assert.equal(runtime.hostSubscribed(), true);
+  runtime.emitWindowEvent("pagehide", { type: "pagehide", persisted: false });
+  assert.equal(runtime.hostSubscribed(), false, "detaching the iframe releases its parent callback");
+  runtime.emitWindowEvent("pagehide", { type: "pagehide", persisted: false });
+  assert.equal(runtime.hostSubscribed(), false, "cleanup is idempotent across lifecycle events");
+});
+
+await test("bfcache pagehide preserves the host subscription", () => {
+  const runtime = loadRuntime({ parent: "same-origin" });
+  runtime.emitWindowEvent("pagehide", { type: "pagehide", persisted: true });
+  assert.equal(runtime.hostSubscribed(), true, "bfcache freeze keeps the restored parent callback live");
+  runtime.emitWindowEvent("pagehide", { type: "pagehide", persisted: false });
+  assert.equal(runtime.hostSubscribed(), false);
 });
 
 await test("standalone and cross-origin surfaces keep their own per-surface stream", () => {

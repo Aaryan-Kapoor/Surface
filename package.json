@@ -43,6 +43,7 @@
     "pretest": "npm run build",
     "test": "tsx test/run-all.ts",
     "test:artifacts": "tsx test/artifacts.ts",
+    "test:agent-sessions": "tsx test/agentSessions.ts",
     "test:auth": "tsx test/auth.ts",
     "test:startup-access": "tsx test/startupAccess.ts",
     "test:thumbs": "tsx test/thumbs.ts",

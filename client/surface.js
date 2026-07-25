@@ -125,7 +125,16 @@
           function (name, data) { receiveEvent(name, data, false); }
         );
         if (window.addEventListener) {
-          window.addEventListener("beforeunload", function () { unsubscribe(); }, { once: true });
+          var cleanup = function (event) {
+            // A persisted pagehide freezes the whole page in bfcache; the
+            // parent subscription is restored with it and must stay intact.
+            if (event && event.type === "pagehide" && event.persisted) return;
+            if (!unsubscribe) return;
+            var stop = unsubscribe;
+            unsubscribe = null;
+            stop();
+          };
+          window.addEventListener("pagehide", cleanup);
         }
         return;
       }

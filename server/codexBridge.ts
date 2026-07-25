@@ -45,7 +45,12 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const RESUME_RETRIES = 5;
 const RESUME_RETRY_DELAY_MS = 1_000;
 // Failsafe so a lost turn/completed can't wedge a surface's single-flight slot.
-const TURN_WATCH_MAX_MS = 30 * 60_000;
+const configuredTurnWatchMs = Number(process.env.SURFACE_TEST_CODEX_TURN_WATCH_MS);
+const TURN_WATCH_MAX_MS = process.env.NODE_ENV === "test"
+  && Number.isFinite(configuredTurnWatchMs)
+  && configuredTurnWatchMs >= 100
+  ? configuredTurnWatchMs
+  : 30 * 60_000;
 
 interface JsonRpcMessage {
   id?: number | string;
@@ -54,6 +59,8 @@ interface JsonRpcMessage {
   result?: any;
   error?: { code: number; message: string };
 }
+
+class ReportedDeliveryError extends Error {}
 
 export interface CodexBridgeStatus {
   enabled: boolean;
@@ -265,6 +272,10 @@ let deliveriesFailed = 0;
 // exact turn ids are declined, fail-closed. A later SessionStart registration
 // with a live pid clears bridge ownership when the user reattaches.
 const headlessTurnIds = new Set<string>();
+// A timed-out headless turn may still be running in the daemon. Keep declining
+// approvals for that exact turn until a late completion or connection reset.
+const timedOutHeadlessTurnIds = new Set<string>();
+const TIMED_OUT_HEADLESS_MAX = 100;
 // Between sending turn/start and receiving its response we do not have a turn
 // id yet. V2 approval requests include threadId, so this closes that early
 // fail-closed window.
@@ -288,7 +299,7 @@ const rerunRequested = new Set<string>();
 // turnId → callbacks waiting for that exact turn to end. Keyed per turn, not
 // per thread: an unrelated turn completing on a shared thread (codex queues
 // turn/start behind an active turn) must not release the coalescing slot.
-const turnWatchers = new Map<string, Set<() => void>>();
+const turnWatchers = new Map<string, Set<(terminalStatusPublished: boolean) => void>>();
 // A Codex thread can own several surfaces. Serialize the loaded/resume/start
 // transition by thread so two surfaces cannot race thread/resume or reorder
 // wake turns.
@@ -305,11 +316,11 @@ function serializeThread(threadId: string, task: () => Promise<void>): Promise<v
   return run;
 }
 
-function flushTurnWatchers(turnId: string): void {
+function flushTurnWatchers(turnId: string, terminalStatusPublished = false): void {
   const watchers = turnWatchers.get(turnId);
   if (!watchers) return;
   turnWatchers.delete(turnId);
-  for (const done of watchers) done();
+  for (const done of watchers) done(terminalStatusPublished);
 }
 
 export function codexInFlight(surfaceId: string): boolean {
@@ -328,26 +339,73 @@ function restoreBatch(delivered: { surfaceId: string; actionIds: string[]; headl
   status(delivered.surfaceId, "turn_failed", why);
 }
 
-function settleTurn(turnId: string, turnStatus: string | undefined): void {
-  const wasHeadless = headlessTurnIds.delete(turnId);
-  const delivered = deliveredBatches.get(turnId);
-  if (delivered) {
-    deliveredBatches.delete(turnId);
-    if (turnStatus === "failed" || (wasHeadless && (turnStatus === "interrupted" || turnStatus === undefined))) {
-      // Attended interrupts stay acked: the user saw the batch in their own
-      // transcript and chose to stop the turn.
-      restoreBatch(delivered, `the handling turn ended '${turnStatus}'; the batch is back in the inbox`);
-    } else if (wasHeadless) {
-      completeCodexActions(getDb(), delivered.actionIds);
-    }
-  } else if (turnStatus) {
-    recentCompletions.set(turnId, turnStatus);
-    while (recentCompletions.size > RECENT_COMPLETIONS_MAX) {
-      const oldest = recentCompletions.keys().next().value as string;
-      recentCompletions.delete(oldest);
-    }
+function rememberTimedOutHeadlessTurn(turnId: string): void {
+  timedOutHeadlessTurnIds.add(turnId);
+  while (timedOutHeadlessTurnIds.size > TIMED_OUT_HEADLESS_MAX) {
+    const oldest = timedOutHeadlessTurnIds.values().next().value as string;
+    timedOutHeadlessTurnIds.delete(oldest);
   }
-  flushTurnWatchers(turnId);
+}
+
+function settleTurn(
+  turnId: string,
+  turnStatus: string | undefined,
+  failureDetail?: string,
+  preserveHeadlessApproval = false,
+): boolean {
+  let terminalStatusPublished = false;
+  const wasHeadless = headlessTurnIds.has(turnId);
+  timedOutHeadlessTurnIds.delete(turnId);
+  if (preserveHeadlessApproval && wasHeadless) rememberTimedOutHeadlessTurn(turnId);
+  try {
+    const delivered = deliveredBatches.get(turnId);
+    if (delivered) {
+      if (turnStatus === "failed" || (wasHeadless && (turnStatus === "interrupted" || turnStatus === undefined))) {
+        // Attended interrupts stay acked: the user saw the batch in their own
+        // transcript and chose to stop the turn.
+        const detail = failureDetail || (turnStatus === undefined
+          ? "the handling turn ended without a status; the batch is back in the inbox"
+          : `the handling turn ended '${turnStatus}'; the batch is back in the inbox`);
+        restoreBatch(delivered, detail);
+        terminalStatusPublished = true;
+      } else if (wasHeadless) {
+        completeCodexActions(getDb(), delivered.actionIds);
+      }
+      deliveredBatches.delete(turnId);
+      headlessTurnIds.delete(turnId);
+    } else if (turnStatus) {
+      recentCompletions.set(turnId, turnStatus);
+      while (recentCompletions.size > RECENT_COMPLETIONS_MAX) {
+        const oldest = recentCompletions.keys().next().value as string;
+        recentCompletions.delete(oldest);
+      }
+    }
+    return terminalStatusPublished;
+  } catch (err) {
+    // Suppress any later turn_ended status; the caller reports this recovery
+    // failure while startup reconciliation retains the durable lease.
+    terminalStatusPublished = true;
+    throw err;
+  } finally {
+    flushTurnWatchers(turnId, terminalStatusPublished);
+  }
+}
+
+function settleTurnSafely(
+  turnId: string,
+  turnStatus: string | undefined,
+  failureDetail?: string,
+  preserveHeadlessApproval = false,
+): boolean {
+  const surfaceId = deliveredBatches.get(turnId)?.surfaceId;
+  try {
+    return settleTurn(turnId, turnStatus, failureDetail, preserveHeadlessApproval);
+  } catch (err: any) {
+    const detail = err?.message || String(err);
+    console.error(`[codex] failed to settle turn ${turnId}: ${detail}`);
+    if (surfaceId) status(surfaceId, "failed", `the handling turn ended but its batch could not be finalized: ${detail}`);
+    return true;
+  }
 }
 
 async function settleTrackedTurnsFromIdle(threadId: string): Promise<void> {
@@ -363,21 +421,24 @@ async function settleTrackedTurnsFromIdle(threadId: string): Promise<void> {
   for (const [turnId] of tracked) {
     const turnStatus = statuses.get(turnId);
     if (turnStatus === "completed" || turnStatus === "failed" || turnStatus === "interrupted") {
-      settleTurn(turnId, turnStatus);
+      settleTurnSafely(turnId, turnStatus);
     }
   }
 }
 
 function reconcileConnectionLoss(): void {
-  for (const turnId of [...turnWatchers.keys()]) flushTurnWatchers(turnId);
   // Outcomes of headless turns are unknowable now. At-least-once semantics
   // return those durable leases to the inbox; attended turns stay acked
   // because the user already saw them in their TUI.
-  for (const delivered of deliveredBatches.values()) {
-    if (delivered.headless) restoreBatch(delivered, "the codex connection closed; the batch is back in the inbox");
+  try {
+    for (const [turnId] of [...deliveredBatches]) {
+      settleTurnSafely(turnId, undefined, "the codex connection closed; the batch is back in the inbox");
+    }
+  } finally {
+    for (const turnId of [...turnWatchers.keys()]) flushTurnWatchers(turnId);
   }
-  deliveredBatches.clear();
   headlessTurnIds.clear();
+  timedOutHeadlessTurnIds.clear();
   pendingHeadlessThreads.clear();
   recentCompletions.clear();
 }
@@ -415,7 +476,10 @@ function installHandlers(): void {
     if (V2_APPROVAL_METHODS.has(msg.method!)) {
       const turnId = msg.params?.turnId;
       const threadId = msg.params?.threadId;
-      if ((turnId && headlessTurnIds.has(turnId)) || (threadId && pendingHeadlessThreads.has(threadId))) {
+      if (
+        (turnId && (headlessTurnIds.has(turnId) || timedOutHeadlessTurnIds.has(turnId)))
+        || (threadId && pendingHeadlessThreads.has(threadId))
+      ) {
         declineApproval(msg);
         return true;
       }
@@ -434,7 +498,7 @@ function installHandlers(): void {
   connection.onNotification((msg) => {
     if (msg.method === "turn/completed") {
       const turnId = msg.params?.turn?.id;
-      if (turnId) settleTurn(turnId, msg.params?.turn?.status);
+      if (turnId) settleTurnSafely(turnId, msg.params?.turn?.status);
       return;
     }
     if (msg.method === "thread/status/changed" && msg.params?.status?.type === "idle") {
@@ -446,7 +510,13 @@ function installHandlers(): void {
       const threadId = msg.params?.threadId;
       if (!threadId) return;
       for (const [turnId, delivered] of [...deliveredBatches]) {
-        if (delivered.threadId === threadId) settleTurn(turnId, undefined);
+        if (delivered.threadId === threadId) {
+          settleTurnSafely(
+            turnId,
+            undefined,
+            "the codex thread closed before the handling turn completed; the batch is back in the inbox",
+          );
+        }
       }
       return;
     }
@@ -595,7 +665,7 @@ export function maybeDispatchCodex(surfaceId: string, consent: boolean): void {
       deliveriesFailed++;
       lastError = err?.message || String(err);
       console.error(`[codex] delivery failed for ${surfaceId}: ${lastError}`);
-      status(surfaceId, "failed", lastError);
+      if (!(err instanceof ReportedDeliveryError)) status(surfaceId, "failed", lastError);
     })
     .finally(() => {
       inFlight.delete(surfaceId);
@@ -713,8 +783,11 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
   const turnId: string | undefined = started?.turn?.id;
   pendingHeadlessThreads.delete(threadId);
   if (!attended && !turnId) {
-    restoreCodexActions(db, actionIds);
-    throw new Error("codex turn/start returned no turn id for a headless delivery");
+    restoreBatch(
+      { surfaceId, actionIds, headless: true },
+      "codex turn/start returned no turn id; the batch is back in the inbox",
+    );
+    throw new ReportedDeliveryError("codex turn/start returned no turn id for a headless delivery");
   }
   if (turnId) {
     if (!attended) headlessTurnIds.add(turnId);
@@ -734,33 +807,40 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
   lastError = null;
   status(surfaceId, attended ? "delivered_live" : "delivered_wake");
 
-  if (!turnId) return;
+  if (!turnId) {
+    status(surfaceId, "turn_ended", "codex accepted the live batch without a trackable turn id");
+    return;
+  }
 
   // The turn may have already ended (a usage/auth failure can complete before
   // the turn/start continuation runs); settle from the buffered completion.
   const early = recentCompletions.get(turnId);
   if (early !== undefined) {
     recentCompletions.delete(turnId);
-    settleTurn(turnId, early);
-    status(surfaceId, "turn_ended");
+    const terminalStatusPublished = settleTurnSafely(turnId, early);
+    if (!terminalStatusPublished) status(surfaceId, "turn_ended");
     return;
   }
 
   // Hold the single-flight slot until *this* turn ends so rapid clicks
   // coalesce into one follow-up batch instead of a pile of queued turns.
-  await new Promise<void>((resolve) => {
+  const terminalStatusPublished = await new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => {
-      const watchers = turnWatchers.get(turnId);
-      watchers?.delete(done);
-      if (watchers && watchers.size === 0) turnWatchers.delete(turnId);
-      resolve();
+      // The outcome is unknowable. Headless turns must return their durable
+      // lease to the inbox; attended turns were already visible to the user.
+      settleTurnSafely(
+        turnId,
+        undefined,
+        "the handling turn timed out; the batch is back in the inbox",
+        true,
+      );
     }, TURN_WATCH_MAX_MS);
-    const done = () => { clearTimeout(timer); resolve(); };
+    const done = (reported: boolean) => { clearTimeout(timer); resolve(reported); };
     let watchers = turnWatchers.get(turnId);
     if (!watchers) turnWatchers.set(turnId, (watchers = new Set()));
     watchers.add(done);
   });
-  status(surfaceId, "turn_ended");
+  if (!terminalStatusPublished) status(surfaceId, "turn_ended");
 }
 
 export function codexBridgeStatus(): CodexBridgeStatus {

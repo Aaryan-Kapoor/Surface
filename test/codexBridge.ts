@@ -43,6 +43,7 @@ class MockDaemon {
   turnStarts: TurnStartCall[] = [];
   approvalResponses: any[] = [];
   approvalBeforeStartResponse = false;
+  turnStartWithoutIdOnce = false;
   autoCompleteTurns = true;
   resumeDelayMs = 0;
   activeResumes = 0;
@@ -50,6 +51,7 @@ class MockDaemon {
   lastTurnIdByThread = new Map<string, string>();
   turnStatusById = new Map<string, "inProgress" | "completed" | "failed" | "interrupted">();
   private nextServerRequestId = 1000;
+  private nextTurnNumber = 1;
 
   constructor(public sockPath: string) {
     this.server = http.createServer();
@@ -133,7 +135,12 @@ class MockDaemon {
         const threadId = msg.params.threadId;
         const text = msg.params.input?.[0]?.text || "";
         this.turnStarts.push({ threadId, text });
-        const turnId = `turn-${this.turnStarts.length}`;
+        if (this.turnStartWithoutIdOnce) {
+          this.turnStartWithoutIdOnce = false;
+          this.send(ws, { id: msg.id, result: { turn: { status: "inProgress" } } });
+          return;
+        }
+        const turnId = `turn-${this.nextTurnNumber++}`;
         this.lastTurnIdByThread.set(threadId, turnId);
         this.turnStatusById.set(turnId, "inProgress");
         if (this.approvalBeforeStartResponse) {
@@ -156,6 +163,11 @@ class MockDaemon {
     const turnId = this.lastTurnIdByThread.get(threadId) || "turn-done";
     this.turnStatusById.set(turnId, status);
     this.broadcast("turn/completed", { threadId, turn: { id: turnId, status } });
+  }
+
+  completeTurnWithoutStatus(threadId: string): void {
+    const turnId = this.lastTurnIdByThread.get(threadId) || "turn-done";
+    this.broadcast("turn/completed", { threadId, turn: { id: turnId } });
   }
 
   completeTurnViaIdle(threadId: string, status: "completed" | "failed" | "interrupted" = "completed"): void {
@@ -203,6 +215,8 @@ const STALE_TUI_THREAD = "019f0000-0000-7000-8000-000000000007";
 const SHARED_THREAD = "019f0000-0000-7000-8000-000000000008";
 const UNREGISTERED_THREAD = "019f0000-0000-7000-8000-000000000009";
 const STALE_LOADED_THREAD = "019f0000-0000-7000-8000-00000000000b";
+const TIMEOUT_THREAD = "019f0000-0000-7000-8000-00000000000c";
+const NO_TURN_ID_THREAD = "019f0000-0000-7000-8000-00000000000d";
 
 async function api(method: string, p: string, body?: unknown): Promise<{ status: number; json: any }> {
   const res = await call(method, p, { body });
@@ -232,6 +246,45 @@ async function createCodexSurface(id: string, threadId: string, root = projectRo
 async function pendingCount(id: string): Promise<number> {
   const { json } = await api("GET", `/artifacts/${id}/actions`);
   return Array.isArray(json) ? json.length : -1;
+}
+
+async function watchCodexStatuses(id: string): Promise<{
+  states: Array<{ state: string; detail: string | null }>;
+  close: () => void;
+}> {
+  const controller = new AbortController();
+  const states: Array<{ state: string; detail: string | null }> = [];
+  let readyResolve!: () => void;
+  let readyReject!: (err: Error) => void;
+  const ready = new Promise<void>((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+  void (async () => {
+    const res = await fetch(`${BASE}/artifacts/${id}/stream`, { signal: controller.signal });
+    if (!res.ok || !res.body) throw new Error(`status stream failed: ${res.status}`);
+    readyResolve();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let boundary: number;
+      while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const event = /^event: (.+)$/m.exec(block)?.[1];
+        const data = /^data: (.+)$/m.exec(block)?.[1];
+        if (event === "codex_bridge_status" && data) states.push(JSON.parse(data));
+      }
+    }
+  })().catch((err) => {
+    if (!controller.signal.aborted) readyReject(err as Error);
+  });
+  await ready;
+  return { states, close: () => controller.abort() };
 }
 
 async function waitFor(pred: () => Promise<boolean> | boolean, timeoutMs: number, label: string) {
@@ -268,6 +321,7 @@ async function main() {
   server = spawnServer(PORT, dataDir, {
     SURFACE_CODEX_SOCKET: sockPath,
     SURFACE_CODEX_AUTOSTART: "0",
+    SURFACE_TEST_CODEX_TURN_WATCH_MS: "8000",
   }, ports.contentPort);
   await waitForReady(BASE, "/artifacts");
 
@@ -337,6 +391,86 @@ async function main() {
     daemon.completeTurnViaIdle(LIVE_THREAD);
     daemon.autoCompleteTurns = true;
     await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "idle-protocol inbox drained");
+  });
+
+  await test("lost turn completion returns a headless lease to the inbox after the failsafe", async () => {
+    daemon.loadedThreads.add(TIMEOUT_THREAD);
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    daemon.approvalResponses = [];
+    await createCodexSurface("cx-timeout", TIMEOUT_THREAD);
+    const statusStream = await watchCodexStatuses("cx-timeout");
+    const action = await api("POST", "/artifacts/cx-timeout/actions", { action: "lost-completion", data: {} });
+    assert.equal(action.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "timeout turn/start");
+    const timedOutTurnId = daemon.lastTurnIdByThread.get(TIMEOUT_THREAD);
+    assert.ok(timedOutTurnId, "mock recorded the timed-out turn id");
+    await waitFor(async () => (await pendingCount("cx-timeout")) === 1, 12000, "timed-out lease restored");
+    await waitFor(
+      () => statusStream.states.at(-1)?.state === "turn_failed",
+      5000,
+      "timeout leaves the recovery status visible",
+    );
+    assert.match(statusStream.states.at(-1)?.detail || "", /timed out/);
+    assert.doesNotMatch(statusStream.states.at(-1)?.detail || "", /undefined/);
+    daemon.requestApproval(TIMEOUT_THREAD);
+    await waitFor(() => daemon.approvalResponses.length === 1, 5000, "post-timeout approval denial");
+    assert.equal(daemon.approvalResponses[0].result?.decision, "decline");
+    daemon.broadcast("turn/completed", {
+      threadId: TIMEOUT_THREAD,
+      turn: { id: timedOutTurnId, status: "completed" },
+    });
+    await sleep(200);
+    daemon.approvalResponses = [];
+    daemon.requestApproval(TIMEOUT_THREAD);
+    await sleep(300);
+    assert.equal(daemon.approvalResponses.length, 0, "late completion clears timed-out approval ownership");
+    const pending = (await api("GET", "/artifacts/cx-timeout/actions")).json;
+    assert.equal(pending[0].action, "lost-completion");
+    await api("POST", `/actions/${pending[0].id}/ack`, {});
+    daemon.autoCompleteTurns = true;
+    const followup = await api("POST", "/artifacts/cx-timeout/actions", { action: "after-timeout", data: {} });
+    assert.equal(followup.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 2, 10000, "single-flight released after timeout");
+    await waitFor(async () => (await pendingCount("cx-timeout")) === 0, 5000, "follow-up delivered");
+    statusStream.close();
+  });
+
+  await test("headless turn/start without an id restores the visible pending batch", async () => {
+    daemon.loadedThreads.add(NO_TURN_ID_THREAD);
+    daemon.turnStarts = [];
+    daemon.turnStartWithoutIdOnce = true;
+    await createCodexSurface("cx-no-turn-id", NO_TURN_ID_THREAD);
+    const statusStream = await watchCodexStatuses("cx-no-turn-id");
+    const action = await api("POST", "/artifacts/cx-no-turn-id/actions", { action: "missing-id", data: {} });
+    assert.equal(action.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "turn/start without id");
+    await waitFor(async () => (await pendingCount("cx-no-turn-id")) === 1, 5000, "missing-id lease restored");
+    await waitFor(
+      () => statusStream.states.at(-1)?.state === "turn_failed",
+      5000,
+      "missing-id recovery status is not overwritten",
+    );
+    const pending = (await api("GET", "/artifacts/cx-no-turn-id/actions")).json;
+    assert.equal(pending[0].action, "missing-id");
+    await api("POST", `/actions/${pending[0].id}/ack`, {});
+    statusStream.close();
+  });
+
+  await test("attended turn/start without an id clears the handling status", async () => {
+    daemon.turnStarts = [];
+    daemon.turnStartWithoutIdOnce = true;
+    const statusStream = await watchCodexStatuses("cx-live");
+    const action = await api("POST", "/artifacts/cx-live/actions", { action: "live-missing-id", data: {} });
+    assert.equal(action.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "attended turn/start without id");
+    await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "attended batch acked");
+    await waitFor(
+      () => statusStream.states.at(-1)?.state === "turn_ended",
+      5000,
+      "missing-id attended delivery clears handling",
+    );
+    statusStream.close();
   });
 
   await test("dead session with consent: resumed from disk, then woken", async () => {
@@ -471,6 +605,29 @@ async function main() {
     daemon.completeTurn(LIVE_THREAD, "interrupted");
     await sleep(700);
     assert.equal(await pendingCount("cx-live"), 0, "attended interrupt keeps the batch acked (the user saw it)");
+    daemon.autoCompleteTurns = true;
+  });
+
+  await test("a headless completion without status restores the batch with readable detail", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    const statusStream = await watchCodexStatuses("cx-dead");
+    const act = await api("POST", "/artifacts/cx-dead/actions", { action: "missing-status", data: {} });
+    assert.equal(act.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "headless missing-status turn");
+    await waitFor(async () => (await pendingCount("cx-dead")) === 0, 5000, "headless batch leased");
+    daemon.completeTurnWithoutStatus(DEAD_THREAD);
+    await waitFor(async () => (await pendingCount("cx-dead")) === 1, 5000, "missing-status batch restored");
+    await waitFor(
+      () => statusStream.states.at(-1)?.state === "turn_failed",
+      5000,
+      "missing-status completion reports recovery",
+    );
+    assert.match(statusStream.states.at(-1)?.detail || "", /without a status/);
+    assert.doesNotMatch(statusStream.states.at(-1)?.detail || "", /undefined/);
+    const rows = (await api("GET", "/artifacts/cx-dead/actions")).json;
+    for (const row of rows) await api("POST", `/actions/${row.id}/ack`, {});
+    statusStream.close();
     daemon.autoCompleteTurns = true;
   });
 
@@ -845,12 +1002,18 @@ echo '{"status":"alreadyRunning"}'
   await test("a failed handling turn returns the batch to the inbox", async () => {
     daemon.autoCompleteTurns = false;
     daemon.turnStarts = [];
+    const statusStream = await watchCodexStatuses("cx-live");
     const act = await api("POST", "/artifacts/cx-live/actions", { action: "doomed", data: {} });
     assert.equal(act.status, 201);
     await waitFor(() => daemon.turnStarts.length === 1, 10000, "turn/start");
     await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "optimistically acked");
     daemon.completeTurn(LIVE_THREAD, "failed");
     await waitFor(async () => (await pendingCount("cx-live")) === 1, 5000, "batch back in the inbox after the failed turn");
+    await waitFor(
+      () => statusStream.states.at(-1)?.state === "turn_failed",
+      5000,
+      "failed-turn recovery status is not overwritten",
+    );
     // Drain so later tests start clean: complete-turn cycle with a fresh delivery.
     daemon.autoCompleteTurns = true;
     // The failed batch does NOT auto-retry (no loop): it sits in the inbox.
@@ -858,6 +1021,7 @@ echo '{"status":"alreadyRunning"}'
     assert.equal(daemon.turnStarts.length, 1, "no automatic redelivery loop");
     const pendingRows = (await api("GET", "/artifacts/cx-live/actions")).json;
     for (const row of pendingRows) await api("POST", `/actions/${row.id}/ack`, {});
+    statusStream.close();
   });
 
   await test("SessionStart clears stale bridge ownership when the user reattaches", async () => {
