@@ -376,6 +376,24 @@ function settleTurn(turnId: string, turnStatus: string | undefined): void {
   flushTurnWatchers(turnId);
 }
 
+async function settleTrackedTurnsFromIdle(threadId: string): Promise<void> {
+  const tracked = [...deliveredBatches.entries()].filter(([, delivered]) => delivered.threadId === threadId);
+  if (!tracked.length) return;
+  // Codex app-server 0.144/0.145 over WebSocket reports active -> idle but
+  // does not emit turn/completed. Read the authoritative turn records so an
+  // unrelated turn becoming idle cannot release Surface's single-flight slot,
+  // and so failed/interrupted headless turns keep their recovery semantics.
+  const result = await connection.request("thread/read", { threadId, includeTurns: true }, 5_000);
+  const turns = Array.isArray(result?.thread?.turns) ? result.thread.turns : [];
+  const statuses = new Map<string, string>(turns.map((turn: any) => [turn.id, turn.status]));
+  for (const [turnId] of tracked) {
+    const turnStatus = statuses.get(turnId);
+    if (turnStatus === "completed" || turnStatus === "failed" || turnStatus === "interrupted") {
+      settleTurn(turnId, turnStatus);
+    }
+  }
+}
+
 function reconcileConnectionLoss(): void {
   for (const turnId of [...turnWatchers.keys()]) flushTurnWatchers(turnId);
   // Outcomes of headless turns are unknowable now. At-least-once semantics
@@ -443,6 +461,11 @@ function installHandlers(): void {
     if (msg.method === "turn/completed") {
       const turnId = msg.params?.turn?.id;
       if (turnId) settleTurn(turnId, msg.params?.turn?.status);
+      return;
+    }
+    if (msg.method === "thread/status/changed" && msg.params?.status?.type === "idle") {
+      const threadId = msg.params?.threadId;
+      if (threadId) void settleTrackedTurnsFromIdle(threadId).catch(() => {});
       return;
     }
     if (msg.method === "thread/closed") {
