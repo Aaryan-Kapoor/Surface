@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import WebSocket from "ws";
-import { createWindowsBridgeConfig, desktopLaunchEnvironment } from "../bin/codex.js";
+import { createWindowsBridgeConfig, desktopLaunchEnvironment, windowsCodexHostInstallScript } from "../bin/codex.js";
 import { writeCodexBridgeConfig } from "../shared/codexBridgeConfig.js";
 import { cleanupDir, freePort, sleep, tmpDir } from "./helpers.js";
 
@@ -17,6 +17,12 @@ assert.equal(launched.CODEX_APP_SERVER_WS_URL, endpoint, "bridged launch receive
 assert.equal(parent.CODEX_APP_SERVER_WS_URL, "ws://stale.invalid", "launch does not mutate its parent environment");
 assert.equal(launched.KEEP_ME, "yes", "launch preserves unrelated environment values");
 
+const taskScript = windowsCodexHostInstallScript(endpoint, "C:\\private runtime\\codex.exe", "C:\\surface data");
+assert.match(taskScript, /New-ScheduledTaskAction -Execute 'conhost\.exe'/);
+assert.ok(taskScript.includes('--headless "C:\\private runtime\\codex.exe" app-server'));
+assert.match(taskScript, /Register-ScheduledTask -TaskName 'Surface Codex Host'/);
+assert.match(taskScript, /New-ScheduledTaskTrigger -AtLogOn/);
+
 if (process.platform !== "win32") {
   console.log("Codex Desktop safety tests passed (host lifecycle skipped outside Windows)");
   process.exit(0);
@@ -24,6 +30,7 @@ if (process.platform !== "win32") {
 
 const temp = tmpDir("surface-codex-host-safety-");
 const previousDataDir = process.env.SURFACE_DATA_DIR;
+const previousDirectHost = process.env.SURFACE_CODEX_HOST_DIRECT;
 const previousCwd = process.cwd();
 let spawnedPid: number | null = null;
 
@@ -59,6 +66,7 @@ try {
   ].join("\n"));
 
   process.env.SURFACE_DATA_DIR = temp;
+  process.env.SURFACE_CODEX_HOST_DIRECT = "1";
   process.chdir(temp);
   writeCodexBridgeConfig(temp, createWindowsBridgeConfig(liveEndpoint, fakeCodex));
   const host = await import("../server/codexManagedHost.js");
@@ -87,5 +95,7 @@ try {
   process.chdir(previousCwd);
   if (previousDataDir === undefined) delete process.env.SURFACE_DATA_DIR;
   else process.env.SURFACE_DATA_DIR = previousDataDir;
+  if (previousDirectHost === undefined) delete process.env.SURFACE_CODEX_HOST_DIRECT;
+  else process.env.SURFACE_CODEX_HOST_DIRECT = previousDirectHost;
   cleanupDir(temp);
 }

@@ -3,13 +3,20 @@ import fs from "fs";
 import net from "net";
 import os from "os";
 import path from "path";
+import { fileURLToPath } from "url";
 import { dataDir } from "./upgrade.js";
+import {
+  codexLauncherStatus,
+  installCodexLauncher,
+  removeCodexLauncher,
+} from "./codexLauncher.js";
 import {
   codexBridgeConfigPath,
   readCodexBridgeConfig,
   writeCodexBridgeConfig,
   type CodexBridgeConfig,
 } from "../shared/codexBridgeConfig.js";
+import { WINDOWS_CODEX_HOST_TASK } from "../shared/codexHostTask.js";
 
 // Codex integration management (docs/interaction/codex.md).
 //
@@ -24,12 +31,14 @@ export const CODEX_HELP = [
   "surface codex setup [--remove|--remove-hook]",
   "  One-time integration setup: starts a shared codex app-server (native daemon on",
   "  Linux/macOS; Surface-managed loopback host for Codex Desktop on Windows) and",
-  "  installs a SessionStart hook that registers each codex session with Surface.",
+  "  attaches the ordinary `codex` launcher and installs a SessionStart hook.",
+  "  Interactive sessions route automatically; management and non-interactive commands",
+  "  pass through unchanged. Use `codex --no-surface` to bypass the bridge once.",
   "  Codex will ask you to trust the new hook on its next start — that prompt is codex's,",
   "  not Surface's. Headless wakes of dead sessions additionally need per-project consent",
   "  (bindings.enabled in .surface/config.json), same as wake bindings.",
   "surface codex launch",
-  "  Windows: starts Codex Desktop with the bridge endpoint scoped to that process.",
+  "  Windows only: starts Codex Desktop with the bridge endpoint scoped to that process.",
   "  Quit any running Codex Desktop window first. Normal app launches stay unchanged.",
   "surface codex status [--json]",
   "surface codex hook   (internal: SessionStart hook target, reads the payload on stdin)",
@@ -47,6 +56,50 @@ type CallFn = (method: string, pathname: string, body?: unknown) => Promise<any>
 const MIN_CODEX_VERSION = [0, 144, 0] as const;
 const HOOK_COMMAND = "surface codex hook";
 const DESKTOP_WS_ENV = "CODEX_APP_SERVER_WS_URL";
+
+function psQuote(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+export function windowsCodexHostInstallScript(endpoint: string, codexBinary: string, workingDirectory: string): string {
+  const argument = ["--headless", `"${codexBinary}"`, "app-server", "--listen", `"${endpoint}"`, "--analytics-default-enabled"].join(" ");
+  return [
+    `$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument ${psQuote(argument)} -WorkingDirectory ${psQuote(workingDirectory)}`,
+    `$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME`,
+    `$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)`,
+    `Register-ScheduledTask -TaskName ${psQuote(WINDOWS_CODEX_HOST_TASK)} -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null`,
+    `Start-ScheduledTask -TaskName ${psQuote(WINDOWS_CODEX_HOST_TASK)}`,
+  ].join("\n");
+}
+
+function runWindowsPowerShell(script: string): void {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+    timeout: 30_000,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+function installWindowsCodexHostTask(endpoint: string, codexBinary: string): void {
+  runWindowsPowerShell(windowsCodexHostInstallScript(endpoint, codexBinary, dataDir()));
+}
+
+function removeWindowsCodexHostTask(): void {
+  runWindowsPowerShell([
+    `Stop-ScheduledTask -TaskName ${psQuote(WINDOWS_CODEX_HOST_TASK)} -ErrorAction SilentlyContinue`,
+    `Unregister-ScheduledTask -TaskName ${psQuote(WINDOWS_CODEX_HOST_TASK)} -Confirm:$false -ErrorAction SilentlyContinue`,
+  ].join("\n"));
+}
+
+function codexProxySource(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const adjacent = path.join(here, "codex-proxy.mjs");
+  const development = path.resolve(here, "..", "dist", "codex-proxy.mjs");
+  const found = [adjacent, development].find((candidate) => fs.existsSync(candidate));
+  if (!found) throw new Error("Codex launcher proxy is missing; run `npm run build` or reinstall Surface");
+  return found;
+}
 
 export function createWindowsBridgeConfig(endpoint: string, codexBinary: string): CodexBridgeConfig {
   return {
@@ -482,6 +535,7 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
 
   if (sub === "status" || sub === undefined) {
     const managed = readCodexBridgeConfig(dataDir());
+    const launcherStatus = codexLauncherStatus(dataDir());
     const version = managed ? codexVersionForBin(managed.codex_bin) : codexVersion();
     const local = {
       codex_version: version ? version.join(".") : null,
@@ -492,6 +546,8 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
       managed_config: managed ? codexBridgeConfigPath(dataDir()) : null,
       desktop_environment: process.platform === "win32" ? windowsUserEnv(DESKTOP_WS_ENV) : null,
       hook_installed: hookInstalled(),
+      launcher_installed: launcherStatus.installed,
+      launcher_healthy: launcherStatus.healthy,
     };
     let service: any = null;
     let serviceError: string | null = null;
@@ -522,6 +578,7 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
       console.log(`daemon socket:  ${local.daemon_socket} ${local.daemon_socket_exists ? "(present)" : "(missing — run: surface codex setup)"}`);
     }
     console.log(`session hook:   ${local.hook_installed ? "installed" : "not installed — run: surface codex setup"}`);
+    console.log(`plain codex:    ${local.launcher_healthy ? "attached to Surface (use --no-surface to bypass)" : local.launcher_installed ? "launcher replaced or edited — rerun: surface codex setup" : "not attached — run: surface codex setup"}`);
     if (service) {
       console.log(`bridge:         ${service.connected ? `connected (codex ${service.daemon_version})` : "not connected yet (connects on first delivery)"}`);
       console.log(`deliveries:     ${service.deliveries_ok} ok, ${service.deliveries_failed} failed${service.last_error ? ` — last error: ${service.last_error}` : ""}`);
@@ -549,8 +606,14 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
         return;
       }
       try { await call("POST", "/codex/host/stop", {}); } catch {}
+      if (process.platform === "win32") {
+        try { removeWindowsCodexHostTask(); } catch {}
+      }
+      const launcher = removeCodexLauncher(dataDir());
       removeManagedDesktopBridge(existing);
       const { changed } = removeHook();
+      console.log(launcher.changed ? "Original Codex launcher restored." : "No Surface Codex launcher was installed.");
+      if (launcher.skipped.length) console.log(`Launcher changed since setup; left untouched: ${launcher.skipped.join(", ")}`);
       console.log(existing ? "Managed Codex Desktop bridge removed." : "No managed Codex Desktop bridge was configured.");
       console.log(changed ? "SessionStart hook removed." : "No Surface SessionStart hook to remove.");
       return;
@@ -582,9 +645,35 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
         return;
       }
 
+      try {
+        installWindowsCodexHostTask(endpoint, nativeBin);
+      } catch (err: any) {
+        if (existing) writeCodexBridgeConfig(dataDir(), existing);
+        else { try { fs.unlinkSync(codexBridgeConfigPath(dataDir())); } catch {} }
+        console.error(`could not install the hidden Codex host task: ${err?.stderr?.toString?.() || err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+
+      let launcher: { changed: boolean; launchers: string[] };
+      try {
+        launcher = installCodexLauncher({
+          dataDir: dataDir(),
+          launcherPath: process.env.SURFACE_CODEX_LAUNCHER,
+          proxySource: codexProxySource(),
+        });
+      } catch (err: any) {
+        if (existing) writeCodexBridgeConfig(dataDir(), existing);
+        else { try { fs.unlinkSync(codexBridgeConfigPath(dataDir())); } catch {} }
+        console.error(`could not attach the plain Codex CLI: ${err.message}`);
+        process.exitCode = 1;
+        return;
+      }
+
       let hook: { changed: boolean };
       try { hook = installHook(); }
       catch (err: any) {
+        if (launcher.changed) removeCodexLauncher(dataDir());
         try {
           if (existing) {
             writeCodexBridgeConfig(dataDir(), existing);
@@ -610,8 +699,11 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
       console.log(hook.changed
         ? `SessionStart hook installed in ${hooksJsonPath()}.`
         : "SessionStart hook already installed.");
-      console.log("Quit Codex Desktop completely, then run `surface codex launch` to open it with flowback.");
-      console.log("Normal Start-menu launches remain independent and can never fail because Surface is down.");
+      console.log(launcher.changed
+        ? `Plain codex attached through ${launcher.launchers.join(", ")}.`
+        : "Plain codex was already attached to Surface.");
+      console.log("Run `codex` normally. Use `codex --no-surface` for an intentionally independent session.");
+      console.log("Codex Desktop remains opt-in through `surface codex launch`; normal Start-menu launches are unchanged.");
       return;
     }
 
@@ -636,10 +728,25 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     }
     console.log(`app-server daemon: ${daemon.detail} (${daemonSocketPath()})`);
 
+    let launcher: { changed: boolean; launchers: string[] };
+    try {
+      launcher = installCodexLauncher({
+        dataDir: dataDir(),
+        launcherPath: process.env.SURFACE_CODEX_LAUNCHER,
+        proxySource: codexProxySource(),
+        remoteEndpoint: `unix://${daemonSocketPath()}`,
+      });
+    } catch (err: any) {
+      console.error(`could not attach the plain Codex CLI: ${err.message}`);
+      process.exitCode = 1;
+      return;
+    }
+
     let hook: { changed: boolean };
     try {
       hook = installHook();
     } catch (err: any) {
+      if (launcher.changed) removeCodexLauncher(dataDir());
       console.error(`could not update ${hooksJsonPath()}: ${err.message}`);
       process.exitCode = 1;
       return;
@@ -647,6 +754,9 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     console.log(hook.changed
       ? `SessionStart hook installed in ${hooksJsonPath()} — codex will ask you to trust it on its next start.`
       : "SessionStart hook already installed.");
+    console.log(launcher.changed
+      ? `Plain codex attached through ${launcher.launchers.join(", ")}.`
+      : "Plain codex was already attached to Surface.");
 
     console.log([
       "",
@@ -655,8 +765,7 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
       "session additionally needs per-project consent: set bindings.enabled=true in",
       "<project>/.surface/config.json (the agent asks you first — that is the contract).",
       "",
-      "Note: the daemon does not survive a reboot by itself. Re-run `surface codex setup`",
-      "or use `codex app-server daemon bootstrap` for a persistent install.",
+      "If the daemon is not running after a reboot, the launcher starts it on demand.",
     ].join("\n"));
     return;
   }

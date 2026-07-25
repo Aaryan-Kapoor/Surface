@@ -15,6 +15,7 @@ const suites = [
   "test:codex-bridge",
   "test:codex-desktop-attendance",
   "test:codex-desktop-safety",
+  "test:codex-launcher",
   "test:artifacts",
   "test:e2e",
 ];

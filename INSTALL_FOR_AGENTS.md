@@ -145,13 +145,19 @@ the tutorial:
 surface codex setup
 ```
 
-On Linux/macOS this enables the stock Codex app-server daemon. On Windows it
-also provisions a private Surface-owned Codex runtime and a detached loopback
-host. The user's global Codex install and environment are not replaced. After
-setup, quit Codex Desktop and run `surface codex launch`; the WebSocket endpoint
-is scoped to that one launched process, so a normal Start-menu launch cannot be
-broken by Surface being stopped. Verify with `surface codex status`; removal is
-`surface codex setup --remove` (quit Desktop first).
+Setup preserves the user's existing Codex launcher, then installs a reversible
+launcher interposer in the same command slot. From then on users type ordinary
+commands such as `codex` and `codex resume NAME`; interactive sessions attach to
+Surface automatically, while `codex exec`, login, updates, diagnostics, help,
+and version checks pass through unchanged. `codex --no-surface` bypasses the
+bridge for one interactive invocation.
+
+On Linux/macOS setup enables the stock Codex app-server daemon and starts it on
+demand after a reboot. On Windows it also provisions a private Surface-owned
+Codex runtime and a detached loopback host. Codex Desktop remains separately
+opt-in: quit it and run `surface codex launch`; normal Start-menu launches are
+unchanged. Verify with `surface codex status`; removal is `surface codex setup
+--remove` (quit Desktop first), which restores the original launcher bytes.
 
 This is optional because it downloads a Codex runtime on Windows. Ask before
 running it during a general Surface install. It is idempotent.

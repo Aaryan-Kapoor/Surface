@@ -4,6 +4,7 @@ import path from "node:path";
 import WebSocket from "ws";
 import { getDataDir } from "./paths.js";
 import { readCodexBridgeConfig, type CodexBridgeConfig } from "../shared/codexBridgeConfig.js";
+import { WINDOWS_CODEX_HOST_TASK } from "../shared/codexHostTask.js";
 
 export interface CodexManagedHostStatus {
   configured: boolean;
@@ -80,6 +81,33 @@ export async function ensureCodexManagedHost(): Promise<boolean> {
     return true;
   }
   reachable = false;
+
+  // Production Windows installs run the app-server beneath a headless conhost
+  // Scheduled Task. This prevents native descendants from creating visible
+  // console windows and keeps the host independent of Surface restarts.
+  if (process.platform === "win32" && process.env.SURFACE_CODEX_HOST_DIRECT !== "1") {
+    try {
+      execFileSync("schtasks.exe", ["/Run", "/TN", WINDOWS_CODEX_HOST_TASK], {
+        timeout: 5_000,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err: any) {
+      lastError = `hidden Codex host task is unavailable; rerun surface codex setup (${err?.message || err})`;
+      return false;
+    }
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (await endpointReachable(cfg.endpoint, 500)) {
+        reachable = true;
+        lastError = null;
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    lastError = "hidden Codex host task did not become ready within 10 seconds";
+    return false;
+  }
 
   stopping = false;
   fs.mkdirSync(path.join(getDataDir(), "logs"), { recursive: true });

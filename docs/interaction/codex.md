@@ -31,12 +31,11 @@ agent session — a paired device cannot point flowback at someone's session.
 surface codex setup
 ```
 
-does three things. The command is idempotent and selects the native path for
+does four things. The command is idempotent and selects the native path for
 the current OS:
 
 1. **Starts a shared codex app-server.** Linux and macOS use the stock Unix
-   daemon (`codex app-server daemon start`, idempotent); plain `codex`
-   auto-attaches to it. Windows uses a Surface-managed app-server on a random,
+   daemon (`codex app-server daemon start`, idempotent). Windows uses a Surface-managed app-server on a random,
    persisted loopback WebSocket port because upstream's daemon lifecycle is
    Unix-only. Surface installs a private current Codex runtime under its data
    directory, leaving the user's global CLI untouched. The host is detached
@@ -45,16 +44,23 @@ the current OS:
    persists `CODEX_APP_SERVER_WS_URL`: after quitting Desktop, `surface codex
    launch` first verifies the host and then applies the endpoint only to that
    Desktop process. Normal Start-menu launches remain independent of Surface.
-2. **Installs a `SessionStart` hook** (`surface codex hook` in
+2. **Attaches the existing `codex` launcher.** Setup records the original
+   target and exact launcher bytes, then replaces the existing command slot
+   (`codex`, plus npm's `.cmd`/`.ps1` siblings on Windows) with a small
+   interposer. Interactive commands receive the managed `--remote` endpoint;
+   non-interactive and management commands pass through unchanged. An explicit
+   `--remote` wins, and `--no-surface` bypasses attachment once. The interposer
+   invokes the recorded absolute target, never PATH, so it cannot recurse.
+3. **Installs a `SessionStart` hook** (`surface codex hook` in
    `~/.codex/hooks.json`, merged non-destructively) that registers each
    session's `{ session_id, pid, cwd, transcript_path }` with the Surface
    service. Codex asks the user to trust the hook on its next start.
-3. Prints the consent story (below).
+4. Prints the consent story (below).
 
 `surface codex status` shows both halves: local (codex version, daemon socket,
 managed endpoint/launch mode when applicable, hook) and service-side
 (bridge connectivity, host status, delivery counters). `surface codex setup
---remove` stops the managed host and removes only Surface's hook/config. It
+--remove` stops the managed host, restores launcher bytes, and removes only Surface's hook/config. It
 refuses while Codex Desktop is running. Setup also removes the exact stale
 user-environment value written by the early Windows prototype, but never
 touches an unrelated user-managed endpoint.

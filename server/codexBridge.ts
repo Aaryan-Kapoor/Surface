@@ -507,7 +507,7 @@ function execFileText(file: string, args: string[], timeout: number): Promise<st
   });
 }
 
-export async function windowsCodexDesktopConnected(endpoint: string): Promise<boolean> {
+export async function windowsCodexClientConnected(endpoint: string): Promise<boolean> {
   let url: URL;
   try { url = new URL(endpoint); } catch { return false; }
   const port = url.port || (url.protocol === "wss:" ? "443" : "80");
@@ -530,18 +530,18 @@ export async function windowsCodexDesktopConnected(endpoint: string): Promise<bo
     const rows = await Promise.all([...pids].map((pid) =>
       execFileText("tasklist.exe", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"], 1_000).catch(() => ""),
     ));
-    return rows.some((row) => /^"ChatGPT\.exe"\s*,/i.test(row.trim()));
+    return rows.some((row) => /^"(?:ChatGPT|codex)\.exe"\s*,/i.test(row.trim()));
   } catch {
     return false;
   }
 }
 
-async function codexDesktopConnected(endpoint: string): Promise<boolean> {
+async function codexClientConnected(endpoint: string): Promise<boolean> {
   if (desktopLivenessCache && desktopLivenessCache.endpoint === endpoint && Date.now() - desktopLivenessCache.at < 2_000) {
     return desktopLivenessCache.value;
   }
   if (process.platform !== "win32") return false;
-  const value = await windowsCodexDesktopConnected(endpoint);
+  const value = await windowsCodexClientConnected(endpoint);
   desktopLivenessCache = { at: Date.now(), endpoint, value };
   return value;
 }
@@ -719,11 +719,12 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
   // that state must keep wake semantics (consent + approval decline) forever
   // — including across service restarts, hence the persisted record.
   // In managed-WebSocket mode the hook is spawned by the shared app-server,
-  // so its ancestor pid describes the host, not the Desktop client. Use the
-  // actual Desktop process as the attendance signal; otherwise a host kept
-  // alive by Surface would make a disconnected thread look attended forever.
+  // so its ancestor pid describes the host, not the attached client. Use the
+  // actual Desktop or native CLI connection as the attendance signal;
+  // otherwise a host kept alive by Surface would make a disconnected thread
+  // look attended forever.
   const sessionIsOpen = managedWebsocketTransport()
-    ? !!session && await codexDesktopConnected(codexEndpoint())
+    ? !!session && await codexClientConnected(codexEndpoint())
     : !!session && sessionOpenInProcess(db, session);
   const attended = loaded && sessionIsOpen && !isBridgeResumed(db, threadId);
   if (!attended) {
