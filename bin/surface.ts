@@ -188,7 +188,7 @@ const COMMANDS: Record<string, CommandSpec> = {
   },
   codex: {
     help: CODEX_HELP,
-    flags: { json: BOOL, "remove-hook": BOOL },
+    flags: { json: BOOL, "remove-hook": BOOL, remove: BOOL },
     run: (ctx) => runCodex(ctx, call),
   },
   upgrade: {

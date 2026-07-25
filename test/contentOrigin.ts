@@ -132,7 +132,8 @@ async function main() {
     const squatter = net.createServer();
     await new Promise<void>((resolve) => squatter.listen(takenContentPort, "127.0.0.1", () => resolve()));
     const guardDataDir = tmpDir("surface-bindfail-");
-    const proc = spawn(path.join(REPO_ROOT, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
+    const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+    const proc = spawn(process.execPath, [tsxCli, "server/index.ts"], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,
@@ -161,7 +162,8 @@ async function main() {
     // must fail fast instead of booting into a fully de-privileged state.
     const samePort = await freePort(); // exits before any listen, so the value need only collide
     const guardDataDir = tmpDir("surface-guard-");
-    const proc = spawn(path.join(REPO_ROOT, "node_modules", ".bin", "tsx"), ["server/index.ts"], {
+    const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+    const proc = spawn(process.execPath, [tsxCli, "server/index.ts"], {
       cwd: REPO_ROOT,
       env: {
         ...process.env,

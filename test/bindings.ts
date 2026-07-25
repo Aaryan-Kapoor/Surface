@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { tokenizeCommand } from "../server/bindings.js";
 import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
 
 // End-to-end verification of the wake-binding revival path (the "tap a button
@@ -74,6 +75,16 @@ function test(name: string, fn: () => Promise<void>) {
 }
 
 async function main() {
+  assert.deepEqual(
+    tokenizeCommand('node "C:\\Users\\Example User\\capture.js" "C:\\Temp\\out.json"'),
+    ["node", "C:\\Users\\Example User\\capture.js", "C:\\Temp\\out.json"],
+    "tokenizer preserves quoted Windows paths",
+  );
+  assert.deepEqual(
+    tokenizeCommand('node "\\\\server\\share\\capture.js"'),
+    ["node", "\\\\server\\share\\capture.js"],
+    "tokenizer preserves UNC paths",
+  );
   const ports = await isolatedPorts();
   PORT = ports.port;
   BASE = `http://127.0.0.1:${PORT}`;

@@ -136,6 +136,32 @@ copy in your agent's instructions file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
 `.github/copilot-instructions.md`, Aider's `CONVENTIONS.md`), record the path
 in `notes`, and read `SKILL.md` from there on every session.
 
+## Optional — Codex flowback
+
+If the active harness is Codex, offer its one-command flowback setup before
+the tutorial:
+
+```bash
+surface codex setup
+```
+
+Setup preserves the user's existing Codex launcher, then installs a reversible
+launcher interposer in the same command slot. From then on users type ordinary
+commands such as `codex` and `codex resume NAME`; interactive sessions attach to
+Surface automatically, while `codex exec`, login, updates, diagnostics, help,
+and version checks pass through unchanged. `codex --no-surface` bypasses the
+bridge for one interactive invocation.
+
+On Linux/macOS setup enables the stock Codex app-server daemon and starts it on
+demand after a reboot. On Windows it also provisions a private Surface-owned
+Codex runtime and a detached loopback host. Codex Desktop remains separately
+opt-in: quit it and run `surface codex launch`; normal Start-menu launches are
+unchanged. Verify with `surface codex status`; removal is `surface codex setup
+--remove` (quit Desktop first), which restores the original launcher bytes.
+
+This is optional because it downloads a Codex runtime on Windows. Ask before
+running it during a general Surface install. It is idempotent.
+
 ## Step 3 — Tutorial
 
 Ask the user:

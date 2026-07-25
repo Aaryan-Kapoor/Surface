@@ -13,6 +13,20 @@ await build({
 
 chmodSync("dist/surface.mjs", 0o755);
 
+// Stable launcher interposer copied into ~/.surface by `surface codex setup`.
+// It is self-contained so a later Surface service outage or package move does
+// not leave the user's `codex` command pointing into a vanished node_modules.
+await build({
+  entryPoints: ["bin/codexProxy.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  banner: { js: "#!/usr/bin/env node" },
+  outfile: "dist/codex-proxy.mjs",
+});
+
+chmodSync("dist/codex-proxy.mjs", 0o755);
+
 // Server: bundles local TS only; npm packages (express, better-sqlite3, …) stay
 // external and resolve from the installed package's node_modules. better-sqlite3
 // is a native module and cannot be inlined.
