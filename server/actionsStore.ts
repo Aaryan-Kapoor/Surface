@@ -74,7 +74,11 @@ export function leaseCodexActions(
        WHERE id = ? AND surface_id = ? AND status = 'pending'`,
     );
     const record = db.prepare(
-      `INSERT INTO codex_action_deliveries (action_id, surface_id, thread_id) VALUES (?, ?, ?)`,
+      `INSERT INTO codex_action_deliveries (action_id, surface_id, thread_id) VALUES (?, ?, ?)
+       ON CONFLICT(action_id) DO UPDATE SET
+         surface_id = excluded.surface_id,
+         thread_id = excluded.thread_id,
+         turn_id = NULL`,
     );
     for (const id of actionIds) {
       if (reserve.run(id, surfaceId).changes === 0) continue;

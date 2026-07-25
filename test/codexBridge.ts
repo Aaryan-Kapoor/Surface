@@ -6,7 +6,12 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
-import { recoverCodexActions } from "../server/actionsStore.js";
+import {
+  leaseCodexActions,
+  recoverCodexActions,
+  restoreCodexActions,
+  setCodexDeliveryTurn,
+} from "../server/actionsStore.js";
 import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady, REPO_ROOT } from "./helpers.js";
 
 // The codex flowback layer (docs/interaction/codex.md), tested against a mock
@@ -685,6 +690,46 @@ async function main() {
     assert.equal(recoverCodexActions(testDb), 1, "one interrupted lease recovered");
     testDb.close();
     assert.equal(await pendingCount("cx-unregistered"), 1, "recovered action is pending again");
+  });
+
+  await test("a stale delivery record cannot abort a fresh pending lease", async () => {
+    const testDb = new Database(path.join(dataDir, "db.sqlite"));
+    const row = testDb.prepare(
+      `SELECT id FROM surface_actions WHERE surface_id = ? AND status = 'pending' LIMIT 1`,
+    ).get("cx-unregistered") as { id: string };
+    testDb.prepare(
+      `INSERT INTO codex_action_deliveries (action_id, surface_id, thread_id, turn_id)
+       VALUES (?, ?, ?, ?)`,
+    ).run(row.id, "stale-surface", "stale-thread", "stale-turn");
+
+    assert.deepEqual(
+      leaseCodexActions(testDb, "cx-unregistered", UNREGISTERED_THREAD, [row.id]),
+      [row.id],
+      "the pending action is leased even when its old delivery row remains",
+    );
+    const lease = testDb.prepare(
+      `SELECT surface_id, thread_id, turn_id FROM codex_action_deliveries WHERE action_id = ?`,
+    ).get(row.id) as { surface_id: string; thread_id: string; turn_id: string | null };
+    assert.deepEqual(lease, {
+      surface_id: "cx-unregistered",
+      thread_id: UNREGISTERED_THREAD,
+      turn_id: null,
+    }, "the stale delivery metadata is replaced");
+
+    setCodexDeliveryTurn(testDb, [row.id], "current-turn");
+    assert.deepEqual(
+      leaseCodexActions(testDb, "cx-unregistered", UNREGISTERED_THREAD, [row.id]),
+      [],
+      "an already-delivering action cannot be freshly re-leased",
+    );
+    assert.equal(
+      (testDb.prepare(`SELECT turn_id FROM codex_action_deliveries WHERE action_id = ?`).get(row.id) as { turn_id: string }).turn_id,
+      "current-turn",
+      "a rejected re-lease does not overwrite the active delivery record",
+    );
+    restoreCodexActions(testDb, [row.id]);
+    testDb.close();
+    assert.equal(await pendingCount("cx-unregistered"), 1, "the test lease is restored to the inbox");
   });
 
   await test("CLI stamps CODEX_THREAD_ID automatically on create", async () => {
