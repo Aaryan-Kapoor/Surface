@@ -43,6 +43,7 @@ class MockDaemon {
   activeResumes = 0;
   maxConcurrentResumes = 0;
   lastTurnIdByThread = new Map<string, string>();
+  turnStatusById = new Map<string, "inProgress" | "completed" | "failed" | "interrupted">();
   private nextServerRequestId = 1000;
 
   constructor(public sockPath: string) {
@@ -114,12 +115,22 @@ class MockDaemon {
         else finish();
         return;
       }
+      case "thread/read": {
+        const threadId = msg.params.threadId;
+        const turns = [...this.lastTurnIdByThread.entries()]
+          .filter(([, id]) => this.turnStatusById.has(id))
+          .filter(([id]) => id === threadId)
+          .map(([, id]) => ({ id, status: this.turnStatusById.get(id) }));
+        this.send(ws, { id: msg.id, result: { thread: { id: threadId, turns } } });
+        return;
+      }
       case "turn/start": {
         const threadId = msg.params.threadId;
         const text = msg.params.input?.[0]?.text || "";
         this.turnStarts.push({ threadId, text });
         const turnId = `turn-${this.turnStarts.length}`;
         this.lastTurnIdByThread.set(threadId, turnId);
+        this.turnStatusById.set(turnId, "inProgress");
         if (this.approvalBeforeStartResponse) {
           this.approvalBeforeStartResponse = false;
           this.requestApproval(threadId);
@@ -138,7 +149,14 @@ class MockDaemon {
 
   completeTurn(threadId: string, status: "completed" | "failed" | "interrupted" = "completed"): void {
     const turnId = this.lastTurnIdByThread.get(threadId) || "turn-done";
+    this.turnStatusById.set(turnId, status);
     this.broadcast("turn/completed", { threadId, turn: { id: turnId, status } });
+  }
+
+  completeTurnViaIdle(threadId: string, status: "completed" | "failed" | "interrupted" = "completed"): void {
+    const turnId = this.lastTurnIdByThread.get(threadId) || "turn-done";
+    this.turnStatusById.set(turnId, status);
+    this.broadcast("thread/status/changed", { threadId, status: { type: "idle" } });
   }
 
   close(): Promise<void> {
@@ -298,6 +316,22 @@ async function main() {
     daemon.completeTurn(LIVE_THREAD);
     daemon.autoCompleteTurns = true;
     await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "inbox drained");
+  });
+
+  await test("thread idle releases the delivered turn when app-server omits turn/completed", async () => {
+    daemon.autoCompleteTurns = false;
+    daemon.turnStarts = [];
+    const first = await api("POST", "/artifacts/cx-live/actions", { action: "idle-a", data: {} });
+    assert.equal(first.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "first idle-protocol turn/start");
+    const second = await api("POST", "/artifacts/cx-live/actions", { action: "idle-b", data: {} });
+    assert.equal(second.status, 201);
+    daemon.completeTurnViaIdle(LIVE_THREAD);
+    await waitFor(() => daemon.turnStarts.length === 2, 10000, "follow-up after thread idle");
+    assert.equal(batchOf(daemon.turnStarts[1]).actions[0].action, "idle-b");
+    daemon.completeTurnViaIdle(LIVE_THREAD);
+    daemon.autoCompleteTurns = true;
+    await waitFor(async () => (await pendingCount("cx-live")) === 0, 5000, "idle-protocol inbox drained");
   });
 
   await test("dead session with consent: resumed from disk, then woken", async () => {
