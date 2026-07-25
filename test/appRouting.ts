@@ -12,14 +12,31 @@ import vm from "node:vm";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appSrc = fs.readFileSync(path.join(__dirname, "..", "client", "app.js"), "utf8");
-const match = appSrc.match(/function surfaceFrameSrc[\s\S]*?\n\}/);
-if (!match) throw new Error("surfaceFrameSrc not found in client/app.js (did it move or gain inner braces?)");
+function extractFunction(name: string): string {
+  const match = appSrc.match(new RegExp(`function ${name}[\\s\\S]*?\\n\\}`));
+  if (!match) throw new Error(`${name} not found in client/app.js (did it move or gain inner braces?)`);
+  return match[0];
+}
 
 const sandbox: any = {};
 vm.createContext(sandbox);
-vm.runInContext(match[0] + "\nthis.surfaceFrameSrc = surfaceFrameSrc;", sandbox);
+vm.runInContext(
+  [
+    extractFunction("surfaceFrameSrc"),
+    extractFunction("versionSurfaceViewPath"),
+    extractFunction("shouldRenderSurfaceCreated"),
+    "this.surfaceFrameSrc = surfaceFrameSrc;",
+    "this.versionSurfaceViewPath = versionSurfaceViewPath;",
+    "this.shouldRenderSurfaceCreated = shouldRenderSurfaceCreated;",
+  ].join("\n"),
+  sandbox,
+);
 const surfaceFrameSrc: (device: boolean, origin: string, viewPath: string) => string | null =
   sandbox.surfaceFrameSrc;
+const versionSurfaceViewPath: (viewPath: string, version: string) => string =
+  sandbox.versionSurfaceViewPath;
+const shouldRenderSurfaceCreated: (routeView: string, hasGrid: boolean) => boolean =
+  sandbox.shouldRenderSurfaceCreated;
 
 function test(name: string, fn: () => void) {
   try { fn(); console.log(`  PASS  ${name}`); }
@@ -48,6 +65,28 @@ test("device surface loads from the content origin (never the app origin)", () =
 test("device surface with NO content origin fails closed (null → placeholder)", () => {
   // The one thing that must never happen: device JS rendered on the app origin.
   assert.equal(surfaceFrameSrc(true, "", "/artifacts/x/view"), null);
+});
+
+test("initial iframe URL is cache-busted by the artifact revision", () => {
+  assert.equal(
+    versionSurfaceViewPath("/artifacts/x/view", "2026-07-23 13:46:03"),
+    "/artifacts/x/view?v=2026-07-23%2013%3A46%3A03",
+  );
+  assert.equal(
+    versionSurfaceViewPath("/artifacts/x/view?preview=1", "revision-2"),
+    "/artifacts/x/view?preview=1&v=revision-2",
+  );
+});
+
+test("an unrelated surface_created event never rerenders an open detail view", () => {
+  assert.equal(shouldRenderSurfaceCreated("surface", false), false);
+  assert.equal(shouldRenderSurfaceCreated("grid", false), true);
+  assert.equal(shouldRenderSurfaceCreated("grid", true), false);
+});
+
+test("the PWA owns exactly one EventSource connection", () => {
+  const eventSources = appSrc.match(/new EventSource\(/g) || [];
+  assert.equal(eventSources.length, 1, "app.js must multiplex live events over its global stream");
 });
 
 console.log("\nsurfaceFrameSrc tests passed\n");

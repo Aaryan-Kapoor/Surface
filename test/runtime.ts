@@ -17,6 +17,8 @@ interface FetchCall { url: string; method: string; body: any }
 function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origin" | "cross-origin" } = {}) {
   const fetchCalls: FetchCall[] = [];
   const postMessages: any[] = [];
+  const eventSourceUrls: string[] = [];
+  let hostEventHandler: ((name: string, data: any) => void) | null = null;
 
   const fetchMock = (url: string, opts?: any) => {
     fetchCalls.push({
@@ -35,7 +37,7 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
   class EventSourceStub {
     onerror: any = null;
     addEventListener() {}
-    constructor(_url: string) {}
+    constructor(url: string) { eventSourceUrls.push(url); }
   }
 
   const documentStub: any = {
@@ -65,6 +67,10 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
     sandbox.window.parent = {
       location: { origin: "http://localhost" },
       postMessage: (msg: any) => { postMessages.push(msg); },
+      __surfaceHostSubscribe: (_surfaceId: string, handler: (name: string, data: any) => void) => {
+        hostEventHandler = handler;
+        return () => { hostEventHandler = null; };
+      },
     };
   } else {
     const crossParent: any = { postMessage: (msg: any) => { postMessages.push(msg); } };
@@ -78,7 +84,16 @@ function loadRuntime(cfg: { failActions?: boolean; parent?: "self" | "same-origi
   vm.createContext(sandbox);
   vm.runInContext(runtimeSrc, sandbox);
 
-  return { Surface: sandbox.window.Surface, fetchCalls, postMessages };
+  return {
+    Surface: sandbox.window.Surface,
+    fetchCalls,
+    postMessages,
+    eventSourceUrls,
+    emitHostEvent(name: string, data: any) {
+      if (!hostEventHandler) throw new Error("runtime did not subscribe to the host event stream");
+      hostEventHandler(name, data);
+    },
+  };
 }
 
 function test(name: string, fn: () => void | Promise<void>) {
@@ -194,6 +209,29 @@ await test("same-origin (system) parent → action posts DIRECT, never via the b
   assert.equal(posts[0].body.action, "tap");
   assert.deepEqual(plain(posts[0].body.data), { x: 1 });
   assert.equal(postMessages.length, 0, "it must NOT relay through the legacy bridge");
+});
+
+await test("same-origin PWA iframe reuses the parent stream instead of opening EventSource", async () => {
+  const { Surface, eventSourceUrls, emitHostEvent } = loadRuntime({ parent: "same-origin" });
+  const patches: any[] = [];
+  Surface.onState((patch: any) => patches.push(plain(patch)));
+
+  assert.deepEqual(eventSourceUrls, [], "embedded runtime must not spend another HTTP connection on SSE");
+  emitHostEvent("state_patch", {
+    id: "test-id",
+    patch: { coach: { ready: true } },
+    state_version: 1,
+  });
+
+  assert.deepEqual(plain(Surface.state), { coach: { ready: true } });
+  assert.deepEqual(patches, [{ coach: { ready: true } }]);
+});
+
+await test("standalone and cross-origin surfaces keep their own per-surface stream", () => {
+  const standalone = loadRuntime();
+  const crossOrigin = loadRuntime({ parent: "cross-origin" });
+  assert.deepEqual(standalone.eventSourceUrls, ["/artifacts/test-id/stream"]);
+  assert.deepEqual(crossOrigin.eventSourceUrls, ["/artifacts/test-id/stream"]);
 });
 
 console.log("\nRuntime tests passed\n");

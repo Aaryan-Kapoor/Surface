@@ -79,6 +79,7 @@ function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string)
   res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
   res.setHeader("ETag", `"${file.sha256}"`);
   if (contentType === "text/html") {
+    res.setHeader("Cache-Control", "no-cache");
     const bytes = injectSurfaceRuntime(readArtifactFileContent(file), artifactId);
     res.send(bytes);
     return;
@@ -559,6 +560,7 @@ artifactsRouter.get("/artifacts/:id/view", (req, res) => {
   if (preferred.mime === "text/html") {
     const queryStart = req.originalUrl.indexOf("?");
     const query = queryStart === -1 ? "" : req.originalUrl.slice(queryStart);
+    res.setHeader("Cache-Control", "no-cache");
     res.redirect(fileUrl + query);
     return;
   }
@@ -579,6 +581,7 @@ artifactsRouter.get("/artifacts/:id/view", (req, res) => {
         preview: isPreview,
       });
       res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache");
       res.send(injectSurfaceRuntime(Buffer.from(rendered.html, "utf8"), result.artifact.id));
       return;
     } catch (err: any) {
@@ -588,6 +591,7 @@ artifactsRouter.get("/artifacts/:id/view", (req, res) => {
   }
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache");
   res.send(renderArtifactShell({
     artifactId: result.artifact.id,
     title: result.artifact.title,
@@ -698,6 +702,7 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
       const charset = mime.startsWith("text/") || mime === "application/json" || mime === "image/svg+xml";
       res.setHeader("Content-Type", charset ? `${mime}; charset=utf-8` : mime);
       if (mime === "text/html") {
+        res.setHeader("Cache-Control", "no-cache");
         res.send(injectSurfaceRuntime(fs.readFileSync(realAbs), artifactId));
       } else {
         res.sendFile(realAbs);
