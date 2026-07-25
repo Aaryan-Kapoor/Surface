@@ -88,32 +88,58 @@
 
   var KNOWN_EVENTS = ["state_patch", "stream_append", "surface_updated", "agent_reply", "surface_exec"];
 
+  function receiveEvent(name, data, alreadyScoped) {
+    var targetId = data && (data.surface_id || data.id);
+    if (!alreadyScoped && targetId !== artifactId) return;
+
+    var cbs = eventListeners[name];
+    if (cbs && cbs.length) {
+      for (var i = 0; i < cbs.length; i++) {
+        try { cbs[i](data); } catch (err) { console.error("[surface.js] onEvent handler", err); }
+      }
+    }
+
+    if (name !== "state_patch" || !data) return;
+    if (typeof data.state_version === "number" && data.state_version !== version + 1) {
+      version = data.state_version;
+      hydrate();
+      return;
+    }
+    version = data.state_version || version + 1;
+    state = mergeInto(state, data.patch || {});
+    emit(data.patch || {});
+  }
+
   function connect() {
+    // A same-origin PWA iframe can reuse its parent's single global SSE stream.
+    // Cross-origin device content and standalone /view pages cannot access the
+    // trusted parent and retain their scoped surface stream.
+    try {
+      if (
+        window.parent !== window &&
+        window.parent.location.origin === location.origin &&
+        typeof window.parent.__surfaceHostSubscribe === "function"
+      ) {
+        var unsubscribe = window.parent.__surfaceHostSubscribe(
+          artifactId,
+          function (name, data) { receiveEvent(name, data, false); }
+        );
+        if (window.addEventListener) {
+          window.addEventListener("beforeunload", function () { unsubscribe(); }, { once: true });
+        }
+        return;
+      }
+    } catch (err) {
+      // Cross-origin parent: fall through to the content-plane stream.
+    }
+
     var sse = new EventSource("/artifacts/" + encodeURIComponent(artifactId) + "/stream");
     KNOWN_EVENTS.forEach(function (name) {
       sse.addEventListener(name, function (e) {
-        var cbs = eventListeners[name];
-        if (!cbs || !cbs.length) return;
         var data;
         try { data = JSON.parse(e.data); } catch (err) { data = e.data; }
-        for (var i = 0; i < cbs.length; i++) {
-          try { cbs[i](data); } catch (err) { console.error("[surface.js] onEvent handler", err); }
-        }
+        receiveEvent(name, data, true);
       });
-    });
-    sse.addEventListener("state_patch", function (e) {
-      var data;
-      try { data = JSON.parse(e.data); } catch (err) { return; }
-      if (!data || data.id !== artifactId) return;
-      // A version gap means we missed patches (reconnect); re-hydrate.
-      if (typeof data.state_version === "number" && data.state_version !== version + 1) {
-        version = data.state_version;
-        hydrate();
-        return;
-      }
-      version = data.state_version || version + 1;
-      state = mergeInto(state, data.patch || {});
-      emit(data.patch || {});
     });
     sse.onerror = function () { /* EventSource auto-reconnects */ };
   }

@@ -260,5 +260,6 @@ actionsRouter.post("/artifacts/:id/exec", (req, res) => {
     return;
   }
   broadcastToSurface(req.params.id, "surface_exec", { js });
+  broadcastGlobal("surface_exec", { surface_id: req.params.id, js });
   res.json({ executed: true, delivered: "unknown", note: "exec is delivered only to live same-origin surface iframes" });
 });
