@@ -454,13 +454,17 @@ const AGENT_STAMPED_PATHS = new Set(["/artifacts", "/artifacts/link", "/artifact
 async function call(method: string, pathname: string, body?: unknown): Promise<any> {
   const stampable =
     (method === "POST" && AGENT_STAMPED_PATHS.has(pathname)) ||
+    (method === "POST" && /^\/artifacts\/[^/]+\/touch$/.test(pathname)) ||
     // Updates re-stamp too: the session rewriting a surface becomes its
     // flowback target (PUT /artifacts/<id> only, not sub-resources).
     (method === "PUT" && /^\/artifacts\/[^/]+$/.test(pathname));
-  if (stampable && body && typeof body === "object") {
+  if (stampable) {
     const session = agentSessionFromEnv();
-    if (session && (body as Record<string, unknown>).agent_session === undefined) {
-      (body as Record<string, unknown>).agent_session = session;
+    if (session) {
+      if (!body || typeof body !== "object") body = {};
+      if ((body as Record<string, unknown>).agent_session === undefined) {
+        (body as Record<string, unknown>).agent_session = session;
+      }
     }
   }
   const headers: Record<string, string> = {};

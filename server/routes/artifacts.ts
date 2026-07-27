@@ -160,6 +160,7 @@ artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
     res.status(404).json({ error: "Artifact not found" });
     return;
   }
+  captureAgentLink(req, req.params.id);
   const artifact = getArtifact(getDb(), req.params.id);
   broadcastGlobal("surface_updated", cardPayload(req.params.id));
   broadcastToSurface(req.params.id, "surface_updated", {

@@ -921,6 +921,50 @@ async function main() {
     assert.equal(meta.agent, "codex", "display label defaults to the captured kind");
   });
 
+  await test("CLI touch re-stamps a linked artifact to the current session", async () => {
+    const linkedPath = path.join(projectRoot, "touch-retarget.html");
+    fs.writeFileSync(linkedPath, "<p>linked</p>");
+    const linked = await api("POST", "/artifacts/link", {
+      path: linkedPath,
+      title: "Touch retarget",
+      project_root: projectRoot,
+      open: false,
+      agent_session: { kind: "codex", session_id: LIVE_THREAD },
+    });
+    assert.equal(linked.status, 201);
+    const surfaceId = linked.json.artifact.id as string;
+
+    let testDb = new Database(path.join(dataDir, "db.sqlite"));
+    let link = testDb.prepare(`SELECT session_id FROM agent_links WHERE surface_id = ?`).get(surfaceId) as { session_id: string };
+    testDb.close();
+    assert.equal(link.session_id, LIVE_THREAD, "linked artifact initially targets its creating session");
+
+    const tsxCli = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+    const touched = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const child = spawn(process.execPath, [tsxCli, "bin/surface.ts", "touch", surfaceId], {
+        cwd: REPO_ROOT,
+        env: { ...process.env, SURFACE_URL: BASE, CODEX_THREAD_ID: CLI_THREAD },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (d) => { stderr += d; });
+      child.on("exit", (code) => resolve({ code, stderr }));
+    });
+    assert.equal(touched.code, 0, `CLI touch succeeded: ${touched.stderr}`);
+
+    testDb = new Database(path.join(dataDir, "db.sqlite"));
+    link = testDb.prepare(`SELECT session_id FROM agent_links WHERE surface_id = ?`).get(surfaceId) as { session_id: string };
+    testDb.close();
+    assert.equal(link.session_id, CLI_THREAD, "touch transfers flowback ownership to the editing session");
+
+    await sleep(300);
+    daemon.turnStarts = [];
+    const action = await api("POST", `/artifacts/${surfaceId}/actions`, { action: "after-touch", data: {} });
+    assert.equal(action.status, 201);
+    await waitFor(() => daemon.turnStarts.length === 1, 10000, "delivery to the touching session");
+    assert.equal(daemon.turnStarts[0].threadId, CLI_THREAD);
+  });
+
   await test("surface codex setup installs the hook non-destructively; --remove-hook removes only ours", async () => {
     const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "sfcx-home-"));
     // Pre-existing foreign hook that must survive untouched.
