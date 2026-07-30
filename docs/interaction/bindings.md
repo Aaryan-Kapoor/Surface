@@ -56,7 +56,7 @@ With 3 retries on a backoff schedule of 1s/5s/25s (the global fan-out is fire-an
 | Harness | Binding | Notes |
 |---|---|---|
 | **Claude Code** | `--run 'claude --resume <session-id> -p "Handle the Surface action batch on stdin."'` | `<session-id>` is the **creating session's id**, which the agent bakes into the command when it registers the binding (the harness exposes it, e.g. via hooks; Surface does no placeholder templating). Resuming maps the click back to the session with full context. Headless spawns consume usage — which is why the ladder prefers layer 1. |
-| **Codex** | `--run 'codex exec "Handle the Surface action batch on stdin."'` (resume variant where supported) | Same stdin contract. |
+| **Codex** | Usually none needed: the automatic flowback layer ([codex.md](codex.md)) resumes the creating thread by itself. Explicit fallback: `--run 'codex exec resume <thread-id> "Handle the Surface action batch on stdin."'` | An explicit binding outranks the automatic layer; `<thread-id>` is the creating session's `CODEX_THREAD_ID`. Same stdin contract. |
 | **OpenClaw** | `--webhook http://127.0.0.1:<port>/hooks/wake` | The easy case: OpenClaw already runs 24/7 with an HTTP gateway, so the webhook *is* the wake-up. No spawn, no usage cost. |
 | **Amp** | `--run 'amp -x "Handle the Surface action batch on stdin."'` | Starts a new headless Amp turn only when no waiter is connected. |
 | **Anything** | `--run './scripts/on-click.sh'` | A binding is just a command; cron jobs, tmux send-keys, notify-send all work. |

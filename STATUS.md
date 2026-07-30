@@ -7,7 +7,31 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
 - Artifacts are the only display content model: generated, presented, linked, templated, versioned, rolled back, and soft-deleted.
 - The PWA renders artifact cards, live previews, display slots, device presence, themes, and sandboxed artifact iframes.
 - `surface.js` provides state bindings, stream bindings, and `Surface.action()` for user-to-agent actions.
-- The delivery ladder routes actions through live waiters, consent-gated bindings, then the durable inbox.
+- The delivery ladder routes actions through live waiters, consent-gated bindings, the codex flowback layer, then the durable inbox.
+- Codex flowback (2026-07, `docs/interaction/codex.md`): surfaces remember the
+  codex thread that created them (`CODEX_THREAD_ID` captured by the CLI;
+  `CLAUDE_CODE_SESSION_ID` captured for future use). Actions are delivered
+  through the codex app-server daemon — live attached TUIs get an in-context
+  `turn/start` (waiter-equivalent, no consent), dead sessions get a
+  consent-gated `thread/resume`+wake (same `bindings.enabled` bit), sessions
+  open in an unreachable plain TUI are held in the inbox (pid registry via the
+  `surface codex setup` SessionStart hook). Surface never answers approvals
+  except to *decline* them on its own headless turns. Wire facts verified on
+  codex 0.144.1: WebSocket-over-unix-socket with permessage-deflate disabled,
+  `initialize` with `experimentalApi`, version-gated ≥ 0.144.0, `turn/start`
+  queues natively on busy threads, approvals broadcast to all clients.
+  SKILL.md deliberately untouched (benchmark-locked); agent-facing guidance
+  lives in docs + README until the next bench pass. Verified e2e with a real
+  daemon-attached codex TUI (gpt-5.6-luna): live click → native in-context
+  turn; dead `codex exec` session → headless resume + wake; `codex resume`
+  shows the whole exchange. Hardened after a two-reviewer pass (gpt-5.6-sol
+  `codex review` + independent Claude agent, 2026-07-15): bridge-resumed
+  threads persisted (`codex_bridge_threads`) so consent + approval-decline
+  survive restarts; per-turn (not per-thread) coalescing slots; shape-correct
+  approval denials per method family; failed/headlessly-interrupted turns
+  return their batch to the inbox; 60s daemon backoff; single delivery
+  channel per surface across bindings/codex; pid-reuse-safe liveness; bridge
+  disabled on Windows (control socket is unix-only upstream).
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
 - Content is served through a dedicated content origin when configured, with Host/Origin validation on the app plane.
 - Built-in templates include ask, stream, video, board, and doc. The report

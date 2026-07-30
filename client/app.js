@@ -1,10 +1,10 @@
 const app = document.getElementById("app");
 let surfaces = [];
 let globalSSE = null;
-let surfaceSSE = null;
 let currentSurfaceId = null;
 let displayConfig = {};
 let renderFailed = false;
+const surfaceHostSubscribers = new Map();
 // Display slots are artifacts (metadata.display_role) — ids resolved by the
 // server at GET /display/slots.
 let displaySlots = { renderer: null, home: null, overlay: null };
@@ -21,6 +21,52 @@ function surfaceFrameSrc(fromDevicePlane, contentOrigin, viewPath) {
   if (fromDevicePlane) return contentOrigin ? contentOrigin + viewPath : null;
   return viewPath;
 }
+
+function versionSurfaceViewPath(viewPath, version) {
+  const separator = viewPath.includes("?") ? "&" : "?";
+  return viewPath + separator + "v=" + encodeURIComponent(String(version));
+}
+
+function shouldRenderSurfaceCreated(routeView, hasGrid) {
+  return routeView === "grid" && !hasGrid;
+}
+
+function surfaceEventId(data) {
+  return data && (data.surface_id || data.id);
+}
+
+function publishSurfaceHostEvent(name, data) {
+  const id = surfaceEventId(data);
+  if (!id) return;
+  const subscribers = surfaceHostSubscribers.get(id);
+  if (!subscribers) return;
+  for (const subscriber of [...subscribers]) {
+    try {
+      subscriber(name, data);
+    } catch {
+      subscribers.delete(subscriber);
+    }
+  }
+  if (subscribers.size === 0) surfaceHostSubscribers.delete(id);
+}
+
+// Same-origin surface iframes share the PWA's global SSE stream. Cross-origin
+// device content cannot access this function and retains its own content-plane
+// stream, preserving the trust boundary while avoiding three app-origin
+// EventSource connections for every open Surface.
+window.__surfaceHostSubscribe = (surfaceId, subscriber) => {
+  if (typeof subscriber !== "function") return () => {};
+  let subscribers = surfaceHostSubscribers.get(surfaceId);
+  if (!subscribers) {
+    subscribers = new Set();
+    surfaceHostSubscribers.set(surfaceId, subscribers);
+  }
+  subscribers.add(subscriber);
+  return () => {
+    subscribers.delete(subscriber);
+    if (subscribers.size === 0) surfaceHostSubscribers.delete(surfaceId);
+  };
+};
 
 async function refreshSlots() {
   try {
@@ -996,7 +1042,6 @@ function labelForMime(mime) {
 // ── Grid View ──
 
 function renderGrid() {
-  if (surfaceSSE) { surfaceSSE.close(); surfaceSSE = null; }
   currentSurfaceId = null;
   resumeTheme();
 
@@ -1401,7 +1446,6 @@ function startRename(card, id) {
 // ── Surface View ──
 
 async function renderSurface(id) {
-  if (surfaceSSE) { surfaceSSE.close(); surfaceSSE = null; }
   currentSurfaceId = id;
   resumeTheme();
   if (!globalSSE || globalSSE.readyState === EventSource.CLOSED) {
@@ -1428,7 +1472,7 @@ async function renderSurface(id) {
       <div class="surface-nav-meta">
         ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span>` : ""}
         ${mimeLabel ? `<span class="surface-nav-meta-dot"></span>` : ""}
-        <span>${escapeHtml(timeAgo(artifact.updated_at))}</span>
+        <span data-surface-updated-at>${escapeHtml(timeAgo(artifact.updated_at))}</span>
         <span class="surface-nav-meta-dot"></span>
         <span class="surface-nav-live">live</span>
       </div>
@@ -1445,7 +1489,9 @@ async function renderSurface(id) {
   // the app origin. (docs/auth/trust-model.md)
   iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
   iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write");
-  const viewPath = data.view_url || `/artifacts/${id}/view`;
+  const rawViewPath = data.view_url || `/artifacts/${id}/view`;
+  const revision = artifact.updated_at || artifact.current_version_id || Date.now();
+  const viewPath = versionSurfaceViewPath(rawViewPath, revision);
   const meta = parseMetadata(artifact.metadata);
   const fromDevicePlane = meta && meta.author_plane === "device";
   const frameSrc = surfaceFrameSrc(fromDevicePlane, contentOrigin, viewPath);
@@ -1464,44 +1510,6 @@ async function renderSurface(id) {
   app.innerHTML = "";
   app.appendChild(view);
 
-  // SSE for live updates
-  surfaceSSE = new EventSource("/artifacts/" + id + "/stream");
-  surfaceSSE.addEventListener("surface_updated", (e) => {
-    const data = JSON.parse(e.data);
-    if (data.html || data.reload || data.version_id) {
-      iframe.src = iframe.src.split("?")[0] + "?v=" + Date.now();
-      // Visual cue: brief blur-fade on the iframe when the agent
-      // re-renders. Couples SSE to motion.
-      iframe.classList.remove("refreshing");
-      void iframe.offsetWidth;
-      iframe.classList.add("refreshing");
-    }
-    if (data.title) {
-      const titleEl = view.querySelector(".surface-nav-title");
-      if (titleEl) titleEl.textContent = data.title;
-    }
-    if (data.updated_at) {
-      const metaEl = view.querySelector(".surface-nav-meta");
-      if (metaEl) {
-        const tsSpan = metaEl.querySelectorAll("span")[mimeLabel ? 2 : 0];
-        if (tsSpan) tsSpan.textContent = timeAgo(data.updated_at);
-      }
-    }
-  });
-  surfaceSSE.addEventListener("agent_reply", (e) => {
-    const data = JSON.parse(e.data);
-    showToast(data.text);
-  });
-  surfaceSSE.addEventListener("surface_exec", (e) => {
-    const data = JSON.parse(e.data);
-    if (iframe.contentWindow && data.js) {
-      try {
-        iframe.contentWindow.eval(data.js);
-      } catch (err) {
-        console.error("[surface_exec]", err);
-      }
-    }
-  });
 }
 
 // ── Global SSE ──
@@ -1570,15 +1578,30 @@ function connectGlobalSSE() {
       if (gv) gv.classList.add("has-cards");
       // Update the count meta in the header.
       updateGridMeta();
-    } else {
+    } else if (shouldRenderSurfaceCreated(getRoute().view, false)) {
       render();
     }
   });
 
   globalSSE.addEventListener("surface_updated", (e) => {
     const data = JSON.parse(e.data);
+    publishSurfaceHostEvent("surface_updated", data);
     pulseSpace();
     maybeRefreshSlots(data);
+    if (data.id === currentSurfaceId) {
+      const iframe = document.querySelector("iframe.surface-frame");
+      if (iframe) {
+        const base = iframe.src.split("?")[0];
+        iframe.src = versionSurfaceViewPath(base, data.updated_at || Date.now());
+        iframe.classList.remove("refreshing");
+        void iframe.offsetWidth;
+        iframe.classList.add("refreshing");
+      }
+      const titleEl = document.querySelector(".surface-nav-title");
+      if (titleEl && data.title) titleEl.textContent = data.title;
+      const tsSpan = document.querySelector("[data-surface-updated-at]");
+      if (tsSpan && data.updated_at) tsSpan.textContent = timeAgo(data.updated_at);
+    }
     const idx = surfaces.findIndex((s) => s.id === data.id);
     // A flip to metadata.hidden = true (e.g. via `surface clear-demos`) is the
     // signal to remove the card from view without deleting the artifact.
@@ -1646,6 +1669,33 @@ function connectGlobalSSE() {
     }
   });
 
+  globalSSE.addEventListener("state_patch", (e) => {
+    publishSurfaceHostEvent("state_patch", JSON.parse(e.data));
+  });
+
+  globalSSE.addEventListener("stream_append", (e) => {
+    publishSurfaceHostEvent("stream_append", JSON.parse(e.data));
+  });
+
+  globalSSE.addEventListener("agent_reply", (e) => {
+    const data = JSON.parse(e.data);
+    publishSurfaceHostEvent("agent_reply", data);
+    if (data.surface_id === currentSurfaceId) showToast(data.text);
+  });
+
+  globalSSE.addEventListener("surface_exec", (e) => {
+    const data = JSON.parse(e.data);
+    publishSurfaceHostEvent("surface_exec", data);
+    if (data.surface_id !== currentSurfaceId || !data.js) return;
+    const iframe = document.querySelector("iframe.surface-frame");
+    if (!iframe || !iframe.contentWindow) return;
+    try {
+      iframe.contentWindow.eval(data.js);
+    } catch (err) {
+      console.error("[surface_exec]", err);
+    }
+  });
+
   globalSSE.addEventListener("surface_deleted", (e) => {
     const data = JSON.parse(e.data);
     pulseSpace();
@@ -1698,6 +1748,14 @@ function connectGlobalSSE() {
     const d = JSON.parse(e.data);
     if (!d.surface_id) return;
     setCardHandling(d.surface_id, d.status === "running");
+  });
+
+  // Codex flowback narration: a delivered batch shows the same "⟳ handling…"
+  // indicator as a running binding, cleared when the turn ends or is held.
+  globalSSE.addEventListener("codex_bridge_status", (e) => {
+    const d = JSON.parse(e.data);
+    if (!d.surface_id) return;
+    setCardHandling(d.surface_id, d.state === "delivered_live" || d.state === "delivered_wake");
   });
 
   globalSSE.addEventListener("thumb_ready", (e) => {

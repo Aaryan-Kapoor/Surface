@@ -4,6 +4,23 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- New Codex flowback bridge (`docs/interaction/codex.md`): surfaces created
+  from a Codex session remember their thread (`CODEX_THREAD_ID`, captured
+  automatically by the CLI) and the delivery ladder gains a layer between
+  bindings and the inbox — clicks land as native turns in the live Codex TUI
+  via the codex app-server daemon, and consent-gated headless wakes revive
+  dead threads in place (the exchange shows up in `codex resume`). One-time
+  `surface codex setup` starts the daemon and installs a SessionStart hook;
+  `surface codex status` reports both halves. Surface never grants approvals:
+  requests on bridge-woken turns are declined shape-correctly per method,
+  everything else is left to the user's own client. Failed (and headlessly
+  interrupted) handling turns return their batch to the inbox. Windows: the
+  layer is a clean no-op (the codex control socket is unix-only).
+- Artifact creation now records the creating agent session
+  (`CODEX_THREAD_ID`/`CLAUDE_CODE_SESSION_ID` from the shell env) and defaults
+  the `metadata.agent` display label to `codex`/`claude` when `--agent` is not
+  given — surfaces created by agents are now labeled without extra flags.
+
 - New `surface upgrade`: one command that updates `surface-display` to the
   latest npm release (global installs; dev/local installs get advice instead),
   refreshes the canonical skill copy plus every recorded skill link, and

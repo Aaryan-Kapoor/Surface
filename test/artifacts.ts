@@ -62,6 +62,11 @@ async function main() {
   assert(html.artifact.id === htmlId, "HTML artifact ID mismatch");
   assert(html.version.version === 1, "HTML artifact should start at version 1");
   assert(html.artifact.project_root === "/tmp/fake-project", "project_root not stamped on create");
+  const htmlFile = await req()("GET", `/artifacts/${htmlId}/files/index.html`);
+  assert(
+    htmlFile.headers.get("cache-control") === "no-cache",
+    `HTML surface responses must revalidate (got ${htmlFile.headers.get("cache-control")})`,
+  );
 
   const md = await api("POST", "/artifacts", {
     id: mdId,
@@ -173,6 +178,11 @@ async function main() {
 
     const singleBytes = await api("GET", `/artifacts/${single.artifact.id}/files/single.html`);
     assert(singleBytes.includes("linked-single"), "Single-file link did not serve bytes");
+    const linkedHtml = await req()("GET", `/artifacts/${single.artifact.id}/files/single.html`);
+    assert(
+      linkedHtml.headers.get("cache-control") === "no-cache",
+      `Linked HTML must revalidate (got ${linkedHtml.headers.get("cache-control")})`,
+    );
     const singleViewRedirect = await req()("GET", `/artifacts/${single.artifact.id}/view?v=touch-test`);
     assert(singleViewRedirect.status === 302, `HTML view should redirect to file route (got ${singleViewRedirect.status})`);
     assert(

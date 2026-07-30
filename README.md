@@ -191,7 +191,7 @@ and `surface sync` reconstitutes everything on a fresh clone
 The hard problem isn't pushing pixels — it's that **agent lifetimes are
 shorter than surface lifetimes**. You tap "regenerate report" at 11pm; the
 session that built it ended at 5. Surface resolves every action down a
-three-layer ladder ([docs](docs/interaction/delivery-ladder.md)):
+layered ladder ([docs](docs/interaction/delivery-ladder.md)):
 
 1. **Live action terminal** — a backgrounded `surface wait --follow` prints
    one JSON line per click, forever, and the harness's background watchdog
@@ -199,10 +199,15 @@ three-layer ladder ([docs](docs/interaction/delivery-ladder.md)):
    connected the card shows **● listening** — free, instant, the default.
    (One-shot `surface wait` exits with the first action instead.)
 2. **Binding** — nobody listening? Surface spawns the registered command
-   (`claude -p --resume …`, `codex exec`, a webhook into a daemon) with the
+   (`claude -p --resume …`, a webhook into a daemon) with the
    pending-action batch on stdin. Argv-safe (never a shell), single-flight,
    rapid clicks coalesced into one batch. Opt-in, once per project.
-3. **Inbox** — otherwise the action stays pending, badges the card, and is
+3. **Codex flowback** — surfaces made by a Codex session remember their
+   thread (`CODEX_THREAD_ID`, captured automatically). After a one-time
+   `surface codex setup`, clicks land as native turns in the live Codex
+   TUI, and consent-gated wakes revive dead threads in place — the exchange
+   is right there in `codex resume` ([docs](docs/interaction/codex.md)).
+4. **Inbox** — otherwise the action stays pending, badges the card, and is
    drained by `surface actions` at the next session start.
 
 ## Yours, all the way down
