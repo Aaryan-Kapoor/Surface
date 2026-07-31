@@ -4,6 +4,8 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+## 0.2.3 - 2026-07-31
+
 - New Codex flowback bridge (`docs/interaction/codex.md`): surfaces created
   from a Codex session remember their thread (`CODEX_THREAD_ID`, captured
   automatically by the CLI) and the delivery ladder gains a layer between
