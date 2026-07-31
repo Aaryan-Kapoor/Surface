@@ -304,6 +304,29 @@ export function startClaimReaper(): void {
   reaper.unref();
 }
 
+// Grace is per action, not per batch. One action's timer firing must not drag a
+// newer sibling into the batch: with two clicks four seconds apart, the first
+// timer would otherwise hand the binding an action that had only had one second
+// of its own five. An action is claimable when no waiter is eligible for it at
+// all, or when its own grace window has passed.
+function graceElapsed(
+  db: ReturnType<typeof getDb>,
+  surfaceId: string,
+  projectRoot: string | null,
+  names: string[] | undefined,
+): string[] {
+  const cutoff = Date.now() - WAITER_GRACE_MS;
+  return getPendingActions(db, surfaceId)
+    .filter((a) => !names || names.includes(a.action))
+    .filter((a) => {
+      if (!hasEligibleWaiter({ surfaceId, projectRoot, action: a.action })) return true;
+      // SQLite stamps `datetime('now')` as UTC without a zone marker.
+      const createdMs = Date.parse(`${a.created_at.replace(" ", "T")}Z`);
+      return !Number.isFinite(createdMs) || createdMs <= cutoff;
+    })
+    .map((a) => a.id);
+}
+
 async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<void> {
   inFlight.add(surfaceId);
   // Identifies this run as the claimant, so a failed run releases exactly the
@@ -322,6 +345,7 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
     claims = claimActionsForBinding(db, {
       surfaceId,
       actionNames: claimableNames(bindings),
+      actionIds: graceElapsed(db, surfaceId, artifact.project_root, claimableNames(bindings)),
       bindingRunId,
     });
     if (!claims.length) return;

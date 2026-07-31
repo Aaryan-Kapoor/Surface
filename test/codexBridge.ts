@@ -308,6 +308,16 @@ function batchOf(turn: TurnStartCall): any {
   return JSON.parse(m![1]);
 }
 
+// The mock codex daemon listens on a unix domain socket at a filesystem path.
+// Windows has no equivalent there (it needs a \.\pipe\ name), so `listen`
+// fails with EACCES and the suite cannot start. Skip explicitly rather than
+// fail: this is a harness limitation, not a product defect, and until the test
+// runner was fixed it was hidden behind a Windows-wide false PASS.
+if (process.platform === "win32") {
+  console.log("SKIP test:codex-bridge - the mock daemon needs a unix domain socket (unsupported on Windows)");
+  process.exit(0);
+}
+
 async function main() {
   const ports = await isolatedPorts();
   PORT = ports.port;

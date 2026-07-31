@@ -207,6 +207,50 @@ async function main() {
     await waitFor(async () => !(await listening(id)), 5000, "waiter to disconnect");
   });
 
+  // Grace is per action, not per batch. An older action's fallback timer must
+  // not drag a newer sibling into the batch before that sibling has had its own
+  // five seconds — otherwise a second click four seconds later effectively gets
+  // one second of first refusal.
+  await test("a newer action keeps its own grace when an older one's timer fires", async () => {
+    const ac = new AbortController();
+    const streamPromise = fetch(`${BASE}/stream?wait_for_surface=${id}`, { signal: ac.signal }).catch(() => {});
+    try {
+      await waitFor(() => listening(id), 5000, "waiter to register");
+      fs.rmSync(captureOut, { force: true });
+
+      await api("POST", `/artifacts/${id}/actions`, { action: "wake", data: { seq: "old" } });
+      await sleep(4000);
+      const younger = await api("POST", `/artifacts/${id}/actions`, { action: "wake", data: { seq: "young" } });
+      assert.equal(younger.status, 201);
+
+      // Wait for the batch that carries the matured action specifically — the
+      // capture file may already hold an earlier dispatch — then check the
+      // younger one was left behind. Read it at that moment: once the younger
+      // action's own grace elapses, a later run may legitimately include it.
+      const seqsIn = () => {
+        if (!fs.existsSync(captureOut)) return null;
+        try {
+          const batch = JSON.parse(JSON.parse(fs.readFileSync(captureOut, "utf8")).stdin);
+          return (batch.actions as any[]).map((a) => a.data?.seq);
+        } catch { return null; }
+      };
+      await waitFor(
+        () => Promise.resolve(!!seqsIn()?.includes("old")),
+        20000,
+        "binding to fire for the older action",
+      );
+      const seqs = seqsIn()!;
+      assert.ok(
+        !seqs.includes("young"),
+        `an action still inside its own grace window was swept into the batch: ${JSON.stringify(seqs)}`,
+      );
+    } finally {
+      ac.abort();
+      await streamPromise;
+    }
+    await waitFor(async () => !(await listening(id)), 5000, "waiter to disconnect");
+  });
+
   console.log("\nWake-binding tests passed\n");
 }
 

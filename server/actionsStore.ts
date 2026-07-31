@@ -199,7 +199,7 @@ export function completeClaim(
 // `actionNames` undefined means the binding's pattern is "*".
 export function claimActionsForBinding(
   db: Database.Database,
-  params: { surfaceId: string; actionNames?: string[]; bindingRunId: string },
+  params: { surfaceId: string; actionNames?: string[]; actionIds?: string[]; bindingRunId: string },
 ): BindingClaim[] {
   const take = db.prepare(
     `UPDATE surface_actions
@@ -209,7 +209,11 @@ export function claimActionsForBinding(
   );
   return db.transaction((): BindingClaim[] => {
     const candidates = getPendingActions(db, params.surfaceId).filter(
-      (a) => !params.actionNames || params.actionNames.includes(a.action),
+      (a) => (!params.actionNames || params.actionNames.includes(a.action)) &&
+        // An explicit id list is the caller's eligibility decision (e.g. an
+        // action whose own waiter grace has not elapsed yet must not be swept
+        // into an older action's batch).
+        (!params.actionIds || params.actionIds.includes(a.id)),
     );
     const claims: BindingClaim[] = [];
     for (const candidate of candidates) {
