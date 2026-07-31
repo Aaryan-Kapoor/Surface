@@ -84,21 +84,28 @@ displayRouter.get("/stream", (req: Request, res: Response) => {
   const forProject = asString(q.wait_for_project);
   const forAll = q.wait_for_all === "1" || q.wait_for_all === "true";
 
-  // A pre-claim CLI registers with the old `wait_for` param and acks on delivery
-  // without a claim token, so it silently consumes actions that claim-respecting
-  // waiters would have shared. The server cannot tell that ack apart from a
-  // legitimate `surface ack`, so warn loudly instead: the symptom (a click that
-  // reaches nobody) is otherwise impossible to attribute.
-  if (typeof q.wait_for === "string" && q.wait_for) {
-    warnLegacyWaiter();
-  }
+  // Legacy `?wait_for=<id|*>` still registers. It is a shipped contract — every
+  // deployed CLI and the codex layer's waiter-precedence check depend on it —
+  // and making it a silent no-op meant a waiter that looked connected was
+  // invisible to the ladder, so nothing suppressed anything. Such a client acks
+  // without a claim token, which the server cannot tell apart from a legitimate
+  // `surface ack`, so it registers but also warns.
+  const legacy = asString(q.wait_for);
+  if (legacy) warnLegacyWaiter();
+  const legacyScope: WaiterScope | null = !legacy
+    ? null
+    : legacy === "*"
+      ? { kind: "all", value: null }
+      : legacy.startsWith("project:")
+        ? { kind: "project", value: legacy.slice("project:".length) }
+        : { kind: "surface", value: legacy };
 
   const supplied = [forSurface, forProject, forAll ? "all" : null].filter(Boolean);
   if (supplied.length > 1) {
     res.status(400).json({ error: "invalid_request", message: "supply exactly one wait_for_* scope" });
     return;
   }
-  if (supplied.length === 1 && req.auth?.role !== "system") {
+  if ((supplied.length === 1 || legacyScope) && req.auth?.role !== "system") {
     // A paired display may click, but it may never register as a handler —
     // taking work is an agent-plane capability (docs/auth/trust-model.md).
     res.status(403).json({ error: "waiter_registration_requires_system" });
@@ -111,7 +118,7 @@ displayRouter.get("/stream", (req: Request, res: Response) => {
       ? { kind: "project", value: forProject }
       : forAll
         ? { kind: "all", value: null }
-        : null;
+        : legacyScope;
   const waiter: WaiterRegistration | null = scope
     ? { scope, action: asString(q.wait_action) }
     : null;

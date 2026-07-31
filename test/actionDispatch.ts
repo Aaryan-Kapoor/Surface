@@ -386,6 +386,36 @@ try {
     await api("POST", `/actions/${id}/ack`, {});
   });
 
+  // `?wait_for=` is the pre-claim registration param. Deployed CLIs still send
+  // it, and the codex layer's waiter-precedence check depends on the resulting
+  // registration being visible. Turning it into a no-op made a connected waiter
+  // invisible to the ladder, so nothing suppressed anything.
+  await test("a legacy ?wait_for= connection still registers as a waiter", async () => {
+    const ac = new AbortController();
+    const streamed = fetch(`${BASE}/stream?wait_for=dispatch-a`, { signal: ac.signal }).catch(() => {});
+    try {
+      await waitForListening("dispatch-a", true, 8000);
+    } finally {
+      ac.abort();
+      await streamed;
+    }
+    await waitForListening("dispatch-a", false, 8000);
+  });
+
+  // A bare `surface wait` is project-scoped, so any consumer asking "is a waiter
+  // covering this surface?" must supply the surface's project root — otherwise
+  // the default waiter is invisible and a second channel delivers on top of it.
+  await test("a project-scoped waiter counts as listening on its project's surfaces", async () => {
+    const w = spawnWaiter("proj", ["--follow", "--project", projectA], BASE);
+    try {
+      await waitForListening("dispatch-a", true, 12000);
+    } finally {
+      killWaiters();
+    }
+    await waitForListening("dispatch-a", false, 8000);
+    void w;
+  });
+
   if (failures.length) {
     throw new Error(`actionDispatch: ${failures.length} failing case(s): ${failures.join(", ")}`);
   }
