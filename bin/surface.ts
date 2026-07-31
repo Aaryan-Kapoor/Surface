@@ -1,4 +1,5 @@
 import { execFileSync } from "child_process";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -65,6 +66,7 @@ Commands:
   status                     Get display state
   stream [--id <id>]         Tail SSE events as JSONL until interrupted
   wait [--id <id>]           Block until a matching surface action, then exit 0
+                             (this project only; --all for every project)
                              (--follow: never exit; print one JSON line per action)
   pair                       Create a one-time pairing URL for a new device
   devices [revoke <name>]    List paired displays / revoke one by name
@@ -152,7 +154,7 @@ const COMMANDS: Record<string, CommandSpec> = {
   ].join("\n"), { clear: BOOL }),
   status: command("surface status"),
   stream: command("surface stream [--id <surface-id>] [--timeout <seconds>]", { id: STR, timeout: NUM }),
-  wait: command("surface wait [--id <surface-id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow] [--heartbeat <seconds>]   (--follow keeps listening forever: one compact JSON line per action, acked as delivered; --timeout becomes a lifetime cap)", { id: STR, action: STR, event: STR, timeout: NUM, "no-ack": BOOL, follow: BOOL, heartbeat: NUM }),
+  wait: command("surface wait [--id <surface-id>] [--action <name>] [--project <root>|--all] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow] [--heartbeat <seconds>]   (scoped to the current project unless --id/--project/--all; --follow keeps listening forever: one compact JSON line per action, claimed on delivery; --timeout becomes a lifetime cap)", { id: STR, action: STR, project: STR, all: BOOL, event: STR, timeout: NUM, "no-ack": BOOL, follow: BOOL, heartbeat: NUM }),
   pair: command("surface pair [--name <device-name>] [--base-url <url>] [--hosted-url <url>] [--ttl 5m] [--json] [--no-qr]", { name: STR, label: STR, "base-url": STR, "hosted-url": STR, ttl: DUR, json: BOOL, "no-qr": BOOL }),
   devices: command("surface devices [revoke <name-or-id>]", { json: BOOL }),
   auth: command([
@@ -558,16 +560,36 @@ async function waitForAction(opts: {
   wantEvent?: string;
   timeoutSec?: number;
   autoAck?: boolean;
-  // Follow mode: emit every matching action (one call per action) and keep
-  // listening instead of resolving on the first match. The connection stays
-  // registered as the layer-1 waiter the whole time.
-  onAction?: (action: any) => void;
+  // Delivery scope. Without --id a waiter takes work for one project (the git
+  // root it was started in); --all restores machine-wide consumption.
+  projectRoot?: string | null;
+  all?: boolean;
+  // Performs the actual stdout write. Delivery is only completed with the server
+  // after this resolves, so an action is never recorded as handed over before it
+  // has actually left the process.
+  emit: (action: any) => Promise<void>;
+  // Follow mode: keep listening after each action instead of resolving.
+  follow?: boolean;
 }): Promise<{ action?: any; timedOut?: boolean }> {
   const wantEvent = opts.wantEvent || "surface_action";
   const autoAck = opts.autoAck !== false;
-  // With --no-ack handled actions stay in the pending inbox, so the
-  // reconnect re-drain would emit them again without this.
+  // A CLAIMING waiter takes work: it claims each action and prints only what it
+  // won. An OBSERVING waiter (--no-ack, or --event on something other than
+  // surface_action) prints everything and takes nothing — so it also stays out
+  // of the waiter registry, because a connection that will never handle the work
+  // must not hold back something that would.
+  const claiming = autoAck && wantEvent === "surface_action";
+  const projectScoped = claiming && !opts.surfaceId && !opts.all && !!opts.projectRoot;
+  // Assigned by the server on the waiter_registered event. Every claim quotes it
+  // so the server can verify the claimant is a live waiter whose registered
+  // scope actually covers the action.
+  let clientId: string | null = null;
+  // Actions we have a final answer about: emitted, or provably someone else's. A
+  // claim that failed in transit is deliberately NOT recorded, so a later poll
+  // retries instead of silently skipping work nobody took.
   const seen = new Set<string>();
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   const normalizeData = (d: unknown) => {
     if (typeof d === "string") {
@@ -583,68 +605,141 @@ async function waitForAction(opts: {
     const sid = a.surface_id !== undefined ? a.surface_id : a.id;
     if (opts.surfaceId && sid !== opts.surfaceId) return false;
     if (opts.wantAction && a.action !== opts.wantAction) return false;
+    // Live events carry project_root; inbox reads are already server-filtered.
+    if (projectScoped && a.project_root !== undefined && a.project_root !== opts.projectRoot) return false;
     return true;
   };
 
-  const finalize = async (action: any) => {
-    if (autoAck && action.id && wantEvent === "surface_action") {
-      try { await call("POST", `/actions/${encodeURIComponent(action.id)}/ack`); } catch {}
+  const shape = (action: any) => ({
+    id: action.id,
+    surface_id: action.surface_id,
+    surface_title: action.surface_title,
+    action: action.action,
+    data: normalizeData(action.data),
+    created_at: action.created_at,
+  });
+
+  // Phase 1 of the delivery handshake. "lost" means another handler definitively
+  // owns it; "unknown" means we could not find out, so we must not consume it.
+  const claim = async (actionId: string, token: string): Promise<"won" | "lost" | "unknown"> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await call("POST", `/actions/${encodeURIComponent(actionId)}/claim`, { token, client_id: clientId });
+        return "won";
+      } catch (err: any) {
+        const status = err?.status;
+        const code = err?.body?.error;
+        // "lost" must mean somebody else genuinely owns it. `waiter_not_live`
+        // and `claim_expired` say only that OUR registration went stale — the
+        // action is still unhandled, so treating those as lost would mark it
+        // seen and skip it forever.
+        if (status === 404 || code === "already_claimed" || code === "already_handled") return "lost";
+        await sleep(200 * (attempt + 1)); // same token, so retrying is idempotent
+      }
     }
-    return {
-      id: action.id,
-      surface_id: action.surface_id,
-      surface_title: action.surface_title,
-      action: action.action,
-      data: normalizeData(action.data),
-      created_at: action.created_at,
-    };
+    return "unknown";
   };
 
-  // Oldest-pending-first: drain the inbox before listening live, so an action
-  // that arrived while no waiter was connected is never skipped.
+  // Phase 2: the line is out. Retried with the same token, because a lost
+  // response here would otherwise strand a delivery that actually happened.
+  const complete = async (actionId: string, token: string): Promise<void> => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await call("POST", `/actions/${encodeURIComponent(actionId)}/ack`, { token });
+        return;
+      } catch (err: any) {
+        if (err?.status === 404 || err?.status === 409) return;
+        await sleep(200 * (attempt + 1));
+      }
+    }
+  };
+
+  // Claim → write → complete. Returns the emitted action, or null if this waiter
+  // did not win it.
+  const deliver = async (raw: any): Promise<any | null> => {
+    if (!isMatch(raw)) return null;
+    if (raw?.id && seen.has(raw.id)) return null;
+
+    if (!claiming) {
+      if (raw?.id) seen.add(raw.id);
+      const shaped = shape(raw);
+      await opts.emit(shaped);
+      return shaped;
+    }
+    if (!raw?.id || !clientId) return null;
+
+    const token = randomUUID();
+    const outcome = await claim(raw.id, token);
+    if (outcome === "lost") { seen.add(raw.id); return null; }
+    if (outcome === "unknown") return null; // leave it for a later poll
+    seen.add(raw.id);
+
+    const shaped = shape(raw);
+    await opts.emit(shaped);
+    await complete(raw.id, token);
+    return shaped;
+  };
+
+  // Oldest-pending-first: drain the inbox so an action that arrived while no
+  // waiter was connected is never skipped. Runs only once registered, because a
+  // claim needs a live client_id.
   const pollPending = async (): Promise<any | null> => {
     if (wantEvent !== "surface_action") return null;
+    if (claiming && !clientId) return null;
     try {
-      const path = opts.surfaceId ? `/artifacts/${encodeURIComponent(opts.surfaceId)}/actions` : `/actions`;
+      const base = opts.surfaceId
+        ? `/artifacts/${encodeURIComponent(opts.surfaceId)}/actions`
+        : "/actions";
+      const path = projectScoped
+        ? `${base}?project=${encodeURIComponent(opts.projectRoot!)}`
+        : base;
       const pending = (await call("GET", path)) as any[];
       for (const a of pending) {
-        if (!isMatch(a) || (a.id && seen.has(a.id))) continue;
-        if (a.id) seen.add(a.id);
-        if (opts.onAction) opts.onAction(await finalize(a));
-        else return finalize(a);
+        const delivered = await deliver(a);
+        if (delivered && !opts.follow) return delivered;
       }
     } catch {}
     return null;
   };
 
+  const streamUrl = (): string => {
+    if (!claiming) return `${BASE}/stream`;
+    const params = new URLSearchParams();
+    if (opts.surfaceId) params.set("wait_for_surface", opts.surfaceId);
+    else if (opts.all) params.set("wait_for_all", "1");
+    else params.set("wait_for_project", String(opts.projectRoot));
+    if (opts.wantAction) params.set("wait_action", opts.wantAction);
+    return `${BASE}/stream?${params.toString()}`;
+  };
+
   const work = (async () => {
-    const pending = await pollPending();
-    if (pending) return pending;
     let backoff = 1000;
     while (true) {
       // Always listen on the global stream — per-surface streams don't carry
-      // surface_action events. Filtering happens in isMatch(). wait_for
-      // registers this connection as a layer-1 waiter so bindings stay
-      // suppressed while we're alive.
-      const url = `${BASE}/stream?wait_for=${encodeURIComponent(opts.surfaceId || "*")}`;
+      // surface_action events. Filtering happens in isMatch().
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
       let res: Response;
       try {
-        res = await fetch(url, { headers });
+        res = await fetch(streamUrl(), { headers });
       } catch {
-        await new Promise((r) => setTimeout(r, backoff));
+        await sleep(backoff);
         backoff = Math.min(backoff * 2, 30000);
         continue;
       }
       if (!res.ok || !res.body) {
-        await new Promise((r) => setTimeout(r, backoff));
+        await sleep(backoff);
         backoff = Math.min(backoff * 2, 30000);
         continue;
       }
       backoff = 1000;
-      const justMissed = await pollPending();
-      if (justMissed) return justMissed;
+      clientId = null;
+      // An observer never registers, so it has no identity to wait for and can
+      // drain immediately.
+      if (!claiming) {
+        const justMissed = await pollPending();
+        if (justMissed && !opts.follow) return justMissed;
+      }
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -669,21 +764,31 @@ async function waitForAction(opts: {
           const line = buf.slice(0, nl).replace(/\r$/, "");
           buf = buf.slice(nl + 1);
           if (line === "") {
-            if (lines.length > 0 && evt === wantEvent) {
+            if (lines.length > 0) {
               let parsed: any;
               try { parsed = JSON.parse(lines.join("\n")); } catch { parsed = lines.join("\n"); }
-              if (wantEvent === "surface_action") {
-                if (isMatch(parsed) && !(parsed?.id && seen.has(parsed.id))) {
-                  if (parsed?.id) seen.add(parsed.id);
-                  if (opts.onAction) opts.onAction(await finalize(parsed));
-                  else return finalize(parsed);
+              if (evt === "waiter_registered" && parsed?.client_id) {
+                // Registered: we have an identity and may claim. Drain the
+                // backlog before handling anything live.
+                clientId = String(parsed.client_id);
+                const justMissed = await pollPending();
+                if (justMissed && !opts.follow) return justMissed;
+              } else if (evt === "actions_available") {
+                // A claim elsewhere was released; something may be takeable now.
+                const freed = await pollPending();
+                if (freed && !opts.follow) return freed;
+              } else if (evt === wantEvent) {
+                if (wantEvent === "surface_action") {
+                  const delivered = await deliver(parsed);
+                  if (delivered && !opts.follow) return delivered;
+                } else if (isMatch(parsed)) {
+                  // Non-action events (state_patch, stream_append, …): the
+                  // payload is the event itself — no claim envelope, and no
+                  // dedup (their `id` is the surface id, which repeats every
+                  // event).
+                  await opts.emit(parsed);
+                  if (!opts.follow) return { ...parsed };
                 }
-              } else if (isMatch(parsed)) {
-                // Non-action events (state_patch, stream_append, …): the
-                // payload is the event itself — no ack envelope, and no dedup
-                // (their `id` is the surface id, which repeats every event).
-                if (opts.onAction) opts.onAction(parsed);
-                else return { ...parsed };
               }
             }
             evt = "message";
@@ -697,9 +802,12 @@ async function waitForAction(opts: {
           }
         }
       }
-      // Reconnect: re-poll pending actions to catch anything during the gap.
-      const missed = await pollPending();
-      if (missed) return missed;
+      // The connection is gone, so our registration is too: drop the identity
+      // before anything else runs. Claiming with a dead client_id returns
+      // `waiter_not_live`, and a drain here would burn through the backlog
+      // failing every claim. Re-registration on the next connect triggers the
+      // real drain.
+      clientId = null;
     }
   })();
 
@@ -816,7 +924,12 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         return;
       }
 
-      const result = await waitForAction({ surfaceId, wantAction: "answer", timeoutSec });
+      // `ask --wait` prints its own richer payload below (the server-stamped
+      // answer record), so the handoff here is the claim itself — there is no
+      // separate line to flush before completing it.
+      const result = await waitForAction({
+        surfaceId, wantAction: "answer", timeoutSec, emit: async () => {},
+      });
       if (result.timedOut) {
         // Expire the card so stale questions can't be answered later.
         try { await call("PATCH", `/artifacts/${encodeURIComponent(surfaceId)}/state`, { status: "expired" }); } catch {}
@@ -1306,13 +1419,28 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         beat.unref();
       }
 
+      // Scope. A bare `wait` now consumes only its own project's actions: it used
+      // to consume every action on the machine, so one click woke every agent
+      // session on the box. --all restores that, --project targets another root.
+      const all = flags.all === true;
+      const projectRoot = typeof flags.project === "string" ? flags.project : resolveProjectRoot();
+
+      // Delivery is completed only after the bytes are actually out, so the
+      // write is part of the handshake rather than something that happens after
+      // the server has been told the handoff succeeded.
+      const writeOut = (text: string) =>
+        new Promise<void>((resolve, reject) => {
+          process.stdout.write(text, (err) => (err ? reject(err) : resolve()));
+        });
+
       if (flags.follow === true) {
         installLifetimeGuards(timeoutSec);
         // The persistent action terminal: one compact JSON line per action,
         // forever. Built for harness watchdogs that pattern-match stdout.
         const result = await waitForAction({
-          surfaceId, wantAction, wantEvent, timeoutSec, autoAck,
-          onAction: (a) => process.stdout.write(JSON.stringify(a) + "\n"),
+          surfaceId, wantAction, wantEvent, timeoutSec, autoAck, all, projectRoot,
+          follow: true,
+          emit: (a) => writeOut(JSON.stringify(a) + "\n"),
         });
         // Only resolves when --timeout was given and elapsed (a lifetime cap).
         if (result.timedOut) {
@@ -1322,12 +1450,14 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         return;
       }
 
-      const result = await waitForAction({ surfaceId, wantAction, wantEvent, timeoutSec, autoAck });
+      const result = await waitForAction({
+        surfaceId, wantAction, wantEvent, timeoutSec, autoAck, all, projectRoot,
+        emit: (a) => writeOut(JSON.stringify(a, null, 2) + "\n"),
+      });
       if (result.timedOut) {
         console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
         process.exit(3);
       }
-      console.log(JSON.stringify(result.action, null, 2));
       process.exit(0);
     }
 

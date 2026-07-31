@@ -1,7 +1,7 @@
 # Actions & the Inbox
 
 **Status:** Shipped (2026-06)
-**Code:** `server/routes/actions.ts`, `server/actionsStore.ts` (`surface_actions`, `cleanupActions`), `client/app.js` (legacy postMessage bridge, badges), `bin/surface.ts` (`actions`, `ack`, `wait`)
+**Code:** `server/routes/actions.ts`, `server/actionsStore.ts` (`surface_actions`, claim state machine, `cleanupActions`), `client/app.js` (legacy postMessage bridge, badges), `bin/surface.ts` (`actions`, `ack`, `wait`)
 
 An **action** is a user interaction flowing back to agents: a button click, a form submit, an answer to an [`ask`](../templates/ask.md). Actions are the return half of Surface's core loop, and the inbox is what makes them durable — a click must never be lost just because no agent was running when it happened.
 
@@ -10,7 +10,17 @@ An **action** is a user interaction flowing back to agents: a button click, a fo
 1. Artifact HTML calls the injected runtime's `Surface.action(name, data)`; the legacy `surface_action` postMessage bridge remains only for older surfaces.
 2. The runtime posts to `POST /artifacts/:id/actions`, which inserts a `pending` row in `surface_actions`, broadcasts a `surface_action` SSE event, optionally fires the webhook fan-out, and runs the [delivery ladder](delivery-ladder.md).
 3. Agents consume by polling (`surface actions [<id>]`), blocking (`surface wait`), bindings, or webhook. Reading the inbox is **system-plane only** — a paired device must never drain it.
-4. `POST /actions/:id/ack` marks a row `handled` (stamping `handled_at`) and broadcasts `actions_acked` so card badges update live.
+4. A handler **claims** the row before acting on it (`POST /actions/:id/claim`), then `POST /actions/:id/ack` marks it `handled` (stamping `handled_at`). Both broadcast `actions_acked` so card badges update live.
+
+### Statuses
+
+| Status | Meaning | Deliverable? | Badges the card? |
+|---|---|---|---|
+| `pending` | nobody has taken it | yes | yes |
+| `claimed` | one handler owns it and is mid-handoff or mid-run | **no** | yes |
+| `handled` | Surface completed the handoff to that handler | no | no |
+
+The badge counts `pending + claimed` — the user's click is not finished just because an agent picked it up — while delivery draws only from `pending`, so an action can never be handed to two handlers. A claim that is never completed returns to `pending` (waiter disconnect, a 30s handoff deadline, a failed binding, or a server restart), so nothing is consumed without being delivered. Full state machine: [delivery-ladder.md](delivery-ladder.md).
 
 ### Wait returns oldest-pending first
 
@@ -18,9 +28,10 @@ An **action** is a user interaction flowing back to agents: a button click, a fo
 
 ### Ack semantics
 
-- **Implicit on delivery** via `surface wait` (the consumer received it; disable with `--no-ack`).
-- **Explicit** `surface ack <action-id>` for the polling path.
-- Binding deliveries ack the whole delivered batch after a successful run ([delivery-ladder.md](delivery-ladder.md)); a failed run leaves it pending.
+- **Implicit on delivery** via `surface wait`, as the second half of the claim: the CLI claims the action, flushes the JSON line, then acks with the same claim token. `--no-ack` turns the waiter into a pure observer that claims nothing and leaves the row pending for a real handler.
+- **Explicit** `surface ack <action-id>` for the polling path — an agent declaring a click done. This one is unfenced by design; it is the override, not part of the handshake.
+- Binding deliveries claim their batch *before* spawning and ack it after a successful run ([delivery-ladder.md](delivery-ladder.md)); a failed run releases it back to `pending`.
+- Ack is idempotent for the same claim token, so retrying after an ambiguous network result cannot strand a delivery that actually happened.
 
 ### Inbox surfacing
 
@@ -41,6 +52,7 @@ A sweep at boot and hourly (`cleanupActions`, `server/actionsStore.ts`; schedule
   "surface_id": "deploy-panel",
   "surface_title": "Deploy panel",
   "action": "approve",
+  "project_root": "/home/me/myapp",
   "data": { "choice": "ship" },
   "status": "pending",
   "created_at": "2026-06-10T18:21:04Z"

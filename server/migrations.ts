@@ -170,6 +170,7 @@ const migrations: Migration[] = [
   },
   {
     version: 12,
+
     description: "agent session capture (codex flowback)",
     up: (db) => {
       db.exec(`
@@ -238,6 +239,43 @@ const migrations: Migration[] = [
         );
         CREATE INDEX IF NOT EXISTS idx_codex_action_deliveries_surface
         ON codex_action_deliveries(surface_id);
+      `);
+    },
+  },
+  {
+    version: 14,
+    description: "action claims: single-claimant delivery",
+    up: (db) => {
+      // An action is a work item, not a notification: exactly one handler may
+      // take it (docs/interaction/delivery-ladder.md). These columns record who
+      // owns the current delivery claim, and the token doubles as an
+      // idempotency key so a retried claim after a lost response cannot strand
+      // the action.
+      //
+      // `claimed` is a third status between pending and handled, for handlers
+      // whose work outlives the claim (a command binding may run for its full
+      // 600s timeout). The card badge counts pending + claimed, because the
+      // user's click is not done until the work is; delivery only draws from
+      // pending.
+      const columns = db.pragma("table_info(surface_actions)") as Array<{ name: string }>;
+      const add = (name: string, ddl: string) => {
+        if (!columns.some((column) => column.name === name)) db.exec(ddl);
+      };
+      add("claimed_at", `ALTER TABLE surface_actions ADD COLUMN claimed_at TEXT`);
+      add("claim_deadline_at", `ALTER TABLE surface_actions ADD COLUMN claim_deadline_at TEXT`);
+      add("claim_token", `ALTER TABLE surface_actions ADD COLUMN claim_token TEXT`);
+      add("claim_owner_kind", `ALTER TABLE surface_actions ADD COLUMN claim_owner_kind TEXT`);
+      add("claim_owner_id", `ALTER TABLE surface_actions ADD COLUMN claim_owner_id TEXT`);
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_surface_actions_claim_token
+        ON surface_actions(claim_token) WHERE claim_token IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_surface_actions_claim_owner
+        ON surface_actions(claim_owner_kind, claim_owner_id, status);
+
+        CREATE INDEX IF NOT EXISTS idx_surface_actions_claim_deadline
+        ON surface_actions(status, claim_deadline_at)
+        WHERE status = 'claimed' AND claim_deadline_at IS NOT NULL;
       `);
     },
   },

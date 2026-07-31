@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { initDb, getDb, closeDb } from "./db.js";
-import { cleanupActions, recoverCodexActions } from "./actionsStore.js";
+import { cleanupActions, recoverCodexActions, releaseOrphanedClaims } from "./actionsStore.js";
 import { router } from "./routes/index.js";
 import { gcArtifactStorage, listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
@@ -19,6 +19,7 @@ import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thu
 import { closeSSEClients } from "./sse.js";
 import { closeCodexBridge } from "./codexBridge.js";
 import { setupFileLogging } from "./logging.js";
+import { startClaimReaper } from "./bindings.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -103,6 +104,17 @@ if (recoveredCodexActions) {
 }
 gcArtifactStorage(getDb());
 
+// A `claimed` action belongs to a binding run that was in flight. No binding run
+// can survive a restart, so every claim we find at boot is an orphan — put them
+// back on the queue. Deterministic recovery, rather than guessing a lease
+// duration and hoping the handler finishes inside it.
+try {
+  const released = releaseOrphanedClaims(getDb());
+  if (released) console.log(`[actions] released ${released} orphaned claim(s) from the previous run`);
+} catch (err) {
+  console.error("[actions] orphan claim release failed:", err);
+}
+
 // Inbox TTL sweep: at boot and hourly.
 const sweep = () => {
   try {
@@ -114,6 +126,10 @@ const sweep = () => {
 };
 sweep();
 setInterval(sweep, 60 * 60 * 1000).unref();
+
+// Backstop for a waiter that claimed an action and then wedged with its socket
+// still open, where no close event will ever arrive.
+startClaimReaper();
 
 const app = express();
 

@@ -271,9 +271,11 @@ export function listArtifactCards(
           LIMIT 1
         ) AS first_file_path,
         (
+          -- The user's click is outstanding until the work is done, so an action
+          -- a binding has claimed still badges the card (docs/interaction/actions-inbox.md).
           SELECT count(*)
           FROM surface_actions sa
-          WHERE sa.surface_id = a.id AND sa.status = 'pending'
+          WHERE sa.surface_id = a.id AND sa.status IN ('pending', 'claimed')
         ) AS pending_actions
        FROM artifacts a
        WHERE ${where.join(" AND ")}
@@ -319,9 +321,11 @@ export function getArtifactCard(db: Database.Database, id: string): SurfaceCard 
           LIMIT 1
         ) AS first_file_path,
         (
+          -- The user's click is outstanding until the work is done, so an action
+          -- a binding has claimed still badges the card (docs/interaction/actions-inbox.md).
           SELECT count(*)
           FROM surface_actions sa
-          WHERE sa.surface_id = a.id AND sa.status = 'pending'
+          WHERE sa.surface_id = a.id AND sa.status IN ('pending', 'claimed')
         ) AS pending_actions
        FROM artifacts a
        WHERE a.deleted_at IS NULL AND a.id = ?`,

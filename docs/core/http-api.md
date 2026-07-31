@@ -82,9 +82,10 @@ See [../auth/device-pairing.md](../auth/device-pairing.md) and [../auth/trust-mo
 | Method | Path | Body | Response | Notes |
 | --- | --- | --- | --- | --- |
 | POST | `/artifacts/:id/actions` | `{action, data?}` | action row (201) | user→agent; broadcasts `surface_action`, fans out webhook, runs the [delivery ladder](../interaction/delivery-ladder.md); `ask` answers flip state server-side |
-| GET | `/actions` | — | pending actions (all) | **system** — the inbox belongs to the agent plane |
-| GET | `/artifacts/:id/actions` | — | pending actions (one surface) | **system** |
-| POST | `/actions/:id/ack` | — | `{acknowledged:true}` | **system**; broadcasts `actions_acked` with the new pending count |
+| GET | `/actions` | `?project=<root>` | pending actions | **system** — the inbox belongs to the agent plane. `?project` narrows to one repo; actions on surfaces with no `project_root` are excluded from a project-scoped read |
+| GET | `/artifacts/:id/actions` | — | pending actions (one surface) | **system**. Only `pending` rows: a `claimed` action belongs to a handler that is mid-handoff or mid-run |
+| POST | `/actions/:id/claim` | `{token, client_id}` | `{claimed, replayed, claim, action}` | **system**; atomic take for one waiter. `400` invalid, `403` `waiter_not_eligible`, `404` `action_not_found`, `409` `waiter_not_live` / `already_claimed` / `already_handled` / `claim_expired`. Re-claiming with the same `token` replays (`replayed:true`) rather than conflicting, so a lost response cannot strand the action |
+| POST | `/actions/:id/ack` | `{token?}` | `{acknowledged:true, replayed}` | **system**; with `token` completes that delivery claim, without one it is the manual "I handled this" (and settles a binding's `claimed` row). `409` when the action exists but is no longer the caller's. Broadcasts `actions_acked` |
 | POST | `/artifacts/:id/bindings` | `{action_pattern?, run?\|webhook_url?, cwd?, timeout_seconds?}` | binding (201) | **system** |
 | GET | `/artifacts/:id/bindings` | — | bindings for one surface | **system** |
 | GET | `/bindings` | — | all bindings | **system** |

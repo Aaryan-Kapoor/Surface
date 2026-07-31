@@ -17,7 +17,7 @@ Both write SSE headers (`text/event-stream`, `Cache-Control: no-cache`, `Connect
 Two properties of global connections matter for delivery:
 
 - **Device targets** — every connection is tagged with a delivery target: `local` for the agent plane, or the device session id for paired displays. Directed events (`surface open … --on phone`) are delivered only to that target's connections (`broadcastGlobal`'s `onlyTarget`); untargeted broadcasts reach everyone. See [../display/devices.md](../display/devices.md).
-- **Waiters** — `GET /stream?wait_for=<surface-id|*>` (system plane only) registers the connection as a layer-1 waiter: while it lives, bindings for that surface are suppressed and the card shows "● listening". Connect/disconnect emit `waiter_status`. See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
+- **Waiters** — `GET /stream?wait_for_surface=<id>` / `?wait_for_project=<root>` / `?wait_for_all=1` (system plane only, exactly one) registers the connection as a layer-1 waiter and replies on that connection with a private `waiter_registered` event carrying its `client_id`. `?wait_action=<name>` narrows eligibility. While it lives the card shows "● listening" and it gets a five-second first refusal on eligible actions. Connect/disconnect emit `waiter_status`. Observers omit `wait_for_*` entirely. See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
 
 ## Event types
 
@@ -28,8 +28,9 @@ Two properties of global connections matter for delivery:
 | `surface_created` | a surface **card** (`cardPayload`, includes hidden rows), or `{id}` | artifact created — `POST /artifacts`, `/artifacts/present-file`, `/artifacts/link`, board first-write |
 | `surface_updated` | a surface card (`cardPayload`) | artifact updated, touched, rolled back, or PUT |
 | `surface_deleted` | `{id}` | artifact deleted |
-| `surface_action` | `{id, surface_id, surface_title, action, data, created_at}` | a surface posts a user action — `POST /artifacts/:id/actions` |
-| `actions_acked` | `{surface_id, pending_actions}` | an action is acked (`POST /actions/:id/ack`) or a binding run handles a batch — lets cards drop their badge live |
+| `surface_action` | `{id, surface_id, surface_title, project_root, action, data, status, created_at}` | a surface posts a user action — `POST /artifacts/:id/actions`. Broadcast to everyone; only one listener may *claim* it (see [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md)) |
+| `actions_acked` | `{surface_id, pending_actions}` | an action is claimed, acked, or released — lets cards update their badge live. `pending_actions` counts pending **plus** claimed-but-unfinished |
+| `actions_available` | `{surface_id, action_id}` | a claim was released (waiter disconnect, expired handoff, failed binding) and the action is takeable again |
 | `state_patch` | `{id, patch, state_version}` | `PATCH /artifacts/:id/state`, or the server-side `ask` answered flip |
 | `stream_append` | `{id, seq, chunk:{kind, content, created_at}}` | `POST /artifacts/:id/append` (one event per chunk) |
 | `binding_status` | `{surface_id, binding_id, status, error}` | a binding run starts/finishes (`running` → `ok`/`failed`; `server/bindings.ts`) |

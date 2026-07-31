@@ -163,18 +163,43 @@ async function main() {
     assert.equal(await pendingCount(id), 1, "non-matching action waits in the inbox");
   });
 
-  await test("a live waiter SUPPRESSES the binding (layer-1 wins)", async () => {
+  await test("a live waiter gets first refusal (layer-1 wins during the grace window)", async () => {
     const ac = new AbortController();
     // Hold an SSE waiter open; the connection itself registers the waiter.
-    const streamPromise = fetch(`${BASE}/stream?wait_for=${id}`, { signal: ac.signal }).catch(() => {});
+    const streamPromise = fetch(`${BASE}/stream?wait_for_surface=${id}`, { signal: ac.signal }).catch(() => {});
     try {
       await waitFor(() => listening(id), 5000, "waiter to register");
       fs.rmSync(captureOut, { force: true });
       const act = await api("POST", `/artifacts/${id}/actions`, { action: "wake", data: { foo: 2 } });
       assert.equal(act.status, 201);
       await sleep(1200);
-      assert.ok(!fs.existsSync(captureOut), "binding suppressed while a waiter is connected");
+      assert.ok(!fs.existsSync(captureOut), "binding held back while a waiter may still claim");
       assert.equal(await pendingCount(id), 2, "both unhandled actions remain pending");
+    } finally {
+      ac.abort();
+      await streamPromise;
+    }
+    await waitFor(async () => !(await listening(id)), 5000, "waiter to disconnect");
+  });
+
+  // The waiter above never claimed anything — it was a socket, not a working
+  // handler. Waiter presence used to suppress bindings *indefinitely*, so one
+  // wedged or idle connection silently disabled wake bindings for good. First
+  // refusal is now bounded.
+  await test("a connected waiter that never claims does not black-hole the binding", async () => {
+    const ac = new AbortController();
+    const streamPromise = fetch(`${BASE}/stream?wait_for_surface=${id}`, { signal: ac.signal }).catch(() => {});
+    try {
+      await waitFor(() => listening(id), 5000, "waiter to register");
+      fs.rmSync(captureOut, { force: true });
+      const act = await api("POST", `/artifacts/${id}/actions`, { action: "wake", data: { foo: 3 } });
+      assert.equal(act.status, 201);
+      // Grace is 5s; give the fallback room to fire and the command to run.
+      await waitFor(
+        () => Promise.resolve(fs.existsSync(captureOut)),
+        20000,
+        "binding to fire after the waiter-first grace period elapsed",
+      );
     } finally {
       ac.abort();
       await streamPromise;

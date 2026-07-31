@@ -104,7 +104,7 @@ artifactsRouter.get("/artifacts", (req, res) => {
   const agent = typeof req.query.agent === "string" && req.query.agent ? req.query.agent : undefined;
   res.json(listArtifactCards(getDb(), { includeHidden, project, agent }).map((card) => ({
     ...card,
-    listening: hasWaiter(card.id),
+    listening: hasWaiter(card.id, undefined, card.project_root),
   })));
 });
 
