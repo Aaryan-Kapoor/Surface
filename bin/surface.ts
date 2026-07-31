@@ -621,7 +621,7 @@ async function waitForAction(opts: {
 
   // Phase 1 of the delivery handshake. "lost" means another handler definitively
   // owns it; "unknown" means we could not find out, so we must not consume it.
-  const claim = async (actionId: string, token: string): Promise<"won" | "lost" | "unknown"> => {
+  const claim = async (actionId: string, token: string): Promise<"won" | "gone" | "taken" | "unknown"> => {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await call("POST", `/actions/${encodeURIComponent(actionId)}/claim`, { token, client_id: clientId });
@@ -629,11 +629,16 @@ async function waitForAction(opts: {
       } catch (err: any) {
         const status = err?.status;
         const code = err?.body?.error;
-        // "lost" must mean somebody else genuinely owns it. `waiter_not_live`
-        // and `claim_expired` say only that OUR registration went stale — the
-        // action is still unhandled, so treating those as lost would mark it
-        // seen and skip it forever.
-        if (status === 404 || code === "already_claimed" || code === "already_handled") return "lost";
+        // Only `gone` is permanent. `taken` means someone owns it *right now* —
+        // and a claim can be released (that waiter disconnects, its handoff
+        // deadline lapses, its binding fails), which is exactly what
+        // `actions_available` re-offers. Caching a taken action as seen would
+        // make this waiter deaf to that re-offer forever, recreating the
+        // "a live agent ignores the click" hole this whole change exists to
+        // close. `waiter_not_live` / `claim_expired` say only that OUR
+        // registration went stale, so they are not losses at all.
+        if (status === 404 || code === "already_handled") return "gone";
+        if (code === "already_claimed") return "taken";
         await sleep(200 * (attempt + 1)); // same token, so retrying is idempotent
       }
     }
@@ -670,8 +675,11 @@ async function waitForAction(opts: {
 
     const token = randomUUID();
     const outcome = await claim(raw.id, token);
-    if (outcome === "lost") { seen.add(raw.id); return null; }
-    if (outcome === "unknown") return null; // leave it for a later poll
+    // Only a permanently-gone action is worth remembering. A taken one may be
+    // released back to us; an unknown one we never resolved. Both stay
+    // re-offerable on the next poll.
+    if (outcome === "gone") { seen.add(raw.id); return null; }
+    if (outcome !== "won") return null;
     seen.add(raw.id);
 
     const shaped = shape(raw);
@@ -734,6 +742,23 @@ async function waitForAction(opts: {
       }
       backoff = 1000;
       clientId = null;
+      // A server predating single-claimant delivery ignores wait_for_* and never
+      // sends waiter_registered, so this waiter would register nothing, claim
+      // nothing, and block forever without a word. That skew is the ordinary
+      // upgrade order — the CLI updates on install, the running service does not
+      // until it restarts — so say so rather than hanging silently.
+      if (claiming) {
+        const unregistered = setTimeout(() => {
+          if (!clientId) {
+            process.stderr.write(
+              ": this Surface service predates single-claimant delivery — it did not " +
+              "acknowledge the waiter registration, so no actions will be delivered. " +
+              "Restart the Surface service to pick up the new build.\n",
+            );
+          }
+        }, 5000);
+        unregistered.unref();
+      }
       // An observer never registers, so it has no identity to wait for and can
       // drain immediately.
       if (!claiming) {

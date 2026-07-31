@@ -416,6 +416,46 @@ try {
     void w;
   });
 
+  // Losing a claim is not permanent. `already_claimed` means someone owns it
+  // right now, and the release paths (disconnect, expired handoff, failed
+  // binding) exist precisely to hand it back. A waiter that caches a lost claim
+  // as "seen" goes deaf to that re-offer, so the click strands in the inbox
+  // while a live, eligible waiter sits there listening.
+  await test("a waiter that loses a claim still takes it after the winner releases", async () => {
+    const waiter = spawnWaiter("loser", ["--follow", "--id", "dispatch-a"], BASE);
+    await waitForListening("dispatch-a", true, 12000);
+    await sleep(600);
+
+    // Race the CLI and win from in-process: create the action, then claim it
+    // before the CLI's SSE round-trip completes. Retry with a fresh action if
+    // the CLI gets there first.
+    const ac = new AbortController();
+    const streamed = fetch(`${BASE}/stream?wait_for_surface=dispatch-a`, { signal: ac.signal });
+    const rivalId = await firstWaiterClientId(streamed);
+    let contested: string | null = null;
+    try {
+      for (let attempt = 0; attempt < 4 && !contested; attempt++) {
+        const id = await fire("dispatch-a", "contested", { attempt });
+        const claim = await api("POST", `/actions/${id}/claim`, { token: `rival-${attempt}`, client_id: rivalId });
+        if (claim.status === 200) contested = id;
+        else await sleep(300); // the CLI won that one; try again
+      }
+      assert.ok(contested, "could not win a claim ahead of the CLI waiter");
+      await sleep(1200); // the CLI has now attempted and lost
+      const before = waiter.lines.map((l) => JSON.parse(l).id);
+      assert.ok(!before.includes(contested), "the rival claim should have blocked the CLI");
+    } finally {
+      ac.abort(); // rival dies mid-handoff; the server releases its claim
+      await streamed.catch(() => {});
+    }
+
+    await waitFor(async () => {
+      return waiter.lines.map((l) => JSON.parse(l).id).includes(contested!);
+    }, 15000, "the released action to reach the waiter that had lost it");
+    killWaiters();
+    await waitForListening("dispatch-a", false, 8000);
+  });
+
   if (failures.length) {
     throw new Error(`actionDispatch: ${failures.length} failing case(s): ${failures.join(", ")}`);
   }
