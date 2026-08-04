@@ -66,13 +66,17 @@ function versionKeySettled(updatedAt: string | null | undefined): boolean {
 // True when GET /artifacts/:id/thumb has a real picture to serve — a cached
 // capture, or an image artifact it can pass through. False means the route
 // would fall back to the generated placeholder.
-export function hasRealThumb(id: string, mime: string | null | undefined): boolean {
+export function hasRealThumb(
+  id: string,
+  mime: string | null | undefined,
+  generation?: string | null,
+): boolean {
   if (mime && mime.startsWith("image/") && imageThumbPassthrough(getDb(), id)) return true;
   // Any generation counts: an older capture is still a real picture, and the
   // route serves it (short-cached) while the fresh one is taken. Saying `false`
   // here would make the card paint its own cover and never call the route at
   // all — see the `has_thumb` note in docs/core/thumbnails.md.
-  try { return hasAnyThumb(id); } catch { return false; }
+  try { return hasAnyThumb(id, generation); } catch { return false; }
 }
 
 // Full card payload for SSE listeners. Includes hidden rows so clients can see
@@ -132,7 +136,7 @@ artifactsRouter.get("/artifacts", (req, res) => {
     // Whether /thumb would answer with a real picture. The dashboard uses this
     // to paint its own cover for a not-yet-captured surface instead of
     // fetching a placeholder it will replace seconds later.
-    has_thumb: hasRealThumb(card.id, card.artifact_mime),
+    has_thumb: hasRealThumb(card.id, card.artifact_mime, thumbGenerationFor(card)),
   })));
 });
 
