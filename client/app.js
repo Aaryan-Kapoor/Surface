@@ -2252,18 +2252,30 @@ async function renderSurface(id) {
 
   const iframe = document.createElement("iframe");
   iframe.className = "surface-frame";
+  const meta = parseMetadata(artifact.metadata);
+  const fromDevicePlane = meta && meta.author_plane === "device";
+
+  // A sandboxed browsing context may not instantiate plugins, and Chrome's PDF
+  // reader is one — so a PDF inside the normal surface frame renders as "this
+  // page has been blocked", while the very same URL opens fine on its own. A
+  // PDF is passive: no script, no DOM, nothing for a sandbox to contain. So an
+  // AGENT-authored PDF loads unsandboxed and gets the browser's real reader.
+  // Device-authored content keeps the sandbox unconditionally — it lives on the
+  // untrusted content origin and its mime is not a promise we should take.
+  const isAgentPdf = !fromDevicePlane && String(artifact.mime || "") === "application/pdf";
+
   // The sandbox attr blocks top-navigation and modal abuse. allow-same-origin
   // lets surface.js use fetch/SSE — but for DEVICE-authored content we load it
   // from the untrusted content origin, so "same-origin" there is the content
   // plane (never system), not this trusted app origin. System content stays on
   // the app origin. (docs/auth/trust-model.md)
-  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
+  if (!isAgentPdf) {
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
+  }
   iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write");
   const rawViewPath = data.view_url || `/artifacts/${id}/view`;
   const revision = artifact.updated_at || artifact.current_version_id || Date.now();
   const viewPath = versionSurfaceViewPath(rawViewPath, revision);
-  const meta = parseMetadata(artifact.metadata);
-  const fromDevicePlane = meta && meta.author_plane === "device";
   const frameSrc = surfaceFrameSrc(fromDevicePlane, contentOrigin, viewPath);
   if (frameSrc === null) {
     // Fail closed (see surfaceFrameSrc): a device-authored surface with no

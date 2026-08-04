@@ -879,6 +879,25 @@ try {
     assert.ok(!shown(), "the dialog stayed open after the prompt was copied");
   });
 
+  // A sandboxed browsing context may not instantiate plugins, and Chrome's PDF
+  // reader is one — so a PDF in the normal surface frame rendered as "this page
+  // has been blocked by Chrome" while the identical URL opened fine on its own.
+  // The exemption is narrow on purpose, and the narrowness is the property
+  // worth guarding: device-authored content keeps the sandbox whatever mime it
+  // claims, because its mime is not a promise we should take.
+  check("an agent-authored PDF drops the sandbox, and nothing else does", () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
+    const guard = /const isAgentPdf = ([^;]+);/.exec(src);
+    assert.ok(guard, "the PDF exemption is gone");
+    assert.match(guard![1], /!fromDevicePlane/, "the exemption must not extend to device-authored content");
+    assert.match(guard![1], /application\/pdf/, "the exemption must be limited to PDFs");
+    assert.match(
+      src,
+      /if \(!isAgentPdf\) \{\s*\n\s*iframe\.setAttribute\("sandbox"/,
+      "the surface frame must still be sandboxed for everything else",
+    );
+  });
+
   check("the pairing page names the command that produces a token", () => {
     const pair = fs.readFileSync(path.join(REPO_ROOT, "client", "pair.html"), "utf8");
     const cmd = /<code id="cmd-text">([^<]*)<\/code>/.exec(pair);

@@ -506,6 +506,22 @@ function loadSavedConfig(name: string): SavedConfig {
   }
 }
 
+/**
+ * The port the service was actually installed on, if it was installed here.
+ *
+ * Without this the CLI assumed 3000 and, on any install that chose another
+ * port, every command failed with ECONNREFUSED and advised reinstalling a
+ * service that was running perfectly — the one piece of advice guaranteed to
+ * make things worse.
+ */
+export function savedServiceBaseUrl(name = "surface"): string | undefined {
+  const saved = loadSavedConfig(name);
+  if (!saved.port) return undefined;
+  // A wildcard bind is reachable on loopback; a concrete one may not be.
+  const host = !saved.bind || ["0.0.0.0", "::", "[::]"].includes(saved.bind) ? "127.0.0.1" : saved.bind;
+  return `http://${host}:${saved.port}`;
+}
+
 // The skill/upgrade side (bin/upgrade.ts) anchors the canonical SKILL.md in
 // the same data dir the service actually uses — saved config beats
 // SURFACE_DATA_DIR, matching resolveConfig below.

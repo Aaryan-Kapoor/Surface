@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
-import { runService, SERVICE_HELP } from "./service.js";
+import { runService, savedServiceBaseUrl, SERVICE_HELP } from "./service.js";
 import { runSkill, runUpgrade } from "./upgrade.js";
 import { runCodex, CODEX_HELP } from "./codex.js";
 
@@ -20,7 +20,9 @@ function cliVersion(): string {
   }
 }
 
-const BASE = (process.env.SURFACE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
+// SURFACE_URL wins; otherwise ask the service registry where the service this
+// machine installed actually listens, and only then fall back to the default.
+const BASE = (process.env.SURFACE_URL || savedServiceBaseUrl() || "http://127.0.0.1:3000").replace(/\/$/, "");
 // Loopback callers need no credential. A remote agent (SSH box, container)
 // carries a system bearer minted from the system plane:
 //   surface auth session issue --role system --label devbox

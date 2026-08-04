@@ -47,6 +47,19 @@
   .tour-next:disabled { opacity: .4; cursor: default; }
   .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
   @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
+  .escape {
+    display: block;
+    padding: 10px 4px 14px;
+    text-align: center;
+    font-size: 12.5px;
+    color: rgba(255,255,255,.45);
+    text-decoration: none;
+  }
+  .escape:hover { color: rgba(255,255,255,.85); text-decoration: underline; }
+  @media (prefers-color-scheme: light) {
+    .escape { color: rgba(11,12,14,.5); }
+    .escape:hover { color: rgba(11,12,14,.9); }
+  }
 </style>
 </head>
 <body>
@@ -86,12 +99,27 @@
   }
 
   try {
-    const src = buildSrc(String(params.url || ""));
+    const raw = String(params.url || "");
+    const src = buildSrc(raw);
     const iframe = document.createElement("iframe");
     iframe.src = src;
     iframe.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
     iframe.allowFullscreen = true;
     player.appendChild(iframe);
+
+    // A refused embed is a cross-origin document: we cannot see that YouTube
+    // decided not to play, so we cannot swap in a fallback. What we can do is
+    // never leave the dead end without an exit — the original link is always
+    // one click away, under the player rather than instead of it.
+    if (youtubeId(raw)) {
+      const out = document.createElement("a");
+      out.className = "escape";
+      out.href = raw;
+      out.target = "_blank";
+      out.rel = "noopener noreferrer";
+      out.textContent = "Won't play here? Watch it on YouTube \u2197";
+      player.parentNode.appendChild(out);
+    }
   } catch (err) {
     const div = document.createElement("div");
     div.className = "error";
