@@ -53,6 +53,8 @@ bash scripts/check-leaks.sh
 
 `bash scripts/test-fresh-install.sh` (needs Docker) is the fresh-machine gate: it global-installs the packed tarball in toolchain-free `node:22/24/25-slim` containers and drives the CLI against a booted server. Added 2026-08-04 after every fresh install on Node 24/25 failed for a month (better-sqlite3 11.x had no prebuilds there; dev machines and CI runners have compilers, so nothing caught it). CI runs it per Node version and `publish` depends on it. Supported Node floor is 22 (Node 20 is EOL, no prebuilds in better-sqlite3 v12/v13).
 
+`bash scripts/test-new-user-e2e.sh` (needs Docker) is the new-user gate: a `--privileged` Ubuntu 24.04 container booting real systemd, with a fresh non-root user and user-owned nvm-style Node 24 and no compilers, walks the INSTALL_FOR_AGENTS.md mechanical path end to end (install → service install under systemd+logind → skill install with both link targets → sanity block → seed/clear demos → create + state round trip → restart → uninstall). Also in CI; `publish` depends on it. The LLM-driven half of onboarding (the tutorial walkthrough) stays untested here — the opt-in OpenRouter e2e is the closest analogue.
+
 ## Distribution (decided 2026-07-07)
 
 - Published npm package: **`surface-display`** (bare `surface`/`surface-cli`

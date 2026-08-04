@@ -14,6 +14,12 @@ All notable changes to Surface are recorded here.
   tarball in toolchain-free `node:*-slim` containers and drives the CLI
   against a booted server, so a missing native prebuild can never reach a
   release again. Publishing now depends on it.
+- New `scripts/test-new-user-e2e.sh` + CI job: a real-systemd Ubuntu
+  container with a fresh non-root user and user-owned Node 24 walks
+  INSTALL_FOR_AGENTS.md end to end — tarball install, `surface service
+  install`, `surface skill install` (both link targets verified), the
+  sanity block, demo seed/clear, a first surface with live state, restart,
+  uninstall. Publishing depends on this too.
 
 ## 0.2.3 - 2026-07-31
 

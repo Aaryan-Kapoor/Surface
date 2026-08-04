@@ -135,6 +135,23 @@ jobs:
       - run: npm ci
       - run: bash scripts/test-fresh-install.sh ${{ matrix.node-version }}
 
+  # The whole new-user path on the machine a new user actually has: stock
+  # Ubuntu + real systemd, a non-root user, user-owned Node 24, no
+  # compilers. Walks INSTALL_FOR_AGENTS.md end to end: tarball install →
+  # surface service install (systemd+logind, health-gated) → skill install
+  # → sanity checks → first surface + live state → restart → uninstall.
+  new-user-e2e:
+    name: New-user e2e (systemd container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash scripts/test-new-user-e2e.sh
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -155,7 +172,7 @@ jobs:
   # Provenance is attested automatically on trusted publishes.
   publish:
     name: Publish to npm
-    needs: [package, test, service-smoke, fresh-install, audit]
+    needs: [package, test, service-smoke, fresh-install, new-user-e2e, audit]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
