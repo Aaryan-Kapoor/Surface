@@ -193,32 +193,26 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .grid-view.is-scrolled .grid-header { border-bottom-color: var(--line); }
 
-/* Stacked, not inline. Side by side, the wordmark had to stay small enough to
-   leave the tagline room on one line, which left the bar reading as a thin
-   strip of nothing with a label in the corner. Stacked, the name can carry the
-   weight it should and the tagline sits under it as a caption. */
 .grid-brand {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
+  align-items: baseline;
+  gap: 10px;
   min-width: 0;
 }
 
 .grid-title {
-  font-size: 22px;
-  font-weight: 680;
-  letter-spacing: -0.032em;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.024em;
   color: var(--fg);
-  line-height: 1.1;
+  line-height: 1;
   white-space: nowrap;
 }
 
 .grid-subtitle {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--fg-faint);
   letter-spacing: -0.005em;
-  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -423,7 +417,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .grid-search:focus {
   border-color: var(--line-strong);
-  background: var(--panel-2);
+  background: var(--interactive);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
@@ -486,7 +480,7 @@ button { -webkit-tap-highlight-color: transparent; }
   transition: background 0.15s var(--ease-swift), color 0.15s var(--ease-swift), border-color 0.15s var(--ease-swift);
 }
 
-.grid-chip:hover { color: var(--fg); background: var(--panel); }
+.grid-chip:hover { color: var(--fg); background: var(--interactive); }
 
 .grid-chip--active {
   background: var(--fg);
@@ -531,7 +525,7 @@ button { -webkit-tap-highlight-color: transparent; }
   color: var(--fg);
 }
 
-.grid-sort:hover { color: var(--fg); background-color: var(--panel); }
+.grid-sort:hover { color: var(--fg); background-color: var(--interactive); }
 .grid-sort option { background: var(--overlay); color: var(--fg); }
 
 /* ── The grid ── */
@@ -1409,7 +1403,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   transition: color 0.15s var(--ease-swift), background 0.15s var(--ease-swift);
 }
 
-.modal-close:hover { color: var(--fg); background: var(--panel-2); }
+.modal-close:hover { color: var(--fg); background: var(--interactive); }
 
 .modal-eyebrow {
   font-size: 11.5px;
@@ -1480,7 +1474,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   font-family: var(--mono);
   font-size: 11px;
   color: var(--fg-muted);
-  background: var(--panel-2);
+  background: var(--interactive);
   border-radius: 4px;
   padding: 2px 5px;
 }
@@ -1540,7 +1534,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 }
 
 .back-btn svg { display: block; }
-.back-btn:hover { background: var(--panel-2); color: var(--fg); }
+.back-btn:hover { background: var(--interactive); color: var(--fg); }
 .back-btn:active { transform: scale(0.94); }
 
 .surface-nav-titlewrap {
@@ -1628,7 +1622,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 }
 
 .nav-action svg { display: block; }
-.nav-action:hover { background: var(--panel-2); color: var(--fg); }
+.nav-action:hover { background: var(--interactive); color: var(--fg); }
 .nav-action:active { transform: scale(0.94); }
 
 .surface-frame {
@@ -1703,7 +1697,7 @@ iframe.surface-frame.is-loaded { opacity: 1; }
 .finder-overlay {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 66%, transparent);
+  background: color-mix(in srgb, var(--overlay) 66%, transparent);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   z-index: 100;
@@ -1721,9 +1715,9 @@ iframe.surface-frame.is-loaded { opacity: 1; }
   width: 100%;
   max-width: 560px;
   margin: 0 20px;
-  background: var(--panel-solid);
+  background: var(--overlay);
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 18px;
   overflow: hidden;
   transform: translateY(-6px) scale(0.99);
   transition: transform 0.26s var(--ease-out);
@@ -1786,7 +1780,7 @@ iframe.surface-frame.is-loaded { opacity: 1; }
   transition: background 0.1s var(--ease-swift);
 }
 
-.finder-result--active { background: var(--panel-2); }
+.finder-result--active { background: var(--interactive); }
 
 .finder-result-title {
   font-size: 13.5px;
@@ -1863,7 +1857,6 @@ iframe.surface-frame.is-loaded { opacity: 1; }
      bar is fighting for room. The two icons stay: on a phone they are the only
      way to reach the tutorial or the repo at all. */
   .grid-version { display: none; }
-  .grid-title { font-size: 19px; }
   .grid-icon-btn { width: 30px; height: 30px; }
   .grid-search-wrap { width: auto; }
   .grid-search-wrap::before { left: 10px; }
@@ -1922,11 +1915,11 @@ iframe.surface-frame.is-loaded { opacity: 1; }
 }
 
 .card-more svg { display: block; }
-.card-more:active { background: var(--panel-2); color: var(--fg); }
+.card-more:active { background: var(--interactive); color: var(--fg); }
 
 @media (hover: none) {
   .card-more { display: flex; }
-  .surface-card.is-menu-open .card-more { color: var(--fg); background: var(--panel-2); }
+  .surface-card.is-menu-open .card-more { color: var(--fg); background: var(--interactive); }
   .surface-card.is-menu-open .card-actions { opacity: 1; transform: none; pointer-events: auto; }
 }
 

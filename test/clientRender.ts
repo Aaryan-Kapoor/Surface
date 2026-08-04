@@ -730,12 +730,68 @@ try {
   // the floating chrome actually reads the overlay plane.
   check("floating chrome sits on the overlay plane, not the card plane", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
-    for (const selector of [".modal-panel", ".toast"]) {
+    for (const selector of [".modal-panel", ".toast", ".finder-panel"]) {
       const rule = new RegExp(`\\n\\${selector}\\s*\\{([^}]*)\\}`).exec(css);
       assert.ok(rule, `no rule for ${selector}`);
       assert.match(rule![1], /background:\s*var\(--overlay\)/, `${selector} must use --overlay`);
     }
     assert.match(css, /--chip-bg:\s*rgba\(2,\s*2,\s*2,/, "the preview tray must use the overlay tone");
+  });
+
+  // DESIGN.md rule 5: the pairing card, the tutorial modal and the finder are
+  // one object. pair.html is a standalone document that copies the tokens
+  // rather than importing them — which is exactly how it drifted into being a
+  // second dialog style, and why the drift has to be asserted rather than
+  // trusted to reviewers noticing two files at once.
+  check("the pairing card is built to the same spec as the app's dialogs", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const pair = fs.readFileSync(path.join(REPO_ROOT, "client", "pair.html"), "utf8");
+    const ruleIn = (src: string, selector: string) => {
+      const m = new RegExp(`[\\n\\s]\\${selector}\\s*\\{([^}]*)\\}`).exec(src);
+      assert.ok(m, `no rule for ${selector}`);
+      return m![1];
+    };
+    const card = ruleIn(pair, ".card");
+    assert.match(card, /background:\s*var\(--overlay\)/, "the pairing card must sit on the overlay plane");
+    assert.match(card, /padding:\s*32px 32px 28px/, "the pairing card must use the shared dialog padding");
+    assert.match(pair, /--r-card:\s*18px/, "the pairing card must use the shared dialog radius");
+    assert.match(ruleIn(css, ".modal-panel"), /border-radius:\s*18px/, "the modal radius moved away from the shared spec");
+
+    // Title and lede scale, shared across both files.
+    assert.match(ruleIn(pair, "h1"), /font-size:\s*23px/, "the pairing title left the shared scale");
+    assert.match(ruleIn(css, ".modal-title"), /font-size:\s*23px/, "the modal title left the shared scale");
+    assert.match(ruleIn(pair, ".eyebrow"), /font-size:\s*11\.5px/, "the pairing eyebrow left the shared scale");
+    assert.match(ruleIn(css, ".modal-eyebrow"), /font-size:\s*11\.5px/, "the modal eyebrow left the shared scale");
+
+    // Rule 3: what you click inside a dialog lifts off it.
+    assert.match(ruleIn(pair, "input"), /background:\s*var\(--interactive\)/, "the token field must lift off the card");
+    assert.match(ruleIn(css, ".modal-prompt"), /background:\s*var\(--interactive\)/, "the prompt must lift off the panel");
+
+    // Rule 4, in the file that keeps its own copy of the tokens.
+    assert.match(pair, /--overlay:\s*#020202/, "pair.html drifted from the overlay tone");
+    assert.match(pair, /--interactive:\s*#121212/, "pair.html drifted from the interactive tone");
+    assert.match(pair, /--bg:\s*#0a0a0a/, "pair.html drifted from the page tone");
+  });
+
+  check("the pairing page names the command that produces a token", () => {
+    const pair = fs.readFileSync(path.join(REPO_ROOT, "client", "pair.html"), "utf8");
+    const cmd = /<code id="cmd-text">([^<]*)<\/code>/.exec(pair);
+    assert.ok(cmd, "no command block on the pairing page");
+    // Bare, on purpose. `--name` would set the session label from the host,
+    // and the device name field two rows below sets the same thing from here;
+    // shipping both invites someone to fill in each and wonder which won.
+    assert.equal(cmd![1], "surface pair");
+
+    // Both clipboard paths must exist, and the async one must fall through to
+    // the legacy one on rejection rather than reporting failure — the reasons
+    // writeText is refused (permissions policy, a denied prompt) are invisible
+    // to a feature test. Neither path can run in headless Chrome, which
+    // returns false from execCommand for any element, so this is asserted on
+    // the source rather than exercised.
+    assert.match(pair, /navigator\.clipboard\.writeText/, "no async clipboard path");
+    assert.match(pair, /function\s*\(\s*\)\s*\{\s*done\(legacyCopy\(text\)\);\s*\}/,
+      "a refused clipboard write must fall back, not report failure");
+    assert.match(pair, /document\.execCommand\("copy"\)/, "no legacy clipboard fallback");
   });
 
   // `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the grid item's

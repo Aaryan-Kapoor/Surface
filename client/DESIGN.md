@@ -15,14 +15,40 @@ them gets a coherent palette for free.
 | `--bg` | `#0a0a0a` | `#f6f6f7` | page |
 | `--fg` | `#ffffff` | `#0b0c0e` | primary ink |
 
-Depth is tone, not shadow, and it is ranked by attention. Overlays sink below
-the page; anything you can click lifts above it. Light has no equivalent move —
-darker than the page would read as a shadow — so both planes stay white there.
+### The three planes (rule)
 
-| Token | Dark | Light | Use |
+Depth is **tone, not shadow**, and the tones are ranked by importance so the eye
+is told where to go. Dark is the scheme this ranking is defined in:
+
+| Plane | Dark | Light | What belongs on it |
 |---|---|---|---|
-| `--overlay` | `#020202` | `#ffffff` | modals, toasts, menus, the tray over a preview |
-| `--interactive` | `#121212` | `#ffffff` | cards, inputs, buttons |
+| `--overlay` | `#020202` | `#ffffff` | anything drawn *over* the page — modal panels, the pairing card, the ⌘K finder, toasts, menus, the tray floating on a preview |
+| `--bg` | `#0a0a0a` | `#f6f6f7` | the page itself |
+| `--interactive` | `#121212` | `#ffffff` | anything the user clicks — cards, inputs, buttons, hover and active states |
+
+**Rules, in order of how easy they are to get wrong:**
+
+1. **Overlays sink, interactive lifts.** An overlay is *darker* than the page and
+   a clickable thing is *lighter*. This is deliberately the opposite of the usual
+   "higher means lighter" convention: it ranks by attention rather than by
+   z-order, so the thing you can act on is always the brightest thing in view.
+2. **A control keeps its plane at rest.** A field is `--interactive` before you
+   touch it, not only on focus — the focus ring does that job. A control that
+   changes tone *and* gains a ring is announcing itself twice.
+3. **Nesting re-ranks, it does not accumulate.** A prompt box inside a dialog is
+   `--interactive` on an `--overlay` panel: it lifts off its own parent, exactly
+   as a card lifts off the page. Never stack two washes to fake a third plane.
+4. **Greys stay neutral.** `R == G == B`, always. The set this replaced leaned
+   one or two points into blue (`#0a0b0d`, `#131417`) and read as cold slate
+   rather than black — a drift that is invisible in a diff and obvious on a
+   screen. Guarded in `test:client-render`.
+5. **Every dialog is built to one spec.** The pairing card, the tutorial modal
+   and the finder are the same object: overlay plane, `18px` radius, `32px 32px
+   28px` padding, and the shared eyebrow / title / lede scale (`11.5px` ·
+   `23px/620` · `13.5px`). A second dialog style is a bug, not a variant.
+6. **Light does not invert.** Going darker than the page in light mode reads as
+   a shadow, not a plane, so both planes are white there and separation comes
+   from lightness alone.
 
 `--panel-solid` is an alias of `--interactive`, kept because it is the name an
 agent theme writes (`glass`).

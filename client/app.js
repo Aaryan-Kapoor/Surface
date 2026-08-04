@@ -436,12 +436,7 @@ async function copyToClipboard(text) {
 // the agent does — so the modal is intentionally just a prompt + copy.
 
 // The header's fixed furniture.
-//
-// The tagline names the loop rather than the product: what makes Surface not-a-
-// dashboard is that the render goes out *and the tap comes back*. "state out,
-// actions back" was the same claim in a private shorthand nobody arriving here
-// could read.
-const TAGLINE = "Agents render here. Every tap goes back.";
+const TAGLINE = "state out, actions back";
 const REPO_URL = "https://github.com/Aaryan-Kapoor/Surface";
 
 // Inline so a display renders them offline; the shell already refuses to fetch
