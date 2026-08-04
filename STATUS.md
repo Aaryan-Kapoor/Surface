@@ -117,10 +117,20 @@ Both install scripts take three sources: default = pack the local tree; `--tarba
 
 ## Source of Truth
 
-- `SKILL.md` is the agent-facing command contract. It is the benchmark-winning
-  E5 skill from `surface-skill-bench` (61 lines; kept byte-identical with
-  `surface-skill-bench/versions/E5/SKILL.md` and `OPTIMIZED-SKILL.md` — edit
-  one, sync all three). Its wake-binding consent wording is safety-critical
+- `SKILL.md` is the agent-facing command contract. It descends from the
+  benchmark-winning E5 skill in `surface-skill-bench`, but **the
+  byte-identical lock is currently broken and a bench sync pass is owed**
+  (recorded 2026-08-04). The bench copies
+  (`surface-skill-bench/versions/E5/SKILL.md` and `OPTIMIZED-SKILL.md`) are
+  61 lines and identical to each other; this repo's copy drifted to 62 with
+  the codex-bridge work (`**Default:**` → `**Default outside Codex:**` plus
+  the `- **Codex CLI:**` bullet) despite the note above claiming it was left
+  untouched, and to 64 with single-claimant delivery (the "One click, one
+  agent" and "Delivery is handoff, not completion" bullets, and the bind
+  trigger reworded from "no waiter is connected" to "no waiter claims within
+  a five-second first refusal"). Until the three are resynced and
+  re-scored, treat the repo copy as the shipping contract and the bench
+  copies as stale. Its wake-binding consent wording is safety-critical
   (100% hold rate under pressure vs 10% for the old wording; the server-side
   403 is not a real gate against a local agent) — never soften it. A
   state-honesty rule ("State is a claim, not an animation") was added to the
