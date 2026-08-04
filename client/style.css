@@ -516,6 +516,8 @@ button { -webkit-tap-highlight-color: transparent; }
   display: flex;
   flex-direction: column;
   gap: 11px;
+  /* The card must never be the thing that decides how wide its column is. */
+  min-width: 0;
   cursor: pointer;
   color: var(--fg);
   background: transparent;
@@ -1783,7 +1785,12 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 }
 
 @media (max-width: 380px) {
-  .grid { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), never a bare 1fr: `1fr` is `minmax(auto, 1fr)`, and that
+     `auto` floor is the item's min-content width. A card whose cover sets a log
+     in `white-space: pre` has a min-content width of the longest line, so a bare
+     1fr track grew to ~460px inside a 360px viewport and the grid ran off the
+     side of the screen. */
+  .grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Coarse pointers have no hover, so the tray needs a handle. It lives in the

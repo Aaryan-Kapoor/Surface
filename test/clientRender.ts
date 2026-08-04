@@ -663,6 +663,30 @@ try {
     );
   });
 
+  // `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the grid item's
+  // min-content width — so one unbreakable thing inside a card (a log line set
+  // in `white-space: pre`, say) sizes the whole track and the grid runs off the
+  // side of the screen. This shipped: at 380px and below the grid used a bare
+  // 1fr, and a 360px viewport laid out a 460px column.
+  check("every grid track that flexes is floored at zero, not at min-content", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const offenders: string[] = [];
+    for (const m of css.matchAll(/grid-template-columns\s*:\s*([^;]+);/g)) {
+      const value = m[1].replace(/\s+/g, " ").trim();
+      // Not `\bfr\b`: there is no word boundary between the digit and the unit
+      // in "1fr", so that pattern matches nothing and the guard inspects
+      // nothing — which is exactly how it passed the first time it was run
+      // against the bug it exists to catch.
+      if (!/[\d.]\s*fr\b/.test(value)) continue;
+      // Every fr-bearing track function in the value must carry its own zero
+      // floor. `repeat(auto-fill, minmax(250px, 1fr))` is fine too: a fixed
+      // minimum is a floor, it just is not zero.
+      const floored = /minmax\(\s*(0|[\d.]+px|var\(--[a-z-]+\))\s*,/.test(value);
+      if (!floored) offenders.push(value);
+    }
+    assert.deepEqual(offenders, [], `flexible track(s) floored at min-content: ${offenders.join(" | ")}`);
+  });
+
   check("the stylesheet uses no deprecated declaration keywords", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
     // `word-break: break-word` is deprecated (and was never in any spec as
