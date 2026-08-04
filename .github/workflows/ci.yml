@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node-version: [20, 22]
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,9 +43,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            node-version: 20
-          - os: ubuntu-latest
             node-version: 22
+          - os: ubuntu-latest
+            node-version: 24
           - os: windows-latest
             node-version: 22
           - os: macos-latest
@@ -113,6 +113,28 @@ jobs:
             exit 1
           fi
 
+  # A brand-new laptop is a machine with Node and nothing else — no python,
+  # no make, no g++. Hosted runners all carry compilers, which silently
+  # rescue a native module whose prebuilt binary is missing for the running
+  # Node version — the exact failure a first-time user hits. So this job
+  # global-installs the packed tarball inside toolchain-free node:*-slim
+  # containers and drives the CLI against a booted server.
+  fresh-install:
+    name: Fresh install (Node ${{ matrix.node-version }}, no toolchain)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24, 25]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: bash scripts/test-fresh-install.sh ${{ matrix.node-version }}
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
@@ -133,7 +155,7 @@ jobs:
   # Provenance is attested automatically on trusted publishes.
   publish:
     name: Publish to npm
-    needs: [package, test, service-smoke, audit]
+    needs: [package, test, service-smoke, fresh-install, audit]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
