@@ -551,7 +551,62 @@ async function main() {
   await optionalDelete(`/artifacts/${mdId}`);
   await optionalDelete(`/artifacts/${binaryId}`);
 
+  await gracefulShutdownWithWarmChrome();
+
   console.log("Artifact HTTP tests passed");
+}
+
+// SIGTERM with a live headless Chrome must still be an ordinary, successful
+// shutdown. The thumbnailer used to install its own SIGINT/SIGTERM handlers the
+// moment Chrome launched; both listeners fired and the thumbs one called
+// process.exit(143) before the async HTTP close callback and closeDb() had run.
+// This is a separate, short-lived server because it needs a REAL browser, which
+// the rest of the suite deliberately denies itself.
+async function gracefulShutdownWithWarmChrome(): Promise<void> {
+  const { findChromeBin } = await import("../server/thumbs.js");
+  if (!findChromeBin()) {
+    console.log("  SKIP  graceful shutdown with a warm chrome (no chrome binary)");
+    return;
+  }
+  const ports = await isolatedPorts();
+  const shutdownDataDir = tmpDir("surface-artifacts-shutdown-data-");
+  const base = `http://127.0.0.1:${ports.port}`;
+  const child = spawnServer(ports.port, shutdownDataDir, {}, ports.contentPort);
+  try {
+    await waitForReady(base, "/artifacts");
+    const shutdownReq = makeClient(base);
+    await shutdownReq("POST", "/artifacts", {
+      body: {
+        id: "shutdown-warm-chrome",
+        title: "Shutdown Surface",
+        mime: "text/html",
+        content: "<!doctype html><html><body><h1>warm</h1></body></html>",
+      },
+    });
+    // Wait for the capture, which is what proves Chrome is actually running.
+    const thumbsPath = path.join(shutdownDataDir, "thumbs");
+    const captureDeadline = Date.now() + 60000;
+    let captured = false;
+    while (Date.now() < captureDeadline) {
+      try {
+        if (fs.readdirSync(thumbsPath).some((n) => n.endsWith(".png"))) { captured = true; break; }
+      } catch {}
+      await sleep(200);
+    }
+    assert(captured, "a capture must land before this can test shutting down with a warm chrome");
+
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    process.kill(child.pid!, "SIGTERM");
+    const code = await Promise.race([exited, sleep(15000).then(() => -1 as number | null)]);
+    assert(code === 0, `SIGTERM with a warm chrome must be a clean exit, got ${code}`);
+
+    await sleep(300);
+    const scratch = fs.readdirSync(shutdownDataDir).filter((n) => n.startsWith(".chrome-"));
+    assert(scratch.length === 0, `chrome's profile dir must be removed on shutdown, found ${scratch.join(", ")}`);
+  } finally {
+    await killServer(child, ports.port).catch(() => {});
+    cleanupDir(shutdownDataDir);
+  }
 }
 
 main().then(async () => {
