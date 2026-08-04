@@ -4,6 +4,34 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- New update notification on the Surface home: when a newer `surface-display`
+  release exists on npm, the grid header shows `Surface X available` with an
+  **Update** button that runs the existing `surface upgrade` converger and
+  brings the service back health-gated (`docs/operations/install.md`). The
+  release check is cached (6h TTL, in memory + `<data-dir>/update-check.json`),
+  runs on a self-rearming timer rather than a poll loop, backs off on failure
+  instead of retrying, degrades silently offline, and is **off by default under
+  `NODE_ENV=test` and in CI**. `GET /api/update/status` serves the cache only
+  and never touches the network.
+- `POST /api/update/apply` is **system-plane only** — installing and running new
+  code on the host is exactly what the trust model reserves for loopback/system
+  bearers. Paired devices and the content plane see the notice and are told
+  where to update; they cannot press the button
+  (`docs/auth/trust-model.md`, `SECURITY.md`).
+- Repo clones and project-local installs are detected (by the same
+  `installContext()` `surface upgrade` uses) and shown honest advice —
+  `git pull …` / `npm update surface-display` — instead of a one-click button.
+- Failures are reported, never assumed away: a failed `npm install` (a
+  dependency with no prebuilds, a registry error) ends the run as `failed` with
+  npm's exit status; a service that restarts without landing the new version
+  reports "restarted but is still running X"; a run that stops reporting for ten
+  minutes fails instead of spinning. The PWA gives up on a restart after two
+  minutes and points at `surface service health`.
+- `surface upgrade --progress-file <file>` writes each phase as it happens. The
+  converger is killed by the very restart it triggers on systemd, so phases are
+  written *before* the step they name and the restarted server reconciles the
+  last one against the version it is now running.
+
 - **Fixed fresh installs on current Node.** `npm install -g surface-display`
   failed on Node 24/25 (any machine without python/make/g++): better-sqlite3
   11.x has no prebuilt binaries there, so npm fell back to a node-gyp source

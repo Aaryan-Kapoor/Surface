@@ -54,6 +54,70 @@ surface service install --name surface-test --port 3457 --content-port 3557 --da
 `scripts/install-systemd-user-service.sh` survives as a thin wrapper over
 `surface service install` (it honors `SURFACE_SERVICE_NAME`).
 
+### Update notification and one-click update
+
+The PWA home carries a small release notice in the grid header
+(`client/app.js`, `server/updates.ts`, `server/routes/updates.ts`):
+
+```
+Surface 0.2.4 available   [ Update ]
+```
+
+**The check.** The server asks the npm registry for `surface-display@latest`
+on a self-rearming timer — first run 30 seconds after boot, then once per TTL
+(`SURFACE_UPDATE_CHECK_TTL_HOURS`, default 6). The answer is cached in memory
+and written through to `<data-dir>/update-check.json`, so a restart does not
+re-ask. `GET /api/update/status` serves **that cache only and never touches
+the network**, which is why an offline host answers instantly instead of
+holding a page load open on a dead socket. A failed check keeps the last known
+good version, records the reason, and backs off (30 min × consecutive
+failures, capped at the TTL) rather than retrying in a loop — it logs nothing.
+The check is **off by default under `NODE_ENV=test` and in CI**; set
+`SURFACE_UPDATE_CHECK=0` to turn it off anywhere else, or `=1` to force it on.
+
+**The button.** It is offered only where it can actually work:
+
+| Install | Notice | Button |
+| --- | --- | --- |
+| Global (`npm install -g surface-display`) | ✓ | ✓ |
+| Repo clone (`git clone` + `npm run dev`) | ✓ | ✗ — "this is a repo clone — update with: `git pull && npm install && npm test`" |
+| Project-local (`npm i surface-display` in a project) | ✓ | ✗ — "update with: `npm update surface-display` (in that project)" |
+| Paired device (phone, tablet) | ✓ | ✗ — "open Surface on the host (or run `surface upgrade` there)" |
+
+The context is detected by the same `installContext()` `surface upgrade` uses,
+so the two can never disagree. The device-plane refusal is a trust-model
+decision, not an oversight — see
+[../auth/trust-model.md](../auth/trust-model.md#why-the-update-button-is-system-only).
+
+**The apply.** `POST /api/update/apply` (system plane only) starts exactly one
+thing: `surface upgrade --json --name <this service> --progress-file
+<data-dir>/update-state.json`, detached, with a fixed argv and no shell. There
+is no second upgrade path — the converger updates the package, refreshes the
+skill copies and links, and restarts the service through the supervisor,
+health-gated, exactly as it does from a terminal. No daemon is introduced and
+nothing runs unsupervised.
+
+Because the converger restarts the service, it kills its own process on
+systemd (the child lives in the unit's cgroup). That is expected and designed
+for: each phase is written to the progress file **before** the step it names,
+and the restarted server reconciles the last phase against the version it is
+now running — landing on `done` if the new version is live, or `failed`
+("Surface restarted but is still running 0.2.3") if it is not. A run that
+stops reporting for ten minutes is reported failed rather than spinning
+forever. Failures are never reported optimistically: a broken npm install
+(a dependency with no prebuilds, a registry 500) ends the run as `failed` with
+npm's exit status, and the package on disk is untouched.
+
+In the PWA the flow reads: **Update** → "Installing 0.2.4…" → "Restarting
+Surface…" (the connection drops here — the process serving the page is the one
+being replaced) → the shell reconnects, reloads once so the client bundle
+matches the new server, and shows "Updated to 0.2.4". If the service does not
+come back within two minutes the notice says so and points at
+`surface service health` instead of spinning.
+
+`surface upgrade` and `surface upgrade --check` from a terminal remain the
+canonical path and are unchanged.
+
 The intended posture is to run Surface **once** as this user service — agents reuse the running instance rather than starting a second one (`INSTALL_FOR_AGENTS.md`, operating rules). Agents must never improvise a hidden background server when an install fails; recording `failed` and stopping is the sanctioned outcome.
 
 ## Environment variables
@@ -85,6 +149,10 @@ and flags win over `.env` (`server/index.ts`).
 | `SURFACE_CHAT_RATE_LIMIT` | `30` | Per-minute rate limit on `/api/chat`. |
 | `SURFACE_DATA_DIR` | `~/.surface` | Data directory (`db.sqlite` + `artifacts/`, plus `auth-secret`, `install-state.json`, `logs/`, `templates/`) (`server/paths.ts`). |
 | `SURFACE_LOG_FILE` | — | Tee server stdout/stderr into this append-only file with timestamps (`server/logging.ts`); how every `surface service` backend captures logs. |
+| `SURFACE_UPDATE_CHECK` | on (off in tests/CI) | `0` disables the cached npm release check entirely; `1` forces it on under `NODE_ENV=test`/`CI` (`server/updates.ts`). |
+| `SURFACE_UPDATE_CHECK_TTL_HOURS` | `6` | How long a release check is cached before the next one is due. |
+| `SURFACE_UPDATE_CHECK_DELAY_MS` | `30000` | Delay before the first check after boot. Lowered by the test suite; no reason to change it in production. |
+| `SURFACE_NPM_REGISTRY` | `https://registry.npmjs.org` | Registry queried by the release check and by `surface upgrade`. |
 | `SURFACE_WORKSPACE_DIR` | — | Legacy override for the directory containing `artifacts/` (`server/paths.ts`). |
 
 The CLI itself reads `SURFACE_URL` and `SURFACE_SESSION` — see [../core/cli.md](../core/cli.md).

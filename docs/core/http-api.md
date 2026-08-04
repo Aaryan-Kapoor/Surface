@@ -121,6 +121,19 @@ See [../display/theming.md](../display/theming.md) and [../display/devices.md](.
 
 Full event catalog: [events.md](events.md).
 
+## Self-update (`server/routes/updates.ts`)
+
+| Method | Path | Body | Response | Effect |
+| --- | --- | --- | --- | --- |
+| GET | `/api/update/status` | — | `{current, latest, update_available, checked_at, check_error, context, advice, run, can_apply, apply_blocked_reason}` | **cache-only** — never contacts the npm registry, so it cannot delay a response. `can_apply`/`apply_blocked_reason` are computed for the calling plane. Readable by `device`. |
+| POST | `/api/update/apply` | — | `202` + status | **system only** (403 on the device/content plane). Starts `surface upgrade --json --name <service> --progress-file <data-dir>/update-state.json` detached. `409` when a run is already in flight or the install is a repo clone / project-local (with the same advice `surface upgrade` prints). |
+
+The background check that fills the cache is described in
+[../operations/install.md](../operations/install.md#update-notification-and-one-click-update);
+the reason `apply` is system-only is in
+[../auth/trust-model.md](../auth/trust-model.md#why-the-update-button-is-system-only).
+Progress is pushed as the `update_status` SSE event.
+
 ## Proxies (`server/routes/integrations.ts`)
 
 | Method | Path | Body / Query | Notes |

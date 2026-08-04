@@ -32,6 +32,20 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
   return their batch to the inbox; 60s daemon backoff; single delivery
   channel per surface across bindings/codex; pid-reuse-safe liveness; bridge
   disabled on Windows (control socket is unix-only upstream).
+- Release awareness + one-click update (2026-08, `docs/operations/install.md`):
+  the PWA home shows `Surface X available` with an **Update** button that runs
+  the existing `surface upgrade` converger (no second upgrade path, no
+  improvised daemon — the sanctioned supervisor restart). The npm check is
+  cached (6h TTL, memory + `<data-dir>/update-check.json`), timer-driven rather
+  than polled, backs off on failure, degrades silently offline, and is off under
+  `NODE_ENV=test`/CI; `GET /api/update/status` is cache-only. **Locked decision:
+  `POST /api/update/apply` is system-plane only** — installing and running code
+  on the host is what the trust model reserves for loopback/system bearers, so a
+  paired device sees the notice and is told to update from the host. Repo clones
+  and project-local installs get honest advice instead of a button. The upgrade
+  child is killed by the restart it triggers on systemd, so `surface upgrade
+  --progress-file` writes each phase *before* the step it names and the
+  restarted server reconciles the last phase against its own version.
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
 - Content is served through a dedicated content origin when configured, with Host/Origin validation on the app plane.
 - Built-in templates include ask, stream, video, board, and doc. The report
