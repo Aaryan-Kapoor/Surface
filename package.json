@@ -1,7 +1,7 @@
 {
   "name": "surface-display",
   "version": "0.2.3",
-  "description": "The last app. A universal display for AI agents.",
+  "description": "A two-way interaction primitive for AI agents. Agents render live UI onto every screen you own, and every tap lands back in their context as intent.",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/Aaryan-Kapoor/Surface#readme",
@@ -10,9 +10,12 @@
   },
   "keywords": [
     "agent",
+    "agent-ui",
+    "interactive",
     "display",
     "cli",
     "claude-code",
+    "codex",
     "artifacts",
     "dashboard"
   ],
