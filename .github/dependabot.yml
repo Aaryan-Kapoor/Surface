@@ -1,0 +1,19 @@
+# The 0.2.3 incident was a stale native-dependency pin (better-sqlite3 11.x
+# with no Node 24 prebuilds). Dependabot PRs run the full gate — including
+# the toolchain-free fresh-install and new-user e2e jobs — so a driver bump
+# arrives pre-validated instead of a month late.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

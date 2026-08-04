@@ -6,6 +6,11 @@ on:
     branches: [master]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      llm-e2e:
+        description: "Also run the paid OpenRouter LLM e2e (needs OPENROUTER_API_KEY secret)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -14,18 +19,48 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
+# Actions are pinned to commit SHAs (comment = the tag reviewed); Dependabot
+# keeps the pins fresh. Every checkout drops credential persistence — no job
+# here needs to push.
 jobs:
+  # Packs the tarball ONCE. Every install-shaped job downloads this artifact,
+  # so they all provably test the same bytes — and none of them repeat
+  # npm ci + prepare.
+  pack:
+    name: Pack release tarball
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm pack
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: tarball
+          path: surface-display-*.tgz
+          retention-days: 7
+          if-no-files-found: error
+
   package:
     name: Package (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
         node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -35,24 +70,24 @@ jobs:
       - run: node dist/surface.mjs --help
       - run: node dist/surface.mjs --version
 
+  # Node 22 is the supported floor; Node 24 is the current LTS — the version
+  # a new user actually has. Both run on every OS we ship to: native-module
+  # prebuild coverage is per-platform × per-ABI, so a Linux pass proves
+  # nothing about win32/darwin.
   test:
     name: Test (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            node-version: 22
-          - os: ubuntu-latest
-            node-version: 24
-          - os: windows-latest
-            node-version: 22
-          - os: macos-latest
-            node-version: 22
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -65,31 +100,33 @@ jobs:
   # surface service install → health → logs → uninstall against the REAL native
   # supervisor on every OS — Scheduled Task on Windows, launchd on macOS, and a
   # real systemd user manager on Linux (booted via loginctl enable-linger,
-  # since hosted runners have no login session). Nothing is mocked.
+  # since hosted runners have no login session). Nothing is mocked. Runs on
+  # Node 24 — the version a new user installs with.
   service-smoke:
     name: Service smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    needs: pack
     strategy:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
-          cache: npm
+          node-version: 24
       - name: Boot a user systemd manager (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo loginctl enable-linger "$(whoami)"
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             [ -S "/run/user/$(id -u)/bus" ] && break
             sleep 1
           done
           XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user show-environment
-      - run: npm ci
-      - run: npm pack
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: tarball
       - name: Global-install the tarball
         shell: bash
         run: npm install -g ./surface-display-*.tgz
@@ -98,7 +135,8 @@ jobs:
         run: |
           set -euxo pipefail
           if [ "$RUNNER_OS" = "Linux" ]; then
-            export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+            XDG_RUNTIME_DIR="/run/user/$(id -u)"
+            export XDG_RUNTIME_DIR
             export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
           fi
           surface --version
@@ -122,18 +160,21 @@ jobs:
   fresh-install:
     name: Fresh install (Node ${{ matrix.node-version }}, no toolchain)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: pack
     strategy:
       fail-fast: false
       matrix:
         node-version: [22, 24, 25]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: bash scripts/test-fresh-install.sh ${{ matrix.node-version }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: tarball
+          path: ${{ runner.temp }}/pkg
+      - run: bash scripts/test-fresh-install.sh --tarball "$RUNNER_TEMP"/pkg/surface-display-*.tgz ${{ matrix.node-version }}
 
   # The whole new-user path on the machine a new user actually has: stock
   # Ubuntu + real systemd, a non-root user, user-owned Node 24, no
@@ -143,44 +184,92 @@ jobs:
   new-user-e2e:
     name: New-user e2e (systemd container)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: pack
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: bash scripts/test-new-user-e2e.sh
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: tarball
+          path: ${{ runner.temp }}/pkg
+      - run: bash scripts/test-new-user-e2e.sh --tarball "$RUNNER_TEMP"/pkg/surface-display-*.tgz
 
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm audit --audit-level=high
 
+  # The paid, LLM-in-the-loop e2e (test/e2e.ts): an OpenRouter model drives
+  # the artifact API against a CI-local server. Opt-in — run the workflow
+  # manually with llm-e2e checked. Never part of the required set.
+  llm-e2e:
+    name: LLM e2e (OpenRouter, manual)
+    if: github.event_name == 'workflow_dispatch' && inputs.llm-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Run e2e against a CI-local server
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "OPENROUTER_API_KEY secret is not configured" >&2
+            exit 1
+          fi
+          export SURFACE_DATA_DIR="$RUNNER_TEMP/surface-e2e"
+          node dist/server.mjs > "$RUNNER_TEMP/server.log" 2>&1 &
+          server_pid=$!
+          for _ in $(seq 1 30); do
+            node dist/surface.mjs list >/dev/null 2>&1 && break
+            sleep 1
+          done
+          node dist/surface.mjs list >/dev/null
+          SURFACE_TEST_E2E=1 SURFACE_TEST_ALLOW_LIVE=1 npm run test:e2e
+          kill "$server_pid"
+
   # Publishes only from a v* tag, only when every job above is green.
   # Tokenless: npm trusted publishing via OIDC (id-token: write). Configure
   # this repo + workflow as the trusted publisher in the surface-display
-  # package settings on npmjs.com — the first-ever publish must be done
+  # package settings on npmjs.com — the first-ever publish must be run
   # locally, since npm only lets existing packages add a trusted publisher.
-  # Provenance is attested automatically on trusted publishes.
+  # Provenance is attested automatically on trusted publishes. After npm,
+  # a GitHub Release is created with the CHANGELOG section as notes.
   publish:
     name: Publish to npm
-    needs: [package, test, service-smoke, fresh-install, new-user-e2e, audit]
+    needs: [pack, package, test, service-smoke, fresh-install, new-user-e2e, audit]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
-      contents: read
+      contents: write # GitHub Release; the npm publish itself is OIDC
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
           cache: npm
@@ -198,4 +287,21 @@ jobs:
               process.exit(1);
             }
           "
+      - name: CHANGELOG must have a section for this version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '$0 ~ "^## "ver"( |$)" {f=1; next} /^## / {f=0} f' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "CHANGELOG.md has no section '## $version' (or it is empty) — write the release notes first" >&2
+            exit 1
+          fi
       - run: npm publish --access public
+      - name: GitHub Release with CHANGELOG notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" \
+              --verify-tag \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file "$RUNNER_TEMP/notes.md"

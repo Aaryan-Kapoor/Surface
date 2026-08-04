@@ -1,0 +1,79 @@
+# The blind spot every push-triggered pipeline shares: the ecosystem moves
+# without a commit. A new Node LTS ships, a native prebuild goes missing,
+# npm changes install behavior — and `npm install -g surface-display`
+# breaks for every new user while CI stays green. (Exactly this cost a
+# month of broken installs on Node 24 before 0.2.4.)
+#
+# So the canary installs the PUBLISHED package — what users actually type —
+# on a schedule, in toolchain-free containers, across the supported floor
+# (22), the current LTS (`lts`), and the bleeding edge (`current`). The
+# image aliases auto-track new Node releases with no matrix edits. On any
+# failure it opens (or bumps) a labeled issue.
+name: Canary
+
+on:
+  schedule:
+    - cron: "17 6 * * 1,4" # Mon + Thu, 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  published-install:
+    name: Published install (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, lts, current]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: bash scripts/test-fresh-install.sh --npm ${{ matrix.node }}
+
+  published-new-user:
+    name: Published new-user e2e (systemd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: bash scripts/test-new-user-e2e.sh --npm
+
+  file-issue:
+    name: File an issue on failure
+    needs: [published-install, published-new-user]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or bump the canary issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create canary --description "Published-package canary failure" --color B60205 --force
+          body="The scheduled canary failed: installing the **published** \`surface-display\` package broke for new users.
+
+          Run: $RUN_URL
+
+          This usually means ecosystem drift (new Node release without prebuilds, registry/npm behavior change) — not a bad commit. Reproduce locally with:
+          \`\`\`bash
+          bash scripts/test-fresh-install.sh --npm lts current 22
+          bash scripts/test-new-user-e2e.sh --npm
+          \`\`\`"
+          existing="$(gh issue list --label canary --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "Still failing: $RUN_URL"
+          else
+            gh issue create --title "Canary: published surface-display fails to install for new users" \
+              --label canary --body "$body"
+          fi
