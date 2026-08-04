@@ -28,21 +28,33 @@
 # Usage: scripts/test-fresh-install.sh [--tarball <path> | --npm [--spec <spec>]] [tag ...]
 set -euo pipefail
 
+invoke_dir="$PWD"
 cd "$(dirname "$0")/.."
 
 mode=pack
 tarball=""
-spec="surface-display@latest"
+spec=""
 versions=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tarball) mode=tarball; tarball="$2"; shift 2 ;;
-    --npm) mode=npm; shift ;;
-    --spec) spec="$2"; shift 2 ;;
+    --tarball)
+      [ $# -ge 2 ] || { echo "--tarball needs a path" >&2; exit 2; }
+      [ "$mode" = pack ] || { echo "conflicting source modes (--tarball vs --npm)" >&2; exit 2; }
+      mode=tarball; tarball="$2"; shift 2 ;;
+    --npm)
+      [ "$mode" = pack ] || { echo "conflicting source modes (--npm vs --tarball)" >&2; exit 2; }
+      mode=npm; shift ;;
+    --spec)
+      [ $# -ge 2 ] || { echo "--spec needs a value" >&2; exit 2; }
+      spec="$2"; shift 2 ;;
     -*) echo "unknown flag $1" >&2; exit 2 ;;
     *) versions+=("$1"); shift ;;
   esac
 done
+if [ -n "$spec" ] && [ "$mode" != npm ]; then
+  echo "--spec requires --npm" >&2; exit 2
+fi
+[ -n "$spec" ] || spec="surface-display@latest"
 [ "${#versions[@]}" -gt 0 ] || versions=(22 24 25)
 
 DOCKER=docker
@@ -61,7 +73,9 @@ case "$mode" in
     echo "packed $tgz"
     ;;
   tarball)
-    tarball="$(realpath "$tarball")"
+    case "$tarball" in /*) ;; *) tarball="$invoke_dir/$tarball" ;; esac
+    tarball="$(realpath -- "$tarball")"
+    [ -f "$tarball" ] || { echo "no such tarball: $tarball" >&2; exit 2; }
     echo "using tarball $tarball"
     ;;
   npm)
@@ -96,7 +110,9 @@ INNER
 
 docker_args=(--rm -v "$tmp/inner.sh:/inner.sh:ro")
 if [ "$mode" = npm ]; then
-  docker_args+=(-e "INSTALL_SPEC=$spec")
+  # Canary mode must see today's images — a cached node:lts-slim would keep
+  # testing yesterday's LTS and defeat the auto-tracking aliases.
+  docker_args+=(--pull=always -e "INSTALL_SPEC=$spec")
 else
   docker_args+=(-v "$tarball:/pkg/surface-display.tgz:ro" -e "INSTALL_SPEC=/pkg/surface-display.tgz")
 fi

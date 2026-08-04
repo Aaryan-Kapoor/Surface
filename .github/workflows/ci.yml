@@ -276,7 +276,10 @@ jobs:
           registry-url: https://registry.npmjs.org
       - name: Update npm (OIDC trusted publishing needs >= 11.5.1)
         run: npm install -g npm@latest
-      - run: npm ci
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: tarball
+          path: ${{ runner.temp }}/pkg
       - name: Tag must match package.json version
         run: |
           node -e "
@@ -295,7 +298,30 @@ jobs:
             echo "CHANGELOG.md has no section '## $version' (or it is empty) — write the release notes first" >&2
             exit 1
           fi
-      - run: npm publish --access public
+      # Publish the EXACT tarball the gates tested — a bare `npm publish`
+      # would silently repack (rerunning prepare under a different npm) and
+      # ship bytes nothing validated. Skipping an already-published version
+      # keeps reruns alive: npm versions are immutable, so a failed later
+      # step must not dead-end the job at a doomed republish.
+      - name: Publish the gated tarball to npm
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          shopt -s nullglob
+          tgzs=("$RUNNER_TEMP"/pkg/surface-display-*.tgz)
+          if [ "${#tgzs[@]}" -ne 1 ]; then
+            echo "expected exactly one tarball artifact, found ${#tgzs[@]}" >&2
+            exit 1
+          fi
+          if [ "$(basename "${tgzs[0]}")" != "surface-display-$version.tgz" ]; then
+            echo "tarball ${tgzs[0]} does not match tag version $version" >&2
+            exit 1
+          fi
+          if [ "$(npm view "surface-display@$version" version 2>/dev/null || true)" = "$version" ]; then
+            echo "surface-display@$version already on npm — resuming release convergence"
+          else
+            npm publish "${tgzs[0]}" --access public
+          fi
       - name: GitHub Release with CHANGELOG notes
         env:
           GH_TOKEN: ${{ github.token }}

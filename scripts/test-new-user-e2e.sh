@@ -21,19 +21,31 @@
 # Usage: scripts/test-new-user-e2e.sh [--tarball <path> | --npm [--spec <spec>]]
 set -euo pipefail
 
+invoke_dir="$PWD"
 cd "$(dirname "$0")/.."
 
 mode=pack
 tarball=""
-spec="surface-display@latest"
+spec=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tarball) mode=tarball; tarball="$2"; shift 2 ;;
-    --npm) mode=npm; shift ;;
-    --spec) spec="$2"; shift 2 ;;
+    --tarball)
+      [ $# -ge 2 ] || { echo "--tarball needs a path" >&2; exit 2; }
+      [ "$mode" = pack ] || { echo "conflicting source modes (--tarball vs --npm)" >&2; exit 2; }
+      mode=tarball; tarball="$2"; shift 2 ;;
+    --npm)
+      [ "$mode" = pack ] || { echo "conflicting source modes (--npm vs --tarball)" >&2; exit 2; }
+      mode=npm; shift ;;
+    --spec)
+      [ $# -ge 2 ] || { echo "--spec needs a value" >&2; exit 2; }
+      spec="$2"; shift 2 ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
 done
+if [ -n "$spec" ] && [ "$mode" != npm ]; then
+  echo "--spec requires --npm" >&2; exit 2
+fi
+[ -n "$spec" ] || spec="surface-display@latest"
 
 DOCKER=docker
 if ! docker info >/dev/null 2>&1; then
@@ -56,7 +68,9 @@ case "$mode" in
     echo "packed $tgz"
     ;;
   tarball)
-    tarball="$(realpath "$tarball")"
+    case "$tarball" in /*) ;; *) tarball="$invoke_dir/$tarball" ;; esac
+    tarball="$(realpath -- "$tarball")"
+    [ -f "$tarball" ] || { echo "no such tarball: $tarball" >&2; exit 2; }
     echo "using tarball $tarball"
     ;;
   npm)
@@ -64,7 +78,14 @@ case "$mode" in
     ;;
 esac
 
-$DOCKER build -t surface-new-user-e2e scripts/new-user-e2e
+# Canary mode must not test a stale cached base image or a Node tarball
+# frozen in a cached build layer — that would defeat the point of watching
+# the live ecosystem.
+build_args=()
+if [ "$mode" = npm ]; then
+  build_args+=(--pull --no-cache)
+fi
+$DOCKER build ${build_args[@]+"${build_args[@]}"} -t surface-new-user-e2e scripts/new-user-e2e
 
 run_args=(-d --privileged -v "$PWD/scripts/new-user-e2e/user.sh:/user.sh:ro")
 if [ "$mode" != npm ]; then

@@ -19,6 +19,12 @@ on:
 permissions:
   contents: read
 
+# Serialize runs: overlapping scheduled + manual canaries could otherwise
+# both see "no open issue" and file duplicates.
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
 jobs:
   published-install:
     name: Published install (node ${{ matrix.node }})
