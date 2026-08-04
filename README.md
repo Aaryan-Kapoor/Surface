@@ -84,6 +84,15 @@ For a multi-step interaction, keep the intermediate clicks local with
 not once per toggle. State persists across sessions; `surface state <id>` reads
 it back. ([docs](docs/state/stateful-surfaces.md))
 
+The whole loop also has a no-HTML version. This puts a question on every screen
+you own and blocks the agent until you answer it, from wherever you are:
+
+```bash
+surface ask "Ship release v2.4.0 to production?" --options ship,hold --wait
+# … you tap [ship] on your phone …
+# {"choice":"ship","text":null,"answered_at":"…","device":"phone","surface_id":"…"}
+```
+
 ## What you can build
 
 None of these ship as a command. They are a handful of commands each, written
@@ -100,6 +109,7 @@ pixel:
 <canvas id="board"></canvas>
 <script>
   const c = document.getElementById("board");
+  let n = 0;
   c.addEventListener("pointermove", e => Surface.stage("p" + n++, [e.offsetX, e.offsetY]));
   c.addEventListener("pointerup",   () => Surface.commit("drew"));
 </script>
