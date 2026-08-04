@@ -20,6 +20,7 @@ import { closeSSEClients } from "./sse.js";
 import { closeCodexBridge } from "./codexBridge.js";
 import { setupFileLogging } from "./logging.js";
 import { startClaimReaper } from "./bindings.js";
+import { serverVersion, startUpdateChecks, stopUpdateWatchers } from "./updates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -283,17 +284,6 @@ app.use((req, res, next) => {
 // System plane only: the content port resolves to `device` and gets 403,
 // so a TCP connect on that port is the (sufficient) content-plane probe.
 const STARTED_AT = Date.now();
-let versionCache: string | null = null;
-function serverVersion(): string {
-  if (versionCache) return versionCache;
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-    versionCache = String(pkg.version || "unknown");
-  } catch {
-    versionCache = "unknown";
-  }
-  return versionCache;
-}
 app.get("/healthz", (req, res) => {
   if (req.auth?.role !== "system") {
     sendError(res, 403, "healthz requires the system plane");
@@ -321,6 +311,11 @@ app.use(jsonErrorMiddleware);
 const httpServer = app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
   setThumbServerPort(PORT);
+
+  // Release awareness: resolves any update that was in flight across this
+  // restart, then arms the cached (TTL'd, opt-out-able, off in tests/CI)
+  // registry check. Never blocks a request — see server/updates.ts.
+  startUpdateChecks();
 
   // Print a one-time pairing token when reachable beyond loopback (or when
   // explicitly requested) so a fresh browser can pair without a prior session.
@@ -388,6 +383,7 @@ function shutdown(signal: string) {
   console.log(`[startup] ${signal} received; shutting down`);
   closeSSEClients();
   closeCodexBridge();
+  stopUpdateWatchers();
   contentServer.close(() => {});
   httpServer.close(() => {
     closeDb();
