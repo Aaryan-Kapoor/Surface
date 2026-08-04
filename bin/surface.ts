@@ -584,6 +584,13 @@ async function waitForAction(opts: {
   // so the server can verify the claimant is a live waiter whose registered
   // scope actually covers the action.
   let clientId: string | null = null;
+  // Armed on connect, cleared on registration and on disconnect — see the
+  // comment where it is set.
+  let unregisteredWarning: ReturnType<typeof setTimeout> | null = null;
+  const disarmUnregisteredWarning = () => {
+    if (unregisteredWarning) clearTimeout(unregisteredWarning);
+    unregisteredWarning = null;
+  };
   // Actions we have a final answer about: emitted, or provably someone else's. A
   // claim that failed in transit is deliberately NOT recorded, so a later poll
   // retries instead of silently skipping work nobody took.
@@ -639,6 +646,12 @@ async function waitForAction(opts: {
         // registration went stale, so they are not losses at all.
         if (status === 404 || code === "already_handled") return "gone";
         if (code === "already_claimed") return "taken";
+        // A malformed claim (400) or one outside our registered scope (403) is
+        // decided, not in doubt: the same request will be refused identically
+        // three more times. Retrying it only burns 600ms of sleep on every poll
+        // and every `actions_available`. Report it unresolved so the action
+        // stays re-offerable, but stop asking.
+        if (status === 400 || status === 403) return "unknown";
         await sleep(200 * (attempt + 1)); // same token, so retrying is idempotent
       }
     }
@@ -747,17 +760,23 @@ async function waitForAction(opts: {
       // nothing, and block forever without a word. That skew is the ordinary
       // upgrade order — the CLI updates on install, the running service does not
       // until it restarts — so say so rather than hanging silently.
+      //
+      // The handle is cleared the moment we register AND when the connection
+      // ends: a server that goes away is not an old server, and a timer left
+      // armed across a reconnect (or across a shutdown that resets clientId)
+      // fires against a service that did register us and tells the user to
+      // upgrade something that was only restarting.
       if (claiming) {
-        const unregistered = setTimeout(() => {
+        unregisteredWarning = setTimeout(() => {
           if (!clientId) {
             process.stderr.write(
-              ": this Surface service predates single-claimant delivery — it did not " +
+              "surface wait: this Surface service predates single-claimant delivery — it did not " +
               "acknowledge the waiter registration, so no actions will be delivered. " +
               "Restart the Surface service to pick up the new build.\n",
             );
           }
         }, 5000);
-        unregistered.unref();
+        unregisteredWarning.unref();
       }
       // An observer never registers, so it has no identity to wait for and can
       // drain immediately.
@@ -796,6 +815,7 @@ async function waitForAction(opts: {
                 // Registered: we have an identity and may claim. Drain the
                 // backlog before handling anything live.
                 clientId = String(parsed.client_id);
+                disarmUnregisteredWarning();
                 const justMissed = await pollPending();
                 if (justMissed && !opts.follow) return justMissed;
               } else if (evt === "actions_available") {
@@ -833,6 +853,7 @@ async function waitForAction(opts: {
       // failing every claim. Re-registration on the next connect triggers the
       // real drain.
       clientId = null;
+      disarmUnregisteredWarning();
     }
   })();
 

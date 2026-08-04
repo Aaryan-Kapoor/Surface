@@ -456,6 +456,112 @@ try {
     await waitForListening("dispatch-a", false, 8000);
   });
 
+  // Scope is enforced server-side, not just in the CLI: a registered waiter must
+  // not be able to take work its registration does not cover just by asking for
+  // it by id. `waiter_not_eligible` is a permanent answer for that request — the
+  // claimant must not retry it.
+  await test("a waiter registered for another action is refused with 403, not given the claim", async () => {
+    const id = await fire("dispatch-a", "eligible-only", {});
+    const ac = new AbortController();
+    const streamed = fetch(`${BASE}/stream?wait_for_surface=dispatch-a&wait_action=something-else`, { signal: ac.signal });
+    try {
+      const clientId = await firstWaiterClientId(streamed);
+      const res = await api("POST", `/actions/${id}/claim`, { token: "tok-inelig", client_id: clientId });
+      assert.equal(res.status, 403, `expected 403, got ${res.status} ${JSON.stringify(res.json)}`);
+      assert.equal(res.json.error, "waiter_not_eligible");
+      const { json } = await api("GET", "/artifacts/dispatch-a/actions");
+      assert.ok(json.some((a: any) => a.id === id), "a refused claim must leave the action pending");
+    } finally {
+      ac.abort();
+      await streamed.catch(() => {});
+    }
+    await api("POST", `/actions/${id}/ack`, {});
+  });
+
+  // Grace is per action. A live-but-not-claiming waiter (registered socket, no
+  // claim — a wedged harness) must still get its full five seconds on EVERY
+  // action, not just on the one whose timer happened to fire. Two clicks four
+  // seconds apart used to hand the binding both at once, giving the second one
+  // only 0.1s of its own window.
+  await test("a click inside its own grace window is not swept into an older click's binding batch", async () => {
+    const batchLog = path.join(dataDir, "grace-batches.jsonl");
+    try { fs.unlinkSync(batchLog); } catch {}
+    const dumper = path.join(dataDir, "dump-batch.js");
+    fs.writeFileSync(dumper, [
+      "let b = '';",
+      "process.stdin.on('data', (c) => { b += c; });",
+      `process.stdin.on('end', () => { require('fs').appendFileSync(${JSON.stringify(batchLog)}, b + "\\n"); process.exit(0); });`,
+    ].join("\n"));
+
+    fs.mkdirSync(path.join(projectA, ".surface"), { recursive: true });
+    fs.writeFileSync(
+      path.join(projectA, ".surface", "config.json"),
+      JSON.stringify({ bindings: { enabled: true } }),
+    );
+    const reg = await api("POST", "/artifacts/dispatch-a/bindings", {
+      action_pattern: "graceclick",
+      kind: "command",
+      run: `node ${JSON.stringify(dumper)}`,
+      cwd: projectA,
+    });
+    assert.equal(reg.status, 201, `binding registration failed: ${JSON.stringify(reg.json)}`);
+
+    // A registered waiter that never claims: eligible, so grace applies, but it
+    // will not take either action. Portable stand-in for a wedged CLI.
+    const ac = new AbortController();
+    const streamed = fetch(`${BASE}/stream?wait_for_surface=dispatch-a&wait_action=graceclick`, { signal: ac.signal });
+    try {
+      await firstWaiterClientId(streamed);
+      const first = await fire("dispatch-a", "graceclick", { n: 1 });
+      await sleep(4000);
+      const second = await fire("dispatch-a", "graceclick", { n: 2 });
+
+      await waitFor(async () => fs.existsSync(batchLog), 8000, "the first binding batch to run");
+      await sleep(300);
+      const batch = JSON.parse(fs.readFileSync(batchLog, "utf8").trim().split("\n")[0]);
+      const ids = batch.actions.map((a: any) => a.id);
+      assert.ok(ids.includes(first), `the first batch should carry the elapsed action: ${JSON.stringify(ids)}`);
+      assert.ok(
+        !ids.includes(second),
+        `a click still inside its own grace window was swept into an older click's batch: ${JSON.stringify(ids)}`,
+      );
+    } finally {
+      ac.abort();
+      await streamed.catch(() => {});
+      await api("DELETE", `/bindings/${reg.json.id}`);
+    }
+  });
+
+  // A `surface wait` whose SERVER goes away is not talking to an old server, it
+  // is talking to no server. The one-shot "this service predates single-claimant
+  // delivery" warning must not fire in that case: it tells the user to upgrade
+  // something that is merely restarting.
+  await test("a waiter whose server restarts does not claim the server is too old", async () => {
+    const p = await isolatedPorts();
+    const tmp = tmpDir("surface-dispatch-restart-");
+    const short = spawnServer(p.port, tmp, {}, p.contentPort);
+    let w: Waiter;
+    try {
+      const shortBase = `http://127.0.0.1:${p.port}`;
+      await waitForReady(shortBase, "/artifacts");
+      const created = await makeClient(shortBase)("POST", "/artifacts", {
+        body: { id: "restart-me", title: "restart-me", kind: "html", mime: "text/html", content: "<h1>x</h1>" },
+      });
+      assert.ok(created.status === 201 || created.status === 200);
+      w = spawnWaiter("restart", ["--follow", "--id", "restart-me"], shortBase);
+      await sleep(2000); // registered
+      await killServer(short, p.port);
+      await sleep(7000); // outlive the 5s registration timer
+      assert.ok(
+        !w.stderr.includes("predates single-claimant delivery"),
+        `a mere server restart was reported as an out-of-date service: ${w.stderr}`,
+      );
+    } finally {
+      killWaiters();
+      cleanupDir(tmp);
+    }
+  });
+
   if (failures.length) {
     throw new Error(`actionDispatch: ${failures.length} failing case(s): ${failures.join(", ")}`);
   }
