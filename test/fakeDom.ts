@@ -127,7 +127,14 @@ export class FakeElement {
 
   setAttribute(name: string, value: string): void { this.attributes.set(name.toLowerCase(), String(value)); }
   getAttribute(name: string): string | null { return this.attributes.has(name.toLowerCase()) ? this.attributes.get(name.toLowerCase())! : null; }
-  removeAttribute(name: string): void { this.attributes.delete(name.toLowerCase()); }
+  removeAttribute(name: string): void {
+    const key = name.toLowerCase();
+    this.attributes.delete(key);
+    // Removing the style attribute drops the inline declarations with it —
+    // which is how applyTheme() resets the custom properties it set through
+    // `style.setProperty`. Without this the reset looks like a no-op here.
+    if (key === "style") for (const prop of Object.keys(this.style._props)) delete this.style._props[prop];
+  }
   hasAttribute(name: string): boolean { return this.attributes.has(name.toLowerCase()); }
 
   get classList() {

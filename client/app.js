@@ -765,10 +765,19 @@ function applyTheme(config) {
     document.body.removeAttribute("style");
     const themeCSS = document.getElementById("theme-css");
     if (themeCSS) themeCSS.remove();
-    const overlay = document.getElementById("display-overlay");
-    if (overlay) overlay.remove();
-    const hw = document.getElementById("home-widget");
-    if (hw) hw.remove();
+    // Slots are not theme state. `surface slot home|overlay` promotes an
+    // *artifact* (metadata.display_role); a theme is display config, and the
+    // two are set independently. Tearing the slot iframes out here meant that
+    // on a display with no theme — the default — an empty config took this
+    // branch and destroyed them: renderGrid() ends with
+    // applyTheme(displayConfig), so the home widget it had just built was
+    // removed on every single render, and the overlay never survived one.
+    // renderOverlay() is the overlay's authority and drops it only when the
+    // slot is genuinely empty (which is also what mounts it at boot, since
+    // startApp() reaches applyTheme() through this branch on such a display).
+    // The home widget belongs to renderGrid(), which rebuilds the view
+    // wholesale, so nothing here has to remove it.
+    renderOverlay();
     displayConfig = {};
     return;
   }
@@ -1144,6 +1153,10 @@ function labelForMime(mime) {
 
 // ── Grid View ──
 
+// The live home-widget's resize handler, held so the next render can take it
+// off `window` — see the home-widget block in renderGrid().
+let homeWidgetResize = null;
+
 function renderGrid() {
   currentSurfaceId = null;
   resumeTheme();
@@ -1205,6 +1218,14 @@ function renderGrid() {
   gridView.appendChild(header);
 
   // Home widget (full HTML/JS iframe on the homescreen)
+  //
+  // Whatever the previous render left listening measures an iframe that is now
+  // detached, so it goes first — unconditionally, because this render may not
+  // put a widget back.
+  if (homeWidgetResize) {
+    window.removeEventListener("resize", homeWidgetResize);
+    homeWidgetResize = null;
+  }
   if (displaySlots.home) {
     const widget = document.createElement("iframe");
     widget.id = "home-widget";
@@ -1226,12 +1247,26 @@ function renderGrid() {
         widget.style.height = Math.max(h, 60) + "px";
       } catch { widget.style.height = "200px"; }
     };
+    // Re-measure on resize: a widget that reflows at a different width would
+    // otherwise keep the old height. Registered once per iframe, not once per
+    // load — widget.onload can fire more than once, and renderGrid() builds a
+    // fresh iframe on every hash change, SSE reconnect and display_theme. Left
+    // unmanaged these pile up for the life of the page (worst on a kiosk, which
+    // never reloads), and each stale one measures a detached frame, where
+    // contentDocument is null and the catch writes 200px to a dead node.
+    const onResize = () => {
+      if (!widget.isConnected) {
+        window.removeEventListener("resize", onResize);
+        return;
+      }
+      sizeWidget();
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+    homeWidgetResize = onResize;
     widget.onload = () => {
       sizeWidget();
-      // Re-measure once fonts have settled and again on resize; a widget that
-      // reflows at a different width would otherwise keep the old height.
+      // Re-measure once fonts have settled.
       requestAnimationFrame(sizeWidget);
-      window.addEventListener("resize", sizeWidget, { passive: true });
     };
   }
 
@@ -1349,7 +1384,7 @@ function createGridToolbar() {
   bar.innerHTML = `
     <div class="grid-toolbar-left" role="group" aria-label="Filter by kind">
       ${groups.map((f) => `
-        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${escapeAttr(f.id)}" aria-pressed="${escapeAttr(String(f.id === gridFilter))}">${escapeText(f.label)}</button>
+        <button type="button" class="grid-chip" data-filter="${escapeAttr(f.id)}" aria-pressed="${escapeAttr(String(f.id === gridFilter))}">${escapeText(f.label)}</button>
       `).join("")}
     </div>
     <select class="grid-sort" aria-label="Sort surfaces">
@@ -1360,6 +1395,10 @@ function createGridToolbar() {
     </select>
   `;
   bar.querySelectorAll(".grid-chip").forEach((btn) => {
+    // The active chip is marked here rather than interpolated into `class`:
+    // every attribute-value interpolation in this file has to go through
+    // escapeAttr, and the build guard in test/clientRender.ts holds that line.
+    btn.classList.toggle("grid-chip--active", btn.dataset.filter === gridFilter);
     btn.addEventListener("click", () => {
       gridFilter = btn.dataset.filter;
       bar.querySelectorAll(".grid-chip").forEach((b) => {
@@ -1401,6 +1440,14 @@ function paintGrid(target) {
   const grid = target || document.getElementById("surface-grid");
   if (!grid) return;
   const visible = applyGridFilters(surfaces);
+  // Every card in the grid is about to be detached, and an IntersectionObserver
+  // holds its targets strongly: a thumb that never scrolled into view would
+  // stay observed forever, and its onerror closes over `preview`, so the whole
+  // dead card subtree is retained with it. paintGrid runs on every keystroke,
+  // every filter change, every hash change and every SSE reconnect — on a kiosk
+  // that never reloads, that is unbounded. Drop the old targets here; each card
+  // rebuilt below re-registers its own.
+  if (thumbObserver) thumbObserver.disconnect();
   grid.innerHTML = "";
   if (visible.length === 0) {
     const empty = document.createElement("div");
