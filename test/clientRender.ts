@@ -39,6 +39,17 @@ import { cleanupDir, killServer, makeClient, REPO_ROOT, sleep, spawnServer, tmpD
 let passed = 0;
 const failures: string[] = [];
 
+async function checkAsync(name: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+    passed++;
+    console.log(`  PASS  ${name}`);
+  } catch (err: any) {
+    failures.push(name);
+    console.error(`  FAIL  ${name}\n        ${err?.message || err}`);
+  }
+}
+
 function check(name: string, fn: () => void): void {
   try {
     fn();
@@ -74,6 +85,14 @@ interface App {
   windowListeners: (type: string) => Function[];
   /** Every element still registered with the thumbnail IntersectionObserver. */
   observedThumbs: () => FakeElement[];
+  /**
+   * Run every callback `setTimeout` has been handed and clear the queue.
+   * Timers are inert by default here — a live one would outlast the suite — so
+   * a deferred behaviour is only observable by asking for it.
+   */
+  flushTimers: () => void;
+  /** The same, for `requestAnimationFrame` — where the reveal happens. */
+  flushFrames: () => void;
 }
 
 interface AppOptions {
@@ -83,6 +102,12 @@ interface AppOptions {
    * that read `img.src` want the eager path.
    */
   intersectionObserver?: boolean;
+  /**
+   * Report a secure context, so `copyToClipboard` takes the `navigator.clipboard`
+   * path instead of the `execCommand` fallback (which a headless DOM has no
+   * honest answer for). Only the tests that actually copy want this.
+   */
+  secureContext?: boolean;
 }
 
 function loadApp(options: AppOptions = {}): App {
@@ -111,7 +136,7 @@ function loadApp(options: AppOptions = {}): App {
     location: { hash: "", origin: "http://127.0.0.1", protocol: "http:", hostname: "127.0.0.1", reload() {} },
     innerWidth: 1280,
     innerHeight: 800,
-    isSecureContext: false,
+    isSecureContext: !!options.secureContext,
     open() {},
   };
 
@@ -119,6 +144,8 @@ function loadApp(options: AppOptions = {}): App {
   // keeps its targets alive, so "what is still registered" is exactly the
   // retention question the leak test asks.
   const observers: any[] = [];
+  const pendingTimers: Function[] = [];
+  const pendingFrames: Function[] = [];
   class FakeIntersectionObserver {
     targets = new Set<FakeElement>();
     constructor(public cb: Function, public opts: unknown) { observers.push(this); }
@@ -150,13 +177,13 @@ function loadApp(options: AppOptions = {}): App {
     EventSource: FakeEventSource,
     Image: class { constructor() { return doc.createElement("img"); } },
     console,
-    // Deterministic: no timer in app.js is load-bearing for what is asserted
-    // here, and a live one would keep the suite alive.
-    setTimeout: () => 0,
+    // Deterministic: nothing fires on its own, and a live timer would keep the
+    // suite alive. Callbacks are kept so a test can flush them on purpose.
+    setTimeout: (fn: Function) => { pendingTimers.push(fn); return pendingTimers.length; },
     clearTimeout: () => {},
     setInterval: () => 0,
     clearInterval: () => {},
-    requestAnimationFrame: () => 0,
+    requestAnimationFrame: (fn: Function) => { pendingFrames.push(fn); return pendingFrames.length; },
     confirm: () => false,
     alert: () => {},
   };
@@ -175,6 +202,8 @@ function loadApp(options: AppOptions = {}): App {
     run: (code: string) => vm.runInContext(code, sandbox),
     windowListeners: (type: string) => [...(listeners.get(type) || [])],
     observedThumbs: () => observers.flatMap((o) => [...o.targets]),
+    flushTimers: () => { const due = pendingTimers.splice(0); for (const fn of due) fn(); },
+    flushFrames: () => { const due = pendingFrames.splice(0); for (const fn of due) fn(); },
   };
 }
 
@@ -800,6 +829,54 @@ try {
     assert.match(pair, /--overlay:\s*#020202/, "pair.html drifted from the overlay tone");
     assert.match(pair, /--interactive:\s*#121212/, "pair.html drifted from the interactive tone");
     assert.match(pair, /--bg:\s*#0a0a0a/, "pair.html drifted from the page tone");
+  });
+
+  // A real install got as far as the agent's first message correcting the
+  // paste string: the prompt told it to record tutorial state in
+  // INSTALL_FOR_AGENTS.md, which both that file and docs/TUTORIAL.md forbid.
+  // The dialog hands this text to an agent verbatim, so the text is the
+  // contract.
+  check("the tutorial dialog hands over a prompt that names no state file", () => {
+    const app = loadApp();
+    app.run("showTutorialModal();");
+    const overlay = app.document.getElementById("tutorial-modal");
+    assert.ok(overlay, "the tutorial dialog never opened");
+
+    const prompt: string = app.run("TUTORIAL_PROMPT");
+    assert.match(prompt, /docs\/TUTORIAL\.md/, "the prompt must name the tour guide");
+    assert.ok(
+      !/INSTALL_FOR_AGENTS\.md/.test(serializeNode(overlay!)),
+      "the dialog still points tutorial state at INSTALL_FOR_AGENTS.md",
+    );
+    assert.ok(
+      !/update the tutorial state/i.test(prompt),
+      "the prompt still instructs the agent to write state by hand",
+    );
+  });
+
+  // Copying is the only thing this dialog does. It used to relabel the button
+  // and then sit there over the dashboard until dismissed by hand, so the copy
+  // never felt like it had completed anything.
+  await checkAsync("the tutorial dialog leaves once the prompt is copied", async () => {
+    const app = loadApp({ secureContext: true });
+    app.run("showTutorialModal();");
+    app.flushFrames();
+
+    const overlay = app.document.getElementById("tutorial-modal");
+    const copy = app.document.getElementById("tutorial-copy-btn");
+    assert.ok(overlay && copy, "the tutorial dialog never opened");
+    const shown = () => String(overlay!.getAttribute("class") || "").includes("modal-overlay--visible");
+    assert.ok(shown(), "the dialog never became visible");
+
+    copy!.dispatch("click");
+    // The handler awaits copyToClipboard, which awaits writeText: several
+    // microtask hops deep, so let the queue drain rather than counting them.
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.match(serializeNode(copy!), /Copied/, "the copy was never confirmed");
+    assert.ok(shown(), "the dialog left before its confirmation could be read");
+
+    app.flushTimers();
+    assert.ok(!shown(), "the dialog stayed open after the prompt was copied");
   });
 
   check("the pairing page names the command that produces a token", () => {
