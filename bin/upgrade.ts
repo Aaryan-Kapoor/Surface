@@ -366,20 +366,24 @@ async function latestVersion(): Promise<string> {
   return body.version;
 }
 
-function newerThan(a: string, b: string): boolean {
+export function newerThan(a: string, b: string): boolean {
   const parse = (v: string) => v.split(/[.+-]/, 3).map((n) => Number(n) || 0);
   const [a0, a1, a2] = parse(a);
   const [b0, b1, b2] = parse(b);
   return a0 !== b0 ? a0 > b0 : a1 !== b1 ? a1 > b1 : a2 > b2;
 }
 
-type InstallContext = "global" | "local" | "dev";
+export type InstallContext = "global" | "local" | "dev";
 
 function npmCmd(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function installContext(): InstallContext {
+// Exported for the server's update endpoint (server/updates.ts): the one-click
+// update in the PWA must offer `npm install -g` only where `surface upgrade`
+// would actually run it. Blocking (spawns `npm root -g`) — callers memoize and
+// keep it off the request path.
+export function installContext(): InstallContext {
   const root = packageRoot();
   if (path.basename(path.dirname(root)) !== "node_modules") return "dev";
   const probe = spawnSync(npmCmd(), ["root", "-g"], {
@@ -398,12 +402,63 @@ function installContext(): InstallContext {
   return "local";
 }
 
+// ── progress reporting (--progress-file) ──
+//
+// `surface upgrade` restarts the service it is converging, which on systemd
+// also kills this process (the child lives in the unit's cgroup). A file is
+// therefore the only channel that survives the step it is reporting: the
+// server writes nothing here, it only reads. Writes are atomic (tmp+rename) so
+// a reader never sees a half-written phase, and the phase is written *before*
+// the step it names, so a killed run still leaves an honest last-known state
+// that the restarted server reconciles against its own version.
+
+export type UpgradePhase = "checking" | "installing" | "restarting" | "done" | "failed";
+
+export interface UpgradeProgress {
+  phase: UpgradePhase;
+  started_at: string;
+  updated_at: string;
+  pid: number;
+  from: string;
+  to?: string | null;
+  installed?: string | null;
+  context?: InstallContext;
+  error?: string | null;
+}
+
+function makeProgressWriter(file: string | null, from: string): (patch: Partial<UpgradeProgress>) => void {
+  if (!file) return () => {};
+  const started = new Date().toISOString();
+  let state: UpgradeProgress = { phase: "checking", started_at: started, updated_at: started, pid: process.pid, from };
+  return (patch) => {
+    state = { ...state, ...patch, updated_at: new Date().toISOString() };
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = `${file}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
+      fs.renameSync(tmp, file);
+    } catch {
+      // progress is advisory — never fail the upgrade because we couldn't report it
+    }
+  };
+}
+
 export async function runUpgrade({ flags }: Ctx): Promise<void> {
   const json = flags.json === true;
   const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 30;
   const name = typeof flags.name === "string" ? flags.name : undefined;
+  const progressFile = typeof flags["progress-file"] === "string" ? path.resolve(flags["progress-file"]) : null;
   const current = localVersion();
-  const latest = await latestVersion();
+  const progress = makeProgressWriter(progressFile, current);
+  progress({ phase: "checking" });
+
+  let latest: string;
+  try {
+    latest = await latestVersion();
+  } catch (err: any) {
+    progress({ phase: "failed", error: String(err?.message || err) });
+    throw err;
+  }
   const available = newerThan(latest, current);
   const context = installContext();
 
@@ -422,6 +477,7 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
 
   let installed = current;
   let packageStep = "unchanged";
+  progress({ phase: "installing", to: latest, context });
   if (available && context === "global") {
     const res = spawnSync(npmCmd(), ["install", "-g", `surface-display@${latest}`], {
       // --json promises pure JSON on stdout — npm's install chatter goes to
@@ -432,6 +488,7 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
     });
     if (res.status !== 0) {
       if (json && res.stdout) process.stderr.write(res.stdout);
+      progress({ phase: "failed", error: `npm install -g surface-display@${latest} failed (exit ${res.status ?? "?"})` });
       console.error(`npm install -g surface-display@${latest} failed (exit ${res.status ?? "?"})`);
       process.exit(1);
     }
@@ -445,10 +502,24 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   // Always converge skill + service, even when already on the latest version —
   // this is what finishes a manual `npm update -g` someone ran without us.
   const skill = syncSkill([], false, false, name);
+  // Written before the restart: on systemd this process dies inside
+  // `restartServiceIfStale`, so "restarting" is the last thing the file may
+  // ever hold. The restarted server resolves it against its own version.
+  progress({ phase: "restarting", installed, to: latest });
   const service = await restartServiceIfStale(timeoutSec, name);
   const failedLinks = skill.links.filter((l) => l.mode === "failed");
 
   const report = { previous: current, installed, latest, package: packageStep, context, skill, service };
+  const failed = (service.restarted && service.error) || failedLinks.length > 0;
+  progress(failed
+    ? {
+      phase: "failed",
+      installed,
+      error: service.restarted && service.error
+        ? `the service restarted but did not come back healthy: ${service.error}`
+        : `${failedLinks.length} skill target(s) could not be written`,
+    }
+    : { phase: "done", installed });
   if (json) {
     console.log(JSON.stringify(report, null, 2));
     if ((service.restarted && service.error) || failedLinks.length) process.exit(1);
@@ -471,7 +542,7 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   }
 }
 
-function contextAdvice(context: InstallContext): string {
+export function contextAdvice(context: InstallContext): string {
   return context === "dev"
     ? "this is a repo clone — update with: git pull && npm install && npm test"
     : "surface-display is installed locally here — update with: npm update surface-display (in that project)";
