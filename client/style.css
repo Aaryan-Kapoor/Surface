@@ -453,7 +453,12 @@ button { -webkit-tap-highlight-color: transparent; }
   background: transparent;
   border: 0;
   text-align: left;
+  /* Off-screen cards skip layout and paint entirely. The intrinsic size is the
+     measured card box, so the scrollbar stays honest and nothing jumps as rows
+     enter and leave. */
   contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
   -webkit-tap-highlight-color: transparent;
   animation: card-enter 0.42s var(--ease-out) both;
   animation-delay: var(--card-delay, 0s);
@@ -486,14 +491,17 @@ button { -webkit-tap-highlight-color: transparent; }
   transform: translateZ(0);
 }
 
-/* Hairline drawn on top so it survives the image bleed. */
+/* Hairline drawn on top so it survives the image bleed. Stronger than the
+   shell's --line: a near-black screenshot on a near-black page has nothing but
+   this ring to say where the card ends. */
 .card-preview::after {
   content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg) 16%, transparent);
   transition: box-shadow 0.24s var(--ease-out);
   z-index: 3;
 }
@@ -507,7 +515,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .surface-card:hover .card-preview::after,
 .surface-card:focus-within .card-preview::after {
-  box-shadow: inset 0 0 0 1px var(--line-strong);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg) 34%, transparent);
 }
 
 .surface-card:active .card-preview { transform: translateY(-1px) scale(0.995); }
@@ -737,10 +745,18 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .card-body {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: flex-start;
+  gap: 8px;
   min-width: 0;
   padding: 0 2px;
+}
+
+.card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
 }
 
 .card-title {
@@ -1244,7 +1260,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   align-items: center;
   gap: 8px;
   height: var(--nav-h);
-  padding: 0 10px 0 6px;
+  padding: 0 8px;
   padding-top: env(safe-area-inset-top, 0px);
   height: calc(var(--nav-h) + env(safe-area-inset-top, 0px));
   flex-shrink: 0;
@@ -1299,7 +1315,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   align-items: baseline;
   gap: 0;
   font-size: 11.5px;
-  color: var(--fg-ghost);
+  color: var(--fg-faint);
   white-space: nowrap;
   flex-shrink: 0;
   overflow: hidden;
@@ -1312,7 +1328,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   width: 2px;
   height: 2px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--fg-ghost);
   margin: 0 7px;
   vertical-align: middle;
 }
@@ -1347,7 +1363,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   border: 0;
   border-radius: var(--r-sm);
   background: transparent;
-  color: var(--fg-ghost);
+  color: var(--fg-faint);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1567,13 +1583,15 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   .grid-subtitle { display: none; }
   .grid-meta-count { display: none; }
   .grid-search-wrap { width: auto; }
+  .grid-search-wrap::before { left: 10px; }
   .grid-search {
     width: 34px;
-    padding: 7px 8px 7px 30px;
+    height: 34px;
+    padding: 0 0 0 30px;
     cursor: pointer;
     transition: width 0.24s var(--ease-out), padding 0.24s var(--ease-out), background 0.18s var(--ease-swift), border-color 0.18s var(--ease-swift);
   }
-  .grid-search:focus, .grid-search:not(:placeholder-shown) { width: min(52vw, 240px); padding-right: 12px; }
+  .grid-search:focus, .grid-search:not(:placeholder-shown) { width: min(56vw, 240px); padding-right: 12px; }
   /* the release pill shares the meta row; let it use the full width on a phone */
   .update-notice { max-width: 100%; }
   .grid-kbd { display: none; }
@@ -1583,42 +1601,43 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   .empty-state { padding: 32px 22px; gap: 22px; }
   .modal-panel { padding: 26px 22px 22px; border-radius: 16px; }
   .toast { left: 12px; right: 12px; max-width: none; }
+
+  /* Narrow bar: the surface's name is the only identity worth the width. Kind
+     and age are a tap away in the grid; the live dot stays because it is state. */
+  .surface-nav-meta > span:not(.surface-nav-live) { display: none; }
 }
 
 @media (max-width: 380px) {
   .grid { grid-template-columns: 1fr; }
 }
 
-/* Coarse pointers have no hover, so the tray needs a handle. One small glyph
-   per card opens it — three permanently-visible buttons on every card is a
-   toolbar pretending to be a gallery. */
+/* Coarse pointers have no hover, so the tray needs a handle. It lives in the
+   caption, not on the picture: a chip floating over every preview is a toolbar
+   pretending to be a gallery. */
 .card-more {
   display: none;
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 6;
+  flex: 0 0 auto;
+  align-self: center;
   width: 28px;
   height: 28px;
+  margin-right: -4px;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 0;
   border-radius: var(--r-sm);
-  background: rgba(10, 11, 13, 0.5);
-  backdrop-filter: blur(14px) saturate(160%);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  color: rgba(255, 255, 255, 0.9);
+  background: transparent;
+  color: var(--fg-faint);
   cursor: pointer;
   align-items: center;
   justify-content: center;
 }
 
 .card-more svg { display: block; }
+.card-more:active { background: var(--panel-2); color: var(--fg); }
 
 @media (hover: none) {
   .card-more { display: flex; }
-  .surface-card.is-menu-open .card-more { opacity: 0; pointer-events: none; }
+  .surface-card.is-menu-open .card-more { color: var(--fg); background: var(--panel-2); }
   .surface-card.is-menu-open .card-actions { opacity: 1; transform: none; pointer-events: auto; }
-  .surface-card:has(.card-badge) .card-more { top: 36px; }
 }
 
 /* ══ Reduced motion ══ */

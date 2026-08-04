@@ -1430,12 +1430,21 @@ function createCard(s, index) {
   });
   card.appendChild(actions);
 
+  const body = document.createElement("div");
+  body.className = "card-body";
+  body.innerHTML = `
+    <div class="card-text">
+      <div class="card-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
+      <div class="card-sub">${escapeHtml(cardSubtitle(s))}</div>
+    </div>
+  `;
+
   // Touch handle for the tray. CSS shows it only where hover doesn't exist, so
-  // pointer devices keep the clean card and never see it.
+  // pointer devices keep the clean caption and never see it.
   const more = document.createElement("button");
   more.type = "button";
   more.className = "card-more";
-  more.setAttribute("aria-label", "Surface actions");
+  more.setAttribute("aria-label", `Actions for ${s.title || "surface"}`);
   more.innerHTML = ICON_MORE;
   more.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -1443,14 +1452,7 @@ function createCard(s, index) {
     document.querySelectorAll(".surface-card.is-menu-open").forEach((el) => el.classList.remove("is-menu-open"));
     card.classList.toggle("is-menu-open", open);
   });
-  card.appendChild(more);
-
-  const body = document.createElement("div");
-  body.className = "card-body";
-  body.innerHTML = `
-    <div class="card-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
-    <div class="card-sub">${escapeHtml(cardSubtitle(s))}</div>
-  `;
+  body.appendChild(more);
   card.appendChild(body);
 
   return card;
