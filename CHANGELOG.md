@@ -4,6 +4,17 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- **Paired devices now last a year, and stop re-pairing while in use.** The
+  device session TTL went from 30 days to 365. More importantly, rolling
+  expiry only ever rolled the database row: the `surface_session` cookie
+  carried a `Max-Age` fixed at pairing time, so a phone used every day still
+  dropped its cookie on the original deadline and had to be re-paired from
+  the host terminal. The auth middleware now re-issues the cookie whenever a
+  session's deadline moves. Migration v15 carries already-paired devices onto
+  the new TTL, so nobody has to re-pair *once* to stop re-pairing. System
+  bearers deliberately keep the 30-day default — they get carried off the
+  host, and are not sitting in front of the person who would notice them
+  going missing.
 - **Fixed fresh installs on current Node.** `npm install -g surface-display`
   failed on Node 24/25 (any machine without python/make/g++): better-sqlite3
   11.x has no prebuilt binaries there, so npm fell back to a node-gyp source

@@ -30,7 +30,7 @@ Because loopback is trusted by source address, fronting Surface with a **same-ho
 Pairing tokens and session tokens are stored **only** as `sha256(serverSecret:token)` (`hashToken`, `server/auth.ts`). The `serverSecret` is 32 random bytes persisted at `~/.surface/auth-secret` with mode `0600` (`getServerSecret`), so a leaked database does not directly yield usable credentials.
 
 - **Pairing tokens**: short-lived (5 min default), single-use, from a confusion-free alphabet, minting `device`-role sessions by default. Consumed atomically with a single `UPDATE … RETURNING` so a token can only ever be consumed once (`consumePairingToken`).
-- **Sessions**: long-lived (30-day TTL, rolling — each use extends expiry), delivered as an `HttpOnly` `surface_session` cookie for browsers or usable as a Bearer token for CLI/agents. Individually revocable; revocation is checked per request.
+- **Sessions**: long-lived and rolling — each use extends expiry, and the browser cookie is re-issued along with it. Devices default to a 1-year TTL (re-pairing needs the host terminal and the device in hand at once, so a short TTL buys friction rather than safety); system bearers default to 30 days. Delivered as an `HttpOnly` `surface_session` cookie for browsers or usable as a Bearer token for CLI/agents. Individually revocable; revocation is checked per request.
 
 See [device pairing](../auth/device-pairing.md) and [trust model](../auth/trust-model.md).
 
