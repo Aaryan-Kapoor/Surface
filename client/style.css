@@ -11,8 +11,16 @@
   color-scheme: dark;
 
   /* The two tokens an agent theme overrides. Everything else derives. */
-  --bg: #0a0b0d;
+  --bg: #0a0a0a;
   --fg: #ffffff;
+
+  /* Elevation is tone, not shadow. Three planes, ranked by where attention
+     should land: overlays sink away from the page, the page sits at rest, and
+     anything you can click lifts toward you. Neutral greys throughout — the
+     old set leaned blue (#0a0b0d, #131417) and read as cold slate rather than
+     black. */
+  --overlay: #020202;      /* modals, toasts, menus, the tray over a preview */
+  --interactive: #121212;  /* cards, inputs, buttons — anything you click */
 
   /* Derived ink. color-mix keeps them correct when a theme swaps --bg/--fg;
      the preceding declaration is the fallback for engines without it. */
@@ -26,10 +34,12 @@
   /* Surfaces & lines */
   --panel: rgba(255, 255, 255, 0.038);
   --panel-2: rgba(255, 255, 255, 0.075);
-  --panel-solid: #131417;
+  /* Kept as the name an agent theme writes (`glass` → --panel-solid, see
+     docs/display/pwa.md); it is the interactive plane under another name. */
+  --panel-solid: var(--interactive);
   --line: rgba(255, 255, 255, 0.10);
   --line-strong: rgba(255, 255, 255, 0.20);
-  --scrim: rgba(0, 0, 0, 0.62);
+  --scrim: rgba(2, 2, 2, 0.62);
 
   --accent: var(--fg);
   --danger: #ff4d4a;
@@ -40,7 +50,7 @@
      a screenshot, or an excerpt on the card's own paper. So it is a scrim in
      the scheme's own direction, opaque enough to sit on text, with a shadow in
      light mode where a pale chip on a pale screenshot would otherwise vanish. */
-  --chip-bg: rgba(10, 11, 13, 0.82);
+  --chip-bg: rgba(2, 2, 2, 0.82);
   --chip-fg: #ffffff;
   --chip-line: rgba(255, 255, 255, 0.16);
   --chip-hover: rgba(255, 255, 255, 0.18);
@@ -73,9 +83,14 @@
     color-scheme: light;
     --bg: #f6f6f7;
     --fg: #0b0c0e;
+    /* The dark ranking is bg < interactive with overlays *below* both. Light
+       has no equivalent move — going darker than the page would read as a
+       shadow, not a plane — so both planes stay white and separate from the
+       page by lightness alone. */
+    --overlay: #ffffff;
+    --interactive: #ffffff;
     --panel: rgba(0, 0, 0, 0.030);
     --panel-2: rgba(0, 0, 0, 0.062);
-    --panel-solid: #ffffff;
     --line: rgba(0, 0, 0, 0.10);
     --line-strong: rgba(0, 0, 0, 0.22);
     --scrim: rgba(255, 255, 255, 0.72);
@@ -347,7 +362,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .grid-search {
   width: 100%;
-  background: var(--panel);
+  background: var(--interactive);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   color: var(--fg);
@@ -472,7 +487,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .grid-sort:hover { color: var(--fg); background-color: var(--panel); }
-.grid-sort option { background: var(--panel-solid); color: var(--fg); }
+.grid-sort option { background: var(--overlay); color: var(--fg); }
 
 /* ── The grid ── */
 
@@ -936,7 +951,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 input.card-title {
   font-family: var(--font);
-  background: var(--panel-2);
+  background: var(--interactive);
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   padding: 1px 6px;
@@ -1301,7 +1316,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  background: color-mix(in srgb, var(--overlay) 70%, transparent);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   display: flex;
@@ -1318,7 +1333,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 .modal-panel {
   position: relative;
   width: min(520px, 100%);
-  background: var(--panel-solid);
+  background: var(--overlay);
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 32px 32px 28px;
@@ -1375,7 +1390,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 }
 
 .modal-prompt {
-  background: var(--panel);
+  background: var(--interactive);
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   padding: 14px 16px;
@@ -1619,7 +1634,7 @@ iframe.surface-frame.is-loaded { opacity: 1; }
   position: fixed;
   top: calc(12px + env(safe-area-inset-top, 0px));
   right: 12px;
-  background: var(--panel-solid);
+  background: var(--overlay);
   border: 1px solid var(--line);
   color: var(--fg);
   padding: 10px 15px;

@@ -355,7 +355,7 @@ function renderExcerptCover(params: {
   const ns = `p${hue}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600" role="img" aria-label="${escapeHtml(xmlSafeText(params.title))}">
     <style>
-      :root { --paper: #131417; --ink: #ffffff; }
+      :root { --paper: #121212; --ink: #ffffff; }
       @media (prefers-color-scheme: light) { :root { --paper: #ffffff; --ink: #0b0c0e; } }
     </style>
     <defs>
@@ -400,7 +400,7 @@ function renderTitleCover(params: { id?: string; title: string; mime: string }):
   // visible band is 0..375 and its centre is y=187.
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600" role="img" aria-label="${escapeHtml(title)}">
     <style>
-      :root { --paper: #131417; --ink: #ffffff; }
+      :root { --paper: #121212; --ink: #ffffff; }
       @media (prefers-color-scheme: light) { :root { --paper: #ffffff; --ink: #0b0c0e; } }
     </style>
     <defs>

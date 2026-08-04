@@ -91,7 +91,7 @@ function loadApp(options: AppOptions = {}): App {
   appRoot.id = "app";
   doc.body.appendChild(appRoot);
   // The two tags client/index.html ships — applyTheme() rewrites them.
-  for (const [content, media] of [["#0a0b0d", "(prefers-color-scheme: dark)"], ["#f6f6f7", "(prefers-color-scheme: light)"]]) {
+  for (const [content, media] of [["#0a0a0a", "(prefers-color-scheme: dark)"], ["#f6f6f7", "(prefers-color-scheme: light)"]]) {
     const meta = doc.createElement("meta");
     meta.setAttribute("name", "theme-color");
     meta.setAttribute("content", content);
@@ -661,6 +661,46 @@ try {
       zIndexOf(".empty-state") < zIndexOf(".grid-header"),
       "the empty state must paint below the sticky header",
     );
+  });
+
+  // The shell shipped a blue-leaning grey set (#0a0b0d, #131417) that read as
+  // cold slate rather than black. The replacement is three neutral planes
+  // ranked by attention, so this guards both properties: the exact tones, and
+  // that they are actually neutral — a one-digit drift back toward blue is the
+  // failure mode, and it is invisible in a diff.
+  check("the dark shell keeps its three neutral planes, ranked", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const dark = css.slice(0, css.indexOf("@media (prefers-color-scheme: light)"));
+    const tokenOf = (name: string) => {
+      const m = new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`).exec(dark);
+      assert.ok(m, `--${name} is not a literal hex in the dark scheme`);
+      return m![1].toLowerCase();
+    };
+    const planes = { bg: tokenOf("bg"), overlay: tokenOf("overlay"), interactive: tokenOf("interactive") };
+    assert.equal(planes.bg, "#0a0a0a");
+    assert.equal(planes.overlay, "#020202");
+    assert.equal(planes.interactive, "#121212");
+
+    for (const [name, hex] of Object.entries(planes)) {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      assert.ok(r === g && g === b, `--${name} (${hex}) is tinted, not neutral grey`);
+    }
+
+    const lum = (hex: string) => parseInt(hex.slice(1, 3), 16);
+    assert.ok(lum(planes.overlay) < lum(planes.bg), "overlays must sink below the page");
+    assert.ok(lum(planes.interactive) > lum(planes.bg), "interactive surfaces must lift above the page");
+  });
+
+  // Overlays and cards shared one token, so ranking them apart is only real if
+  // the floating chrome actually reads the overlay plane.
+  check("floating chrome sits on the overlay plane, not the card plane", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    for (const selector of [".modal-panel", ".toast"]) {
+      const rule = new RegExp(`\\n\\${selector}\\s*\\{([^}]*)\\}`).exec(css);
+      assert.ok(rule, `no rule for ${selector}`);
+      assert.match(rule![1], /background:\s*var\(--overlay\)/, `${selector} must use --overlay`);
+    }
+    assert.match(css, /--chip-bg:\s*rgba\(2,\s*2,\s*2,/, "the preview tray must use the overlay tone");
   });
 
   // `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the grid item's

@@ -12,8 +12,20 @@ them gets a coherent palette for free.
 
 | Token | Dark | Light | Use |
 |---|---|---|---|
-| `--bg` | `#0a0b0d` | `#f6f6f7` | page |
+| `--bg` | `#0a0a0a` | `#f6f6f7` | page |
 | `--fg` | `#ffffff` | `#0b0c0e` | primary ink |
+
+Depth is tone, not shadow, and it is ranked by attention. Overlays sink below
+the page; anything you can click lifts above it. Light has no equivalent move —
+darker than the page would read as a shadow — so both planes stay white there.
+
+| Token | Dark | Light | Use |
+|---|---|---|---|
+| `--overlay` | `#020202` | `#ffffff` | modals, toasts, menus, the tray over a preview |
+| `--interactive` | `#121212` | `#ffffff` | cards, inputs, buttons |
+
+`--panel-solid` is an alias of `--interactive`, kept because it is the name an
+agent theme writes (`glass`).
 
 Derived: `--fg-muted` (62%), `--fg-faint` (40%), `--fg-ghost` (22%), `--panel`,
 `--panel-2`, `--panel-solid`, `--line`, `--line-strong`. Each derived token
