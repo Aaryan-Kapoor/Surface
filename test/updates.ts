@@ -277,8 +277,18 @@ try {
   const ttlLeft = updates.checkDueAt() - Date.now();
   check("the next check is a TTL away, not minutes", ttlLeft > 5.9 * 3600_000 && ttlLeft <= 6 * 3600_000, ttlLeft);
 
+  // "Status is cache-only, never the network" is the claim the whole feature
+  // rests on: /api/update/status is device-readable and is broadcast over SSE,
+  // so a status read that reached the registry would put registry traffic (and
+  // any credential in that URL) behind a device request.
   const hitsBefore = reg.hits();
-  check("updateStatus() serves the cache without touching the registry", reg.hits() === hitsBefore);
+  check("the check that filled the cache did reach the registry", hitsBefore > 0, hitsBefore);
+  const cached = updates.updateStatus();
+  check(
+    "updateStatus() serves the cache without touching the registry",
+    reg.hits() === hitsBefore && cached.latest === "9.9.9",
+    { hitsBefore, hitsAfter: reg.hits(), cached },
+  );
   reg.close();
 
   // registry gone: keep the last good answer, record why, back off
