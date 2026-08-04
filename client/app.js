@@ -1078,7 +1078,7 @@ function renderGrid() {
   header.innerHTML = `
     <div class="grid-brand">
       <span class="grid-title">${escapeHtml(title)}</span>
-      <span class="grid-subtitle">a universal display for your agents</span>
+      <span class="grid-subtitle">state out, actions back</span>
     </div>
     <div class="grid-header-spacer"></div>
     ${count > 0 ? `
