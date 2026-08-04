@@ -31,6 +31,7 @@ Chrome shuts down after **20s idle** (`SURFACE_THUMB_IDLE_MS`), when it stops an
 
 - **Launch failure** backs off for 60s (`SURFACE_THUMB_LAUNCH_BACKOFF_MS`) rather than retrying on every card the dashboard renders — but the queue is **kept**, and a `drain()` is scheduled at backoff expiry. Discarding it was not survivable: a card with `has_thumb: false` paints its own cover and deliberately never requests the thumb route, so a dropped boot-backfill job is never naturally re-enqueued.
 - **Chrome dying mid-burst** invalidates the cached handle, aborts the worker pool (three workers otherwise keep handing jobs to a closed socket and burning them), requeues the interrupted job, and re-drains after `SURFACE_THUMB_CRASH_RETRY_MS`. Three crashes without a single capture pauses for a full backoff.
+- **A capture that throws** goes back in the queue with a bounded budget: `SURFACE_THUMB_MAX_ATTEMPTS` (3) tries per revision, then the job is dropped with one log line (`requeueFailedCapture`). A page-specific failure — a load-event timeout, a page that wedged — deliberately does *not* mark the CDP connection unhealthy, so requeueing only on `pool.aborted || cdp.unhealthy` discarded exactly the failures most likely to be transient, and the same "nothing re-enqueues it" argument above applied. A job the browser never got to run (`browserGone`) does not spend an attempt; that path is bounded by the crash counter and the launch backoff instead.
 - **All child teardown** routes through one idempotent finalizer, which always removes the `--user-data-dir`; the error and early-exit paths used to skip it and leak a profile dir per failed launch.
 
 ## Capture flow (`capture`, `server/thumbs.ts`)
@@ -68,6 +69,7 @@ Every `send` and every event waiter on the CDP connection carries a deadline **a
 | `SURFACE_THUMB_IDLE_MS` | `20000` | How long Chrome stays warm after the queue empties. |
 | `SURFACE_THUMB_LAUNCH_BACKOFF_MS` | `60000` | Pause after a failed launch. The queue is kept and re-drained at expiry. |
 | `SURFACE_THUMB_CRASH_RETRY_MS` | `1000` | Pause before relaunching after Chrome dies mid-burst. |
+| `SURFACE_THUMB_MAX_ATTEMPTS` | `3` | Failed captures of one revision before the job is dropped. |
 | `SURFACE_THUMB_SHUTDOWN_MS` | `5000` | Upper bound on `shutdownThumbnails()`. |
 
 ## Cache & serving (`/artifacts/:id/thumb`, `server/routes/artifacts.ts`)

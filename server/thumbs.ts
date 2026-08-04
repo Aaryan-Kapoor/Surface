@@ -30,6 +30,11 @@ const LAUNCH_BACKOFF_MS = envInt("SURFACE_THUMB_LAUNCH_BACKOFF_MS", 60_000);
 // full backoff if it keeps dying without producing a single capture.
 const CRASH_RETRY_MS = envInt("SURFACE_THUMB_CRASH_RETRY_MS", 1_000);
 const MAX_CONSECUTIVE_CRASHES = 3;
+// How many times one revision's capture may fail before the job is dropped.
+// A page-specific failure is usually transient and nothing else will re-enqueue
+// the work, so it has to be retried — but a surface that fails every time must
+// not own a worker forever. See requeueFailedCapture().
+const MAX_CAPTURE_ATTEMPTS = Math.max(1, envInt("SURFACE_THUMB_MAX_ATTEMPTS", 3));
 // Tearing a target/context down must not depend on a healthy socket, so cleanup
 // carries its own (short) deadline instead of inheriting the job's.
 const CLEANUP_TIMEOUT_MS = envInt("SURFACE_THUMB_CLEANUP_MS", 5_000);
@@ -252,9 +257,14 @@ export function findChromeBin(): string | null {
 
 // ── Queue ──
 
-interface Job {
+export interface Job {
   id: string;
   generation: string;
+  // Failed captures of THIS revision so far. Bounded, because the only other
+  // options are both wrong: dropping the job strands the surface on its cover
+  // (nothing re-enqueues it — see requeueFailedCapture), and retrying forever
+  // lets one permanently-broken surface own a worker.
+  attempts?: number;
 }
 
 // One drain's worker pool. `aborted` is how a dead browser stops three workers
@@ -284,7 +294,7 @@ export function thumbQueueStats(): {
   inFlight: number;
   launchAttempts: number;
   running: boolean;
-  jobs: Array<{ id: string; generation: string }>;
+  jobs: Array<{ id: string; generation: string; attempts?: number }>;
 } {
   return {
     queued: queue.length,
@@ -319,6 +329,42 @@ export function enqueueThumb(id: string) {
   }
   queue.push(job);
   scheduleDrain();
+}
+
+/**
+ * A capture threw. Decide whether the job goes back in the queue.
+ *
+ * Dropping it is not neutral: a redesigned card with `has_thumb: false` paints
+ * its own cover and deliberately never calls the thumb route, so nothing
+ * re-enqueues the work. A page-specific failure — a load-event timeout, a page
+ * that wedged — does NOT mark the CDP connection unhealthy (correctly: that is
+ * the page's problem, not Chrome's), so the old `pool.aborted ||
+ * cdp.unhealthy` condition discarded exactly the failures most likely to be
+ * transient, and the surface wore its cover until an unrelated update or a
+ * restart.
+ *
+ * `browserGone` means the job never got its chance at all, so it does not spend
+ * an attempt — that path already has its own bound in MAX_CONSECUTIVE_CRASHES
+ * and the launch backoff. Everything else is capped, so one permanently-failing
+ * surface cannot spin the queue: at the cap the job is dropped, with a single
+ * line rather than a loop.
+ *
+ * Exported so the policy can be exercised against the real queue without a
+ * browser. Returns true when the job was requeued.
+ */
+export function requeueFailedCapture(job: Job, browserGone: boolean): boolean {
+  if (stopped) return false;
+  if (browserGone) {
+    queue.push(job);
+    return true;
+  }
+  const attempts = (job.attempts || 0) + 1;
+  if (attempts >= MAX_CAPTURE_ATTEMPTS) {
+    console.warn(`[thumbs] giving up on ${job.id} after ${attempts} failed capture attempt(s)`);
+    return false;
+  }
+  queue.push({ ...job, attempts });
+  return true;
 }
 
 function scheduleDrain(delayMs = 0): void {
@@ -400,9 +446,7 @@ async function drain() {
             }
           } catch (err: any) {
             console.error(`[thumbs] capture failed for ${job.id}:`, err?.message || err);
-            // The browser went away underneath this job — it never got its
-            // chance. Put it back rather than leaving the surface on its cover.
-            if (pool.aborted || browser.cdp.unhealthy) queue.push(job);
+            requeueFailedCapture(job, pool.aborted || browser.cdp.unhealthy);
           } finally {
             inFlight.delete(key);
           }
@@ -737,7 +781,16 @@ async function capture(browser: Browser, job: Job): Promise<boolean> {
         await session("Emulation.setScriptExecutionDisabled", { value: true });
       }
 
+      // The waiter is armed BEFORE the navigation, or a page that loads fast
+      // fires its event before anyone is listening. That means it can also
+      // outlive us: if `Page.navigate` below rejects (a CDP timeout, or failAll
+      // after the socket closed) we leave this block without ever awaiting
+      // `loaded`, and it then rejects on its own timer with nothing attached —
+      // an unhandled rejection, which by default takes the whole server down.
+      // A terminal handler makes that impossible; `await loaded` still sees the
+      // original settlement.
       const loaded = cdp.once("Page.loadEventFired", sessionId, left());
+      loaded.catch(() => {});
       await session("Page.navigate", { url });
       await loaded;
 

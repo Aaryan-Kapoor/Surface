@@ -35,6 +35,7 @@ const {
   installChromeExitBackstop,
   needsThumbCapture,
   removeThumbs,
+  requeueFailedCapture,
   resolveThumbFile,
   setThumbServerPort,
   shutdownThumbnails,
@@ -422,6 +423,72 @@ await atest("every touch is a new generation, even inside one second", async () 
   assert.equal(after.length, 1, "a touch must replace the queued job, not stack a second one");
   assert.notEqual(after[0].generation, queued[0].generation, "…and the survivor carries the touched revision");
   assert.equal(after[0].generation, currentThumbGeneration(touchId));
+});
+
+// ── Failed captures ──
+//
+// A page-specific failure (a load-event timeout, a page that wedged) does NOT
+// mark the CDP connection unhealthy — correctly, that is the page's problem and
+// not Chrome's. The old requeue was conditioned on `pool.aborted ||
+// cdp.unhealthy`, so it discarded exactly the failures most likely to be
+// transient. Nothing re-enqueues them: a card with `has_thumb: false` paints
+// its own cover and never calls the thumb route, so the surface wore that cover
+// until an unrelated update or a restart.
+await atest("a failed capture is retried, and gives up before it can spin", async () => {
+  const id = "flaky-surface";
+  const mine = () => thumbQueueStats().jobs.filter((j) => j.id === id);
+  assert.equal(mine().length, 0, "clean slate");
+
+  // First failure: back in the queue, carrying its attempt count. Dropping it
+  // here is what left the surface on its cover.
+  assert.equal(requeueFailedCapture({ id, generation: GEN_A }, false), true);
+  assert.deepEqual(mine().map((j) => j.attempts), [1], "the retry carries its attempt count");
+
+  // Second failure of the job the queue handed back.
+  assert.equal(requeueFailedCapture(mine()[0], false), true);
+  assert.deepEqual(mine().map((j) => j.attempts), [1, 2], "the count comes back out of the queue, not reset");
+
+  // Third: SURFACE_THUMB_MAX_ATTEMPTS (3) is spent. Dropped quietly — the queue
+  // does not grow, and nothing schedules another go at it.
+  assert.equal(requeueFailedCapture(mine()[1], false), false, "at the cap the job is given up on");
+  assert.deepEqual(mine().map((j) => j.attempts), [1, 2], "a job past its budget is dropped, not requeued");
+
+  // A surface that fails every single time must terminate rather than own a
+  // worker for good — that is the loop the cap exists to prevent.
+  let job: { id: string; generation: string; attempts?: number } = { id: "doomed-surface", generation: GEN_B };
+  let requeues = 0;
+  while (requeueFailedCapture(job, false)) {
+    requeues++;
+    assert.ok(requeues < 20, "the retry budget must terminate");
+    job = { ...job, attempts: (job.attempts || 0) + 1 };
+  }
+  assert.equal(requeues, 2, "three attempts total: the original plus two retries");
+
+  // The browser dying underneath a job is a different failure: it never got its
+  // chance, so it does not spend one. That path is bounded by the crash counter
+  // and the launch backoff instead.
+  const spent = { id, generation: GEN_A, attempts: 2 };
+  assert.equal(requeueFailedCapture(spent, true), true, "a job the browser never ran must come back");
+  assert.deepEqual(mine().map((j) => j.attempts), [1, 2, 2], "…with its attempt count untouched");
+});
+
+// The load-event waiter is armed before `Page.navigate` (a fast page would
+// otherwise fire it before anyone is listening), which means it outlives the
+// block when the navigate itself rejects. It then rejects from its own timer
+// with no handler attached — an unhandled rejection, which by default ends the
+// server process.
+test("the load-event waiter can never reject unobserved", () => {
+  const src = fs.readFileSync(path.join(REPO_ROOT, "server", "thumbs.ts"), "utf8");
+  const code = src.split("\n").filter((line) => !line.trim().startsWith("//")).join("\n");
+  const armed = code.indexOf('cdp.once("Page.loadEventFired"');
+  assert.ok(armed !== -1, "the load waiter moved; this guard needs updating");
+  const navigate = code.indexOf('"Page.navigate"', armed);
+  assert.ok(navigate !== -1, "expected the navigate to follow the waiter");
+  assert.match(
+    code.slice(armed, navigate),
+    /loaded\s*\.catch\(/,
+    "a terminal handler must be attached before anything that can throw between arming and awaiting",
+  );
 });
 
 await atest("shutdownThumbnails is idempotent and stops accepting work", async () => {
