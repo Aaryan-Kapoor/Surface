@@ -8,7 +8,7 @@
 import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
-import { cleanupDir, tmpDir } from "./helpers.js";
+import { REPO_ROOT, cleanupDir, tmpDir } from "./helpers.js";
 
 // Isolate the data dir BEFORE importing anything that reads it: getDataDir
 // caches on first call, so a late assignment silently points the suite at the
@@ -196,6 +196,18 @@ test("a lone rule still renders as a rule in a document", () => {
   const html = renderMarkdown("---\nJust a rule then text.");
   assert.match(html, /<hr>/, "an unterminated block is a thematic break, not front matter");
   assert.match(html, /Just a rule then text\./, "and the body must survive it");
+});
+
+// A markdown surface is rendered in the browser by templates/doc, not by
+// server/markdown.ts — so the server-side fix alone left the actual document a
+// user opens still leading with its front matter.
+test("the doc template strips front matter in the browser too", () => {
+  const tpl = fs.readFileSync(path.join(REPO_ROOT, "templates", "doc", "index.html"), "utf8");
+  const render = tpl.slice(tpl.indexOf("function renderDoc("), tpl.indexOf("table of contents"));
+  assert.match(render, /stripFrontMatter\(/, "renderDoc must strip front matter before parsing blocks");
+  const strip = tpl.slice(tpl.indexOf("function stripFrontMatter("), tpl.indexOf("function renderDoc("));
+  assert.match(strip, /!==\s*"---"/, "it must only engage on a leading fence");
+  assert.match(strip, /return lines;\s*\}/, "an unterminated block must fall through, not swallow the file");
 });
 
 // ── Plain text ──
