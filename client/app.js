@@ -1452,7 +1452,28 @@ function paintGrid(target) {
   if (visible.length === 0) {
     const empty = document.createElement("div");
     empty.className = "grid-empty";
-    empty.textContent = gridQuery ? `No surfaces match “${gridQuery}”` : "No surfaces in this filter";
+    const line = document.createElement("p");
+    line.className = "grid-empty-line";
+    // The query is user text; it goes in as a text node.
+    line.textContent = gridQuery ? `No surfaces match “${gridQuery}”` : "Nothing in this filter";
+    empty.appendChild(line);
+    // A dead end needs a way out. The filter chips are still on screen, so the
+    // only state the user cannot see how to undo is the query.
+    if (gridQuery) {
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "grid-empty-reset";
+      reset.textContent = "Clear search";
+      reset.addEventListener("click", () => {
+        const input = document.querySelector(".grid-search");
+        if (input) {
+          input.value = "";
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+        }
+      });
+      empty.appendChild(reset);
+    }
     grid.appendChild(empty);
     return;
   }
@@ -1591,7 +1612,6 @@ function createCard(s, index) {
   // Without it the card paints its own cover instead of fetching a placeholder
   // it would only throw away when the capture lands.
   if (s.has_thumb === false) {
-    preview.classList.add("is-capturing");
     preview.appendChild(buildFallbackCover(s, mime));
   } else {
     const img = document.createElement("img");
@@ -1602,7 +1622,6 @@ function createCard(s, index) {
     img.dataset.src = cardThumbUrl(s);
     img.onerror = () => {
       img.remove();
-      preview.classList.add("is-capturing");
       preview.prepend(buildFallbackCover(s, mime));
     };
     preview.appendChild(img);
@@ -2212,7 +2231,6 @@ function connectGlobalSSE() {
     img.onload = () => {
       const cover = preview.querySelector(".card-fallback");
       if (cover) cover.remove();
-      preview.classList.remove("is-capturing");
       preview.prepend(img);
     };
     img.src = src;

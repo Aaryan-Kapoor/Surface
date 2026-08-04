@@ -452,13 +452,43 @@ button { -webkit-tap-highlight-color: transparent; }
   align-content: start;
 }
 
+/* A filter or a query with nothing behind it. One line and a way back — not a
+   sentence stranded at the top of an empty page. */
 .grid-empty {
   grid-column: 1 / -1;
-  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
   color: var(--fg-faint);
   font-size: 13.5px;
-  padding: 72px 0;
+  padding: clamp(56px, 16vh, 140px) 20px;
 }
+
+.grid-empty-line {
+  max-width: 34ch;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.grid-empty-reset {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-swift), color 0.14s var(--ease-swift), border-color 0.14s var(--ease-swift);
+}
+
+.grid-empty-reset:hover {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
+}
+
+.grid-empty-reset:active { transform: scale(0.97); }
 
 /* ══ Card ══
    A framed preview with a two-line caption. The screenshot is the card; the
@@ -710,7 +740,10 @@ button { -webkit-tap-highlight-color: transparent; }
   letter-spacing: -0.002em;
   white-space: nowrap;
   color: #fff;
-  background: rgba(10, 11, 13, 0.62);
+  /* Opaque enough to sit on text. These pills used to land only on
+     screenshots, where a 0.62 scrim reads as frosted glass; over an excerpt's
+     own lines it read as two paragraphs printed on top of each other. */
+  background: rgba(10, 11, 13, 0.84);
   border: 1px solid rgba(255, 255, 255, 0.16);
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);
@@ -794,7 +827,7 @@ button { -webkit-tap-highlight-color: transparent; }
   gap: 4px;
   padding: 3px;
   border-radius: var(--r-md);
-  background: rgba(10, 11, 13, 0.58);
+  background: rgba(10, 11, 13, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.14);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -1437,14 +1470,17 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
 .surface-nav-meta > span:not(.surface-nav-meta-dot) { white-space: nowrap; }
 
+/* A separator between meta items. `vertical-align` does nothing to a flex item,
+   so the old rule left a 2px box sitting on the row's baseline — a full stop
+   after "HTML", not a middot between it and the next word. */
 .surface-nav-meta-dot {
-  display: inline-block;
-  width: 2px;
-  height: 2px;
+  align-self: center;
+  flex: 0 0 auto;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   background: var(--fg-ghost);
   margin: 0 7px;
-  vertical-align: middle;
 }
 
 .surface-nav-live {
@@ -1651,13 +1687,15 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   font-size: 13px;
 }
 
+/* Keybinding hints. At --fg-ghost they were decoration you had to squint at;
+   a hint nobody can read is a row of wasted pixels. */
 .finder-footer {
   border-top: 1px solid var(--line);
   padding: 9px 18px;
   display: flex;
   gap: 18px;
   font-size: 11px;
-  color: var(--fg-ghost);
+  color: var(--fg-faint);
 }
 
 /* ══ Home widget / overlay ══ */
