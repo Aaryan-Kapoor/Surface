@@ -398,6 +398,51 @@ async function main() {
   assert(chunkDoc.chunks[2].kind === "md" && chunkDoc.chunks[2].content === "### done", "md chunk mangled");
   await optionalDelete(`/artifacts/${streamId}`);
 
+  // ── Thumbnails: what the dashboard grid reads ──
+
+  const thumbId = `artifact-test-thumb-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: thumbId,
+    title: "Thumbnail Test Surface",
+    mime: "text/html",
+    content: "<!doctype html><html><body><h1>thumb</h1></body></html>",
+  });
+
+  // With no cached capture the route answers with the generated cover, and the
+  // card list says so — that flag is what stops the grid fetching a placeholder
+  // it would replace seconds later.
+  const thumbRes = await req()("GET", `/artifacts/${thumbId}/thumb`);
+  assert(thumbRes.status === 200, `thumb route should answer 200, got ${thumbRes.status}`);
+  const thumbType = thumbRes.headers.get("content-type") || "";
+  assert(thumbType.includes("image/svg+xml"), `uncaptured thumb should be SVG, got ${thumbType}`);
+  const svg = typeof thumbRes.body === "string" ? thumbRes.body : String(thumbRes.body);
+  assert(svg.includes("Thumbnail Test"), "cover must carry the surface title");
+  assert(!/>HTML<\/text>\s*$/.test(svg), "cover must not be a bare file-extension chip");
+
+  // A placeholder is transient — it must never be cached like a real capture.
+  const phCache = thumbRes.headers.get("cache-control") || "";
+  assert(!phCache.includes("immutable"), `placeholder must not be immutable, got ${phCache}`);
+
+  const thumbCards = await api("GET", "/artifacts");
+  const thumbCard = thumbCards.find((c: any) => c.id === thumbId);
+  assert(thumbCard, "thumb test surface missing from card list");
+  assert(thumbCard.has_thumb === false, "has_thumb must be false before a capture exists");
+
+  // Image artifacts always have a real preview: the route passes the bytes
+  // through even with no capture on disk.
+  const imgId = `artifact-test-thumb-img-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: imgId,
+    title: "Thumbnail Test Image",
+    mime: "image/svg+xml",
+    files: [{ path: "image.svg", mime: "image/svg+xml", content: "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'></svg>" }],
+  });
+  const imgCard = (await api("GET", "/artifacts")).find((c: any) => c.id === imgId);
+  assert(imgCard && imgCard.has_thumb === true, "image artifacts must report has_thumb");
+
+  await optionalDelete(`/artifacts/${thumbId}`);
+  await optionalDelete(`/artifacts/${imgId}`);
+
   await optionalDelete(`/artifacts/${htmlId}`);
   await optionalDelete(`/artifacts/${mdId}`);
   await optionalDelete(`/artifacts/${binaryId}`);

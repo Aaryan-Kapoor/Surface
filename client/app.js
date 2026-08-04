@@ -464,7 +464,7 @@ window.showTutorialModal = showTutorialModal;
 const SURFACE_IDEAS = [
   {
     title: "Ask Approval",
-    sub: "Choice -> Surface.action",
+    sub: "Choice → Surface.action",
     src: "/demos/ask-approval.html",
     prompt: "Surface an approval question I can answer from any display",
   },
@@ -500,7 +500,7 @@ const SURFACE_IDEAS = [
   },
   {
     title: "Linked File",
-    sub: "Edit disk, touch display",
+    sub: "Edit on disk, touch the display",
     src: "/demos/live-link.html",
     prompt: "Surface a linked HTML file and hot-reload it after edits",
   },
@@ -1313,12 +1313,16 @@ function loadCardThumb(img) {
 }
 
 // Deterministic hue per surface so a card's cover is stable across reloads and
-// two neighbours rarely collide.
+// two neighbours rarely collide. FNV-1a, matching `hueForSeed` in
+// server/render.ts — the two covers must be the same picture.
 function hueForId(id) {
-  let h = 0;
   const str = String(id || "");
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return h % 360;
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
 }
 
 function buildFallbackCover(s, mime) {
@@ -1460,12 +1464,19 @@ function createCard(s, index) {
 
 // "HTML · claude · 5m ago" — kind, who made it, when. Sentence case; the mono
 // screaming-caps version read as a build log, not a library.
+//
+// A phone card is ~170px wide, which is not enough for three facts plus the
+// actions handle without the line ellipsising mid-word. Attribution is the one
+// that drops: kind and age are what you scan a grid by.
 function cardSubtitle(s) {
   const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
+  const narrow = typeof window.matchMedia === "function" && window.matchMedia("(max-width: 760px)").matches;
   const parts = [];
   if (mime) parts.push(labelForMime(mime));
-  if (s.agent) parts.push(s.agent);
-  else if (s.project_root) parts.push(s.project_root.split("/").pop());
+  if (!narrow) {
+    if (s.agent) parts.push(s.agent);
+    else if (s.project_root) parts.push(s.project_root.split("/").pop());
+  }
   const t = timeAgo(s.updated_at);
   if (t) parts.push(t);
   return parts.join(" · ");

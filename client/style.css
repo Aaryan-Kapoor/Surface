@@ -52,7 +52,10 @@
   --gutter: 40px;
   --header-h: 60px;
   --nav-h: 40px;
+  --card-min: 250px;
 }
+
+@media (min-width: 1200px) { :root { --card-min: 280px; } }
 
 @media (prefers-color-scheme: light) {
   :root {
@@ -361,11 +364,15 @@ button { -webkit-tap-highlight-color: transparent; }
   padding: 20px var(--gutter) 18px;
 }
 
+/* Chips and the sort control are pills with internal padding; pulled out by
+   that padding so their *text* lines up with the grid's left and right edges
+   rather than their invisible boxes. */
 .grid-toolbar-left {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  margin-left: -12px;
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
@@ -407,14 +414,15 @@ button { -webkit-tap-highlight-color: transparent; }
   border: 1px solid transparent;
   border-radius: var(--r-pill);
   color: var(--fg-muted);
-  padding: 5px 26px 5px 11px;
+  padding: 5px 22px 5px 11px;
+  margin-right: -11px;
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
   outline: none;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'><path d='M1 1.2l3.5 3.4L8 1.2' fill='none' stroke='%23888' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   background-repeat: no-repeat;
-  background-position: right 9px center;
+  background-position: right 11px center;
   transition: color 0.15s var(--ease-swift), background-color 0.15s var(--ease-swift);
 }
 
@@ -423,9 +431,12 @@ button { -webkit-tap-highlight-color: transparent; }
 
 /* ── The grid ── */
 
+/* Column width is set per breakpoint rather than left to one auto-fill minimum:
+   a single 248px floor gives a wide desktop a tidy 5-up but strands a 820px
+   tablet on two 370px monsters. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
   gap: 26px 22px;
   padding: 0 var(--gutter);
   align-content: start;
@@ -552,10 +563,10 @@ button { -webkit-tap-highlight-color: transparent; }
   padding: 14px 16px;
   overflow: hidden;
   background:
-    linear-gradient(150deg,
-      hsl(var(--seed-h, 220) 46% 28%) 0%,
-      hsl(calc(var(--seed-h, 220) + 34) 40% 15%) 62%,
-      hsl(calc(var(--seed-h, 220) + 34) 36% 11%) 100%);
+    linear-gradient(155deg,
+      hsl(var(--seed-h, 220) 52% 33%) 0%,
+      hsl(calc(var(--seed-h, 220) + 40) 44% 16%) 70%,
+      hsl(calc(var(--seed-h, 220) + 40) 40% 13%) 100%);
   color: #fff;
 }
 
@@ -940,7 +951,7 @@ input.card-title {
   flex-shrink: 0;
   height: 86vh;
   max-height: 900px;
-  width: clamp(340px, 38vw, 520px);
+  width: clamp(340px, 44vw, 620px);
   -webkit-tap-highlight-color: transparent;
   position: relative;
 }
@@ -949,8 +960,10 @@ input.card-title {
   height: 100%;
   overflow: hidden;
   position: relative;
-  -webkit-mask: linear-gradient(to bottom, transparent 0%, #000 11%, #000 89%, transparent 100%);
-  mask: linear-gradient(to bottom, transparent 0%, #000 11%, #000 89%, transparent 100%);
+  /* A short fade, not a long one: the band has to read as the edge of the
+     viewport, and anything wider smears a whole demo card into the page. */
+  -webkit-mask: linear-gradient(to bottom, transparent 0%, #000 5%, #000 95%, transparent 100%);
+  mask: linear-gradient(to bottom, transparent 0%, #000 5%, #000 95%, transparent 100%);
 }
 
 .portal-track {
@@ -1032,11 +1045,17 @@ input.card-title {
 .portal-scrollbar-thumb.is-dragging { cursor: grabbing; }
 body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
+/* Render each demo at a laptop-ish viewport and scale it down, so the frame
+   shows the whole surface the way a screenshot would — not a zoomed crop of its
+   top-left corner. */
 .portal-demo {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  left: 0;
+  width: 150%;
+  height: 150%;
+  transform: scale(0.6667);
+  transform-origin: top left;
   border: none;
   pointer-events: none;
   background: transparent;
@@ -1051,7 +1070,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
 .portal-label {
   font-size: 11.5px;
-  color: var(--fg-ghost);
+  color: var(--fg-faint);
   margin-bottom: 2px;
 }
 
@@ -1078,7 +1097,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   gap: 7px;
   font-family: var(--mono);
   font-size: 11.5px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   cursor: pointer;
   transition: color 0.15s var(--ease-swift);
   -webkit-tap-highlight-color: transparent;
@@ -1570,7 +1589,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 /* ══ Responsive ══ */
 
 @media (max-width: 1100px) {
-  :root { --gutter: 28px; }
+  :root { --gutter: 28px; --card-min: 215px; }
   .empty-state { flex-direction: column; align-items: flex-start; justify-content: center; }
   .empty-portal, .portal-scrollbar { display: none; }
 }
@@ -1594,6 +1613,10 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   .grid-search:focus, .grid-search:not(:placeholder-shown) { width: min(56vw, 240px); padding-right: 12px; }
   /* the release pill shares the meta row; let it use the full width on a phone */
   .update-notice { max-width: 100%; }
+  /* Collapsed, the field is narrower than its own placeholder — which leaks a
+     sliver of the first glyph past the icon. Hide it until it opens. */
+  .grid-search::placeholder { color: transparent; }
+  .grid-search:focus::placeholder { color: var(--fg-faint); }
   .grid-kbd { display: none; }
   .grid-toolbar { padding: 14px var(--gutter) 14px; }
   .card-title { font-size: 13px; }
@@ -1618,8 +1641,8 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   display: none;
   flex: 0 0 auto;
   align-self: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   margin-right: -4px;
   padding: 0;
   border: 0;

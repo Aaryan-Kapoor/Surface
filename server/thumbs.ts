@@ -12,7 +12,7 @@ const THUMB_HEIGHT = 600;
 // How long to let a page settle after its load event before the shot. The old
 // pipeline waited a flat 6.5s with no readiness signal at all; we now wait for
 // load + fonts + two frames first, so this is only the animation/data tail.
-const SETTLE_MS = envInt("SURFACE_THUMB_SETTLE_MS", 1200);
+const SETTLE_MS = envInt("SURFACE_THUMB_SETTLE_MS", 2000);
 // Captures that run at once. Each gets its own browser context, so they stay
 // isolated from one another the way separate Chrome processes used to be.
 const CONCURRENCY = Math.max(1, Math.min(6, envInt("SURFACE_THUMB_CONCURRENCY", 3)));

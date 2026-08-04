@@ -140,6 +140,9 @@ export function renderArtifactShell(params: {
     /* Thumbnail capture: fill the square instead of letterboxing, so an image
        surface reads as the image and not as a picture floating in a black box. */
     .viewer.preview img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; object-position: center; }
+    /* A 600x600 capture ends up ~320px wide on a card. Body-copy sizing there is
+       a grey smudge, so plain-text surfaces are set larger for the preview. */
+    .viewer.preview pre { font-size: 20px; line-height: 1.55; padding: 40px 44px; }
     audio { margin: auto; width: min(720px, 90vw); }
     iframe { width: 100%; height: 100%; border: 0; background: white; }
     pre {
@@ -296,9 +299,15 @@ function wrapForThumb(text: string, max: number, maxLines = 3): string[] {
 // two neighbouring cards rarely land on the same colour. Mirrors `hueForId` in
 // client/app.js — the two covers must be the same picture.
 function hueForSeed(seed: string): number {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return h % 360;
+  // FNV-1a: a multiply-by-31 hash walks the hue wheel in lockstep with the
+  // input, so ids that differ by one character land on neighbouring colours.
+  // FNV avalanches, so adjacent surfaces get unrelated hues.
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
 }
 
 // The cover a surface wears until a real capture exists. This is the picture the
@@ -309,34 +318,40 @@ export function renderThumbPlaceholder(params: { id?: string; title: string; mim
   const label = escapeHtml(thumbLabelForMime(params.mime));
   const lines = wrapForThumb(params.title, 16).map(escapeHtml);
   const hue = hueForSeed(params.id || params.title || "surface");
-  const hue2 = (hue + 34) % 360;
-  const top = `hsl(${hue}, 46%, 28%)`;
-  const bottom = `hsl(${hue2}, 38%, 12%)`;
-  // Bottom-anchored, like the card caption: last line sits above the kind label.
-  const baseline = 470 - (lines.length - 1) * 56;
+  const top = `hsl(${hue}, 52%, 33%)`;
+  const bottom = `hsl(${(hue + 40) % 360}, 44%, 14%)`;
+  // Top-anchored on purpose. The dashboard crops a 600x600 cover to 16:10 from
+  // the top edge, so anything below ~375px is off the card.
+  const LABEL_Y = 116;
+  const FIRST_LINE_Y = 186;
+  const LINE_H = 56;
   const titleLines = lines.map((line, i) =>
-    `<text x="56" y="${baseline + i * 56}" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="46" font-weight="600" fill="#ffffff" fill-opacity="0.96" letter-spacing="-1.2">${line}</text>`
+    `<text x="52" y="${FIRST_LINE_Y + i * LINE_H}" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="45" font-weight="600" fill="#ffffff" fill-opacity="0.97" letter-spacing="-1.2">${line}</text>`
   ).join("");
+  // Gradient ids are namespaced per cover. Two placeholders inlined into one
+  // document would otherwise share the first one's `id="field"`, and every card
+  // after the first would wear the first card's colour.
+  const ns = `t${hue}`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600" role="img" aria-label="${escapeHtml(params.title)}">
     <defs>
-      <linearGradient id="field" x1="0" y1="0" x2="0.55" y2="1">
+      <linearGradient id="${ns}-field" x1="0" y1="0" x2="0.5" y2="1">
         <stop offset="0%" stop-color="${top}"/>
-        <stop offset="62%" stop-color="${bottom}"/>
+        <stop offset="70%" stop-color="${bottom}"/>
         <stop offset="100%" stop-color="${bottom}"/>
       </linearGradient>
-      <radialGradient id="sheen" cx="24%" cy="6%" r="62%">
-        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+      <radialGradient id="${ns}-sheen" cx="22%" cy="0%" r="70%">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.26"/>
         <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
       </radialGradient>
     </defs>
-    <rect width="600" height="600" fill="url(#field)"/>
-    <rect width="600" height="600" fill="url(#sheen)"/>
-    <g fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5">
-      <circle cx="470" cy="150" r="150"/>
-      <circle cx="470" cy="150" r="96"/>
-      <circle cx="470" cy="150" r="46"/>
+    <rect width="600" height="600" fill="url(#${ns}-field)"/>
+    <rect width="600" height="600" fill="url(#${ns}-sheen)"/>
+    <g fill="none" stroke="#ffffff" stroke-opacity="0.09" stroke-width="1.5">
+      <circle cx="548" cy="86" r="186"/>
+      <circle cx="548" cy="86" r="124"/>
+      <circle cx="548" cy="86" r="62"/>
     </g>
-    <text x="56" y="${baseline - 58}" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="19" font-weight="500" fill="#ffffff" fill-opacity="0.60" letter-spacing="3.4">${label}</text>
+    <text x="52" y="${LABEL_Y}" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="19" font-weight="500" fill="#ffffff" fill-opacity="0.62" letter-spacing="3.4">${label}</text>
     ${titleLines}
   </svg>`;
 }
