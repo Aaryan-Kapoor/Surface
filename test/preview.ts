@@ -19,6 +19,7 @@ process.env.SURFACE_DATA_DIR = dataDir;
 const { clearPreviewCache, extractPreview, previewForCard } = await import("../server/preview.js");
 const { initDb, closeDb, getDb } = await import("../server/db.js");
 const { createArtifact, linkArtifact } = await import("../server/artifacts.js");
+const { renderMarkdown } = await import("../server/markdown.js");
 
 let failures = 0;
 function test(name: string, fn: () => void) {
@@ -179,6 +180,22 @@ test("a lone rule is not mistaken for unterminated front matter", () => {
 test("the entities that turn up in real content are decoded", () => {
   const p = extractPreview("<p>Send my pick &rarr; 5 &times; 3 &ne; 14 &mdash; &check;</p>", "text/html");
   assert.deepEqual(p!.lines, ["Send my pick → 5 × 3 ≠ 14 — ✓"]);
+});
+
+// The document renderer has the same problem the excerpt did: a skill file
+// opened with `name: surface description: …` as its first paragraph. The card
+// and the document it stands for must not disagree about where the content
+// starts.
+test("the document renderer skips front matter too", () => {
+  const html = renderMarkdown("---\nname: surface\ndescription: x\n---\n\n# Surface\n\nBody.");
+  assert.ok(!html.includes("name: surface"), `front matter was rendered: ${html.slice(0, 160)}`);
+  assert.match(html, /<h1[^>]*>Surface<\/h1>/);
+});
+
+test("a lone rule still renders as a rule in a document", () => {
+  const html = renderMarkdown("---\nJust a rule then text.");
+  assert.match(html, /<hr>/, "an unterminated block is a thematic break, not front matter");
+  assert.match(html, /Just a rule then text\./, "and the body must survive it");
 });
 
 // ── Plain text ──

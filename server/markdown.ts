@@ -45,8 +45,26 @@ function inline(text: string): string {
   return out;
 }
 
+/**
+ * YAML front matter is metadata for a tool, not the opening of a document. A
+ * skill file rendered as a doc was leading with `name: surface description: …`
+ * as its first paragraph — the machinery, printed as prose.
+ *
+ * Only a block that closes counts. A lone `---` on the first line is a
+ * thematic rule in the body, and swallowing the rest of the file would be a
+ * great deal worse than rendering a horizontal line.
+ */
+function stripFrontMatter(lines: string[]): string[] {
+  if (lines[0]?.trim() !== "---") return lines;
+  for (let i = 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "---" || trimmed === "...") return lines.slice(i + 1);
+  }
+  return lines;
+}
+
 export function renderMarkdown(src: string): string {
-  const lines = String(src ?? "").replace(/\r\n/g, "\n").split("\n");
+  const lines = stripFrontMatter(String(src ?? "").replace(/\r\n/g, "\n").split("\n"));
   const html: string[] = [];
   let i = 0;
   let para: string[] = [];
