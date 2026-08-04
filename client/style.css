@@ -506,6 +506,8 @@ button { -webkit-tap-highlight-color: transparent; }
   aspect-ratio: 16 / 10;
   border-radius: var(--card-radius);
   overflow: hidden;
+  /* Sizing context for the cover's excerpt — see .card-fallback. */
+  container-type: inline-size;
   background: var(--panel-solid);
   box-shadow: var(--shadow-card);
   transition: transform 0.24s var(--ease-out), box-shadow 0.24s var(--ease-out);
@@ -560,71 +562,125 @@ button { -webkit-tap-highlight-color: transparent; }
   to   { opacity: 1; }
 }
 
-/* Until a real capture lands, the card paints its own cover: a tinted field
-   derived from the surface id, with the title set large. No network request. */
+/* ── The cover with no capture behind it ──
+   Not a placeholder: the surface's own opening lines, set on the page's own
+   paper. A card whose screenshot has not been taken should still look like the
+   document it stands for, so this is typography — not a coloured tile with the
+   title printed on it a second time.
+
+   Type scales with the card, not with the viewport: the same grid renders one
+   350px card on a phone and five 250px cards on a desktop, and a fixed 11px
+   line looks starved in the first and cramped in the second. Container units
+   off .card-preview keep the excerpt at a constant fraction of the card. */
 .card-fallback {
   position: absolute;
   inset: 0;
   z-index: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 14px 16px;
   overflow: hidden;
+  padding: clamp(11px, 5cqw, 22px) clamp(12px, 5.4cqw, 24px) 0;
   background:
-    linear-gradient(155deg,
-      hsl(var(--seed-h, 220) 52% 33%) 0%,
-      hsl(calc(var(--seed-h, 220) + 40) 44% 16%) 70%,
-      hsl(calc(var(--seed-h, 220) + 40) 40% 13%) 100%);
-  color: #fff;
+    /* A whisper of the surface's own hue, so neighbouring cards are
+       distinguishable at a glance without the grid turning into a paint chart.
+       At 9% it reads as a tint on paper, not as a colour. */
+    radial-gradient(150% 110% at -5% -25%,
+      color-mix(in oklab, hsl(var(--seed-h, 220) 62% 52%) 10%, transparent),
+      transparent 72%),
+    var(--panel-solid);
+  color: var(--fg);
 }
 
-.card-fallback::before {
+.card-fallback-doc {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-fallback--sparse {
+  display: flex;
+  align-items: center;
+  padding-bottom: clamp(11px, 5cqw, 22px);
+}
+
+.card-fallback--sparse .card-fallback-doc { width: 100%; }
+.card-fallback--sparse::after { display: none; }
+
+/* The excerpt runs past the bottom edge on purpose — a document continues. The
+   scrim lands it softly instead of guillotining a half-height line. It is drawn
+   in the cover's own background colour, so a two-line excerpt that never
+   reaches it is untouched. */
+.card-fallback::after {
   content: "";
   position: absolute;
-  inset: -40% -10% auto -10%;
-  height: 120%;
-  background: radial-gradient(50% 60% at 24% 8%, rgba(255, 255, 255, 0.22), transparent 70%);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30%;
+  background: linear-gradient(to bottom, transparent, var(--panel-solid) 88%);
   pointer-events: none;
+  z-index: 2;
+}
+
+.card-fallback-line {
+  min-height: 1em; /* a blank line in a log is a line */
+  overflow: hidden;
+}
+
+.card-fallback--prose .card-fallback-line {
+  font-size: clamp(9.5px, 4cqw, 13px);
+  line-height: 1.5;
+  color: var(--fg-faint);
+  letter-spacing: -0.004em;
+  /* Prose wraps; two lines of one paragraph is a preview, ten is a wall. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* A sub-heading inside the excerpt: the author's structure, kept. */
+.card-fallback--prose .card-fallback-line--head {
+  color: var(--fg-muted);
+  font-weight: 600;
+  margin-top: clamp(3px, 1.4cqw, 7px);
+  -webkit-line-clamp: 1;
+}
+
+.card-fallback--prose .card-fallback-line--lead {
+  font-size: clamp(12.5px, 5cqw, 17px);
+  font-weight: 600;
+  line-height: 1.26;
+  letter-spacing: -0.018em;
+  color: var(--fg);
+  margin-bottom: clamp(5px, 2.2cqw, 10px);
+  -webkit-line-clamp: 2;
+}
+
+/* A log or a source file is a transcript: fixed pitch, no wrapping, lines
+   running off the right edge exactly as they do in the terminal it came from. */
+.card-fallback--code .card-fallback-line {
+  font-family: var(--mono);
+  font-size: clamp(8px, 3.4cqw, 11.5px);
+  line-height: 1.62;
+  color: var(--fg-muted);
+  white-space: pre;
+}
+
+.card-fallback--code .card-fallback-line:first-child { color: var(--fg); }
+
+/* Nothing readable to show. One quiet word, centred, and no invented texture. */
+.card-fallback--bare {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .card-fallback-kind {
   position: relative;
   font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.16em;
+  font-size: clamp(9px, 3.4cqw, 11px);
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.card-fallback-title {
-  position: relative;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.018em;
-  line-height: 1.28;
-  color: rgba(255, 255, 255, 0.96);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Waiting on a first capture: a slow sheen across the cover. */
-.card-preview.is-capturing .card-fallback::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 34%, rgba(255, 255, 255, 0.13) 50%, transparent 66%);
-  background-size: 260% 100%;
-  animation: cover-sheen 2.4s var(--ease-swift) infinite;
-  pointer-events: none;
-}
-
-@keyframes cover-sheen {
-  from { background-position: 140% 0; }
-  to   { background-position: -40% 0; }
+  color: var(--fg-ghost);
 }
 
 /* ── Card instrumentation ── */

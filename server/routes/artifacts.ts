@@ -30,6 +30,7 @@ import {
 import { addSurfaceClient, broadcastGlobal, broadcastToSurface, hasWaiter } from "../sse.js";
 import { enqueueThumb, hasAnyThumb, removeThumbs, resolveThumbFile, thumbGenerationFor } from "../thumbs.js";
 import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
+import { previewForCard } from "../preview.js";
 import { getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
 import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
@@ -84,7 +85,12 @@ export function hasRealThumb(
 // filters them out).
 export function cardPayload(id: string) {
   const card = getArtifactCard(getDb(), id);
-  return card || { id };
+  if (!card) return { id };
+  return {
+    ...card,
+    has_thumb: hasRealThumb(card.id, card.artifact_mime, thumbGenerationFor(card)),
+    preview: previewForCard(getDb(), card),
+  };
 }
 
 // Remember which agent session created (or re-rendered) a surface, so the
@@ -151,6 +157,10 @@ artifactsRouter.get("/artifacts", (req, res) => {
     // to paint its own cover for a not-yet-captured surface instead of
     // fetching a placeholder it will replace seconds later.
     has_thumb: hasRealThumb(card.id, card.artifact_mime, thumbGenerationFor(card)),
+    // The opening lines of the surface's own content, so a card with no capture
+    // yet shows what it holds instead of its title a second time. Cached on
+    // version + file mtime, so a warm list costs one stat per card.
+    preview: previewForCard(getDb(), card),
   })));
 });
 

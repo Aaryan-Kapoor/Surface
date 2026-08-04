@@ -1498,21 +1498,65 @@ function hueForId(id) {
   return (h >>> 0) % 360;
 }
 
+const FALLBACK_MAX_LINES = 12;
+// Prose lines wrap, so five of them can fill a card twice over; code lines are
+// one row each and a short log wants all of them.
+const FALLBACK_MAX_PROSE_LINES = 7;
+
+// The cover a card wears when there is no capture to show. It sets the opening
+// lines of the surface's own content — the same thing a screenshot would have
+// shown, minus the pixels. The title is deliberately absent: it is already the
+// first line of the caption directly underneath, and printing it twice was what
+// made the old cover read as a placeholder rather than a preview.
 function buildFallbackCover(s, mime) {
-  const meta = parseMetadata(s.metadata);
   const cover = document.createElement("div");
   cover.className = "card-fallback";
   cover.style.setProperty("--seed-h", String(hueForId(s.id)));
-  const kind = document.createElement("div");
-  kind.className = "card-fallback-kind";
-  // Prefer the human label over metadata.icon: the CLI stamps terse codes like
-  // "FILE" on linked artifacts, which is exactly the file-extension chip this
-  // cover exists to replace. An agent's own icon still wins for unknown mimes.
-  kind.textContent = mime ? labelForMime(mime) : (meta.icon || "Surface");
-  const title = document.createElement("div");
-  title.className = "card-fallback-title";
-  title.textContent = s.title || "Untitled";
-  cover.append(kind, title);
+
+  const preview = s.preview && Array.isArray(s.preview.lines) && s.preview.lines.length
+    ? s.preview
+    : null;
+
+  if (!preview) {
+    // Nothing readable — an image mid-capture, a binary, an unreadable path.
+    // Say the kind quietly and stop; an empty frame beats a loud one.
+    const meta = parseMetadata(s.metadata);
+    cover.classList.add("card-fallback--bare");
+    const kind = document.createElement("div");
+    kind.className = "card-fallback-kind";
+    // Prefer the human label over metadata.icon: the CLI stamps terse codes
+    // like "FILE" on linked artifacts, which is exactly the file-extension chip
+    // this cover exists to replace. An agent's own icon still wins for unknown
+    // mimes.
+    kind.textContent = mime ? labelForMime(mime) : (meta.icon || "Surface");
+    cover.appendChild(kind);
+    return cover;
+  }
+
+  const code = preview.mode === "code";
+  cover.classList.add(code ? "card-fallback--code" : "card-fallback--prose");
+  const lines = preview.lines.slice(0, code ? FALLBACK_MAX_LINES : FALLBACK_MAX_PROSE_LINES);
+  // A one- or two-line excerpt top-aligned in a 16:10 frame reads as a card
+  // that failed to load the rest. Centred, it reads as the whole thing — which
+  // it is.
+  if (lines.length <= (code ? 2 : 3)) cover.classList.add("card-fallback--sparse");
+  const heads = new Set(Array.isArray(preview.heads) ? preview.heads : []);
+  const doc = document.createElement("div");
+  doc.className = "card-fallback-doc";
+  for (let i = 0; i < lines.length; i++) {
+    const el = document.createElement("div");
+    // Prose leads with a headline the way the surface itself does. Code is a
+    // transcript — every line carries the same weight, so none of them lead.
+    el.className = "card-fallback-line";
+    if (!code && i === 0) el.classList.add("card-fallback-line--lead");
+    else if (heads.has(i)) el.classList.add("card-fallback-line--head");
+    // Preview text is artifact content, which a paired device can author, and
+    // this cover renders on the SYSTEM plane. It goes in as a text node — never
+    // as markup, and never through an attribute.
+    el.textContent = lines[i];
+    doc.appendChild(el);
+  }
+  cover.appendChild(doc);
   return cover;
 }
 
