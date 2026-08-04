@@ -207,7 +207,8 @@ button { -webkit-tap-highlight-color: transparent; }
   align-items: center;
   gap: 10px;
   padding: 5px 6px 5px 11px;
-  border: 1px solid var(--hairline-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
   color: var(--fg-muted);
   max-width: min(46vw, 520px);
 }
@@ -221,7 +222,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .update-notice--available .update-notice-text,
-.update-notice--error .update-notice-text { color: #ffffff; }
+.update-notice--error .update-notice-text { color: var(--fg); }
 .update-notice--error { border-color: var(--danger); }
 .update-notice--busy .update-notice-text { animation: update-pulse 1.6s ease-in-out infinite; }
 
@@ -237,8 +238,9 @@ button { -webkit-tap-highlight-color: transparent; }
   letter-spacing: inherit;
   text-transform: inherit;
   background: transparent;
-  color: #ffffff;
-  border: 1px solid var(--hairline-strong);
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
   padding: 3px 10px;
   cursor: pointer;
   transition: background 0.15s linear, color 0.15s linear, border-color 0.15s linear;
@@ -246,9 +248,9 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .update-notice-btn:hover,
 .update-notice-x:hover {
-  background: #ffffff;
-  color: #000000;
-  border-color: #ffffff;
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
 }
 
 .update-notice-x {
