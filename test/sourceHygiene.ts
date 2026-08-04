@@ -93,6 +93,46 @@ check(
   binaryPerGit.join("; "),
 );
 
+// ── generator residue in Markdown ──
+//
+// README.md shipped with a literal `</content>` as its last line: the closing
+// tag of the wrapper the file was generated inside, left behind by the tool
+// that wrote it. It is not Markdown, so GitHub and the npm page render it as
+// text on the page everybody reads first, and no gate caught it.
+//
+// Deliberately NOT an HTML validator. Markdown legitimately contains HTML, and
+// these docs use <details>/<summary>. This lists only tags that are never
+// document markup, and flags one only when the closing tag has no opening
+// partner in the same file — so a doc that genuinely shows `<content>…
+// </content>` inside a fence keeps working, while residue (which is always
+// unpaired) does not.
+const RESIDUE_TAGS = ["content", "document", "documents", "file", "answer", "thinking", "function_results"];
+
+const strays: string[] = [];
+for (const rel of files.filter((f) => path.extname(f).toLowerCase() === ".md")) {
+  let text: string;
+  try {
+    text = fs.readFileSync(path.join(ROOT, rel), "utf8");
+  } catch {
+    continue;
+  }
+  for (const tag of RESIDUE_TAGS) {
+    const close = `</${tag}>`;
+    const closes = text.split(close).length - 1;
+    if (closes === 0) continue;
+    const opens = (text.match(new RegExp(`<${tag}(?:\\s[^>]*)?>`, "g")) || []).length;
+    if (closes <= opens) continue;
+    const line = text.slice(0, text.indexOf(close)).split("\n").length;
+    strays.push(`${rel}:${line} has an unopened ${close}`);
+  }
+}
+
+check(
+  "no tracked Markdown file carries a stray generator tag",
+  strays.length === 0,
+  strays.join("; "),
+);
+
 if (failures > 0) {
   console.error(`\n${failures} source-hygiene check(s) failed`);
   process.exit(1);
