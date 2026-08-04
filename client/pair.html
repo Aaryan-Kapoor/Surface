@@ -3,33 +3,74 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#000000">
+  <meta name="theme-color" content="#0a0b0d" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f6f6f7" media="(prefers-color-scheme: light)">
   <title>Pair with this Surface</title>
+  <meta name="color-scheme" content="dark light">
   <style>
-    :root { color-scheme: dark; }
+    /* This page is standalone — it is served before the app's stylesheet is
+       reachable — so the tokens are copied rather than imported. They are the
+       same values client/style.css uses; the pairing screen is the first thing
+       a new device sees and should not look like a different product. */
+    :root {
+      color-scheme: dark;
+      --bg: #0a0b0d;
+      --fg: #ffffff;
+      --fg-muted: rgba(255, 255, 255, 0.62);
+      --fg-faint: rgba(255, 255, 255, 0.40);
+      --fg-ghost: rgba(255, 255, 255, 0.22);
+      --panel-solid: #131417;
+      --field: rgba(255, 255, 255, 0.05);
+      --line: rgba(255, 255, 255, 0.10);
+      --line-strong: rgba(255, 255, 255, 0.20);
+      --danger: #ff4d4a;
+      --shadow-pop: 0 40px 90px -30px rgba(0, 0, 0, 0.85);
+      --r-md: 10px;
+      --r-card: 16px;
+      --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+      --ease-swift: cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        color-scheme: light;
+        --bg: #f6f6f7;
+        --fg: #0b0c0e;
+        --fg-muted: rgba(11, 12, 14, 0.62);
+        --fg-faint: rgba(11, 12, 14, 0.42);
+        --fg-ghost: rgba(11, 12, 14, 0.26);
+        --panel-solid: #ffffff;
+        --field: rgba(0, 0, 0, 0.035);
+        --line: rgba(0, 0, 0, 0.10);
+        --line-strong: rgba(0, 0, 0, 0.22);
+        --danger: #d92d20;
+        --shadow-pop: 0 40px 90px -30px rgba(16, 18, 22, 0.28);
+      }
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
       height: 100%;
-      background: #000000; color: #ffffff;
-      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+      background: var(--bg); color: var(--fg);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
-    ::selection { background: #ffffff; color: #000000; }
+    ::selection { background: var(--fg); color: var(--bg); }
     body {
       display: flex; align-items: center; justify-content: center; padding: 24px;
-      background-image:
-        radial-gradient(900px 420px at 50% -100px, rgba(255, 255, 255, 0.06), transparent 70%),
-        radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1.2px);
-      background-size: auto, 26px 26px;
+      /* The app's single cool wash from the top edge — not the old dotted grid,
+         which the dashboard retired. */
+      background-image: radial-gradient(1200px 520px at 50% -260px, var(--fg), transparent 70%);
+      background-repeat: no-repeat;
     }
+    body::before { content: ""; position: fixed; inset: 0; background: var(--bg); z-index: -2; }
     .card {
       width: 100%; max-width: 400px;
-      background: rgba(5, 5, 5, 0.96);
-      border: 1px solid rgba(255, 255, 255, 0.40);
-      border-radius: 0;
-      padding: 40px 36px 32px;
-      box-shadow: 0 60px 140px -40px rgba(0, 0, 0, 0.9), 0 0 80px -30px rgba(255, 255, 255, 0.10);
-      animation: card-in .5s cubic-bezier(.22,1,.36,1) both;
+      background: var(--panel-solid);
+      border: 1px solid var(--line);
+      border-radius: var(--r-card);
+      padding: 36px 32px 28px;
+      box-shadow: var(--shadow-pop);
+      animation: card-in .5s var(--ease-out) both;
     }
     @keyframes card-in {
       from { opacity: 0; transform: translateY(12px); }
@@ -37,48 +78,49 @@
     }
     .eyebrow {
       font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 10px; letter-spacing: .26em; text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.30); margin-bottom: 14px;
+      font-size: 10px; letter-spacing: .22em; text-transform: uppercase;
+      color: var(--fg-ghost); margin-bottom: 14px;
     }
-    h1 { font-size: 22px; margin: 0 0 8px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.15; }
-    p.sub { margin: 0 0 26px; color: rgba(255, 255, 255, 0.52); font-size: 13.5px; line-height: 1.55; }
+    h1 { font-size: 22px; margin: 0 0 8px; font-weight: 620; letter-spacing: -0.022em; line-height: 1.15; }
+    p.sub { margin: 0 0 26px; color: var(--fg-faint); font-size: 13.5px; line-height: 1.55; }
     label {
       display: block;
       font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
-      color: rgba(255, 255, 255, 0.52); margin: 0 0 8px;
+      color: var(--fg-faint); margin: 0 0 8px;
     }
     input {
-      width: 100%; padding: 12px 14px;
-      background: rgba(255, 255, 255, 0.035); color: #ffffff;
-      border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 0;
+      width: 100%; padding: 11px 13px;
+      background: var(--field); color: var(--fg);
+      border: 1px solid var(--line); border-radius: var(--r-md);
       font-size: 16px; letter-spacing: .14em; text-transform: uppercase;
       font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-      caret-color: #ffffff;
-      transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+      caret-color: var(--fg);
+      transition: border-color .18s var(--ease-swift), background .18s var(--ease-swift), box-shadow .18s var(--ease-swift);
     }
-    input::placeholder { color: rgba(255, 255, 255, 0.30); }
-    input:hover { border-color: rgba(255, 255, 255, 0.26); }
+    input::placeholder { color: var(--fg-ghost); }
+    input:hover { border-color: var(--line-strong); }
     input:focus {
-      outline: none; border-color: rgba(255, 255, 255, 0.40);
-      background: rgba(255, 255, 255, 0.05);
-      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
+      outline: none; border-color: var(--fg);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg) 10%, transparent);
     }
     .row { display: flex; gap: 10px; margin-top: 22px; }
     button {
-      flex: 1; padding: 12px 14px; border-radius: 0;
-      font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
-      transition: background-color .18s ease, color .18s ease, border-color .18s ease, box-shadow .2s ease;
+      flex: 1; padding: 11px 14px; border-radius: var(--r-md);
+      font: inherit; font-size: 14px; font-weight: 550; cursor: pointer;
+      transition: background-color .16s var(--ease-swift), color .16s var(--ease-swift), border-color .16s var(--ease-swift), opacity .16s var(--ease-swift);
     }
-    button.primary { background: #ffffff; color: #000000; border: 1px solid #ffffff; }
-    button.primary:hover { background: transparent; color: #ffffff; box-shadow: 0 0 24px rgba(255, 255, 255, 0.15); }
-    button.primary:disabled { opacity: .55; cursor: default; }
-    button.ghost { background: transparent; color: rgba(255, 255, 255, 0.52); border: 1px solid rgba(255, 255, 255, 0.14); }
-    button.ghost:hover { color: #ffffff; border-color: rgba(255, 255, 255, 0.40); }
+    button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+    button.primary { background: var(--fg); color: var(--bg); border: 1px solid var(--fg); }
+    button.primary:hover { opacity: .88; }
+    button.primary:active { transform: scale(.985); }
+    button.primary:disabled { opacity: .45; cursor: default; }
+    button.ghost { background: transparent; color: var(--fg-muted); border: 1px solid var(--line-strong); }
+    button.ghost:hover { color: var(--fg); border-color: var(--fg); }
     .msg { margin-top: 18px; font-size: 13px; min-height: 18px; }
-    .msg.error { color: #ff453a; }
-    .msg.ok { color: #ffffff; }
-    .msg.info { color: rgba(255, 255, 255, 0.52); }
+    .msg.error { color: var(--danger); }
+    .msg.ok { color: var(--fg); }
+    .msg.info { color: var(--fg-faint); }
   </style>
 </head>
 <body>
