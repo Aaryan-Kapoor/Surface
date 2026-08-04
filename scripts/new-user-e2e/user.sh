@@ -18,8 +18,10 @@ npm -v
 
 # Step 1 — CLI + service. surface isn't on PATH yet, so health must fail
 # and the install path must be taken (mirrors the doc's ordering).
+# INSTALL_SPEC: the local tarball by default; an npm spec in canary mode.
+INSTALL_SPEC="${INSTALL_SPEC:-/pkg/surface-display.tgz}"
 if command -v surface; then echo "surface unexpectedly preinstalled" >&2; exit 1; fi
-npm install -g /pkg/surface-display.tgz
+npm install -g "$INSTALL_SPEC"
 surface --version
 surface service install --timeout 90
 surface service health
