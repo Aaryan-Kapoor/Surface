@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { LOCAL_TARGET } from "../sse.js";
-import { listSessions } from "../auth.js";
+import { SESSION_COOKIE, listSessions } from "../auth.js";
 
 // Capability gate (docs/auth/trust-model.md): anything that touches the host
 // filesystem, executes code, drains the agent inbox, or mints credentials
@@ -39,6 +39,28 @@ export function isSecureRequest(req: Request): boolean {
   const xfproto = (req.headers["x-forwarded-proto"] || "").toString().split(",")[0].trim().toLowerCase();
   if (xfproto) return xfproto === "https";
   return req.secure === true || req.protocol === "https";
+}
+
+// Cookie emission lives here rather than in routes/auth.ts because the auth
+// middleware (server/index.ts) also has to write it: rolling the session row's
+// expiry without re-issuing the cookie leaves the browser expiring on the
+// original deadline.
+export function setSessionCookie(req: Request, res: Response, token: string, ttlSeconds: number): void {
+  const parts = [
+    `${SESSION_COOKIE}=${token}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    `Max-Age=${ttlSeconds}`,
+  ];
+  if (isSecureRequest(req)) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
+}
+
+export function clearSessionCookie(req: Request, res: Response): void {
+  const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+  if (isSecureRequest(req)) parts.push("Secure");
+  res.append("Set-Cookie", parts.join("; "));
 }
 
 export function clientIp(req: Request): string {

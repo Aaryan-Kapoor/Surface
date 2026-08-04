@@ -279,6 +279,34 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 15,
+    description: "auth_sessions: carry already-paired devices to the one-year TTL",
+    up: (db) => {
+      // Rolling expiry reads each session's *own* ttl_seconds, frozen at the
+      // moment it was created. Raising the default alone would therefore fix
+      // nothing for anyone already paired: their phone would still hit the
+      // thirty-day wall and get sent back to the host terminal for a fresh
+      // token, which is the entire complaint.
+      //
+      // Only rows still sitting on the old default move. An operator who
+      // deliberately asked for a short-lived session keeps it, and system
+      // bearers keep the month by design (DEFAULT_SYSTEM_SESSION_TTL_SECONDS),
+      // so the role filter is load-bearing rather than incidental. A device
+      // that explicitly requested exactly 2592000 is indistinguishable from one
+      // that took the default and is swept along; that is a benign coincidence,
+      // not a setting silently overridden.
+      db.prepare(
+        `UPDATE auth_sessions
+         SET ttl_seconds = 31536000,
+             expires_at = datetime('now', '+31536000 seconds')
+         WHERE role = 'device'
+           AND ttl_seconds = 2592000
+           AND revoked_at IS NULL
+           AND expires_at > datetime('now')`,
+      ).run();
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
