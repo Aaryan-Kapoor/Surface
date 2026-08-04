@@ -540,6 +540,7 @@ try {
     const p = await isolatedPorts();
     const tmp = tmpDir("surface-dispatch-restart-");
     const short = spawnServer(p.port, tmp, {}, p.contentPort);
+    let killed = false;
     let w: Waiter;
     try {
       const shortBase = `http://127.0.0.1:${p.port}`;
@@ -551,6 +552,7 @@ try {
       w = spawnWaiter("restart", ["--follow", "--id", "restart-me"], shortBase);
       await sleep(2000); // registered
       await killServer(short, p.port);
+      killed = true;
       await sleep(7000); // outlive the 5s registration timer
       assert.ok(
         !w.stderr.includes("predates single-claimant delivery"),
@@ -558,6 +560,9 @@ try {
       );
     } finally {
       killWaiters();
+      // Any early failure (a slow boot, a refused create) must not strand this
+      // second server: nothing else in the suite knows about it.
+      if (!killed) await killServer(short, p.port).catch(() => {});
       cleanupDir(tmp);
     }
   });
