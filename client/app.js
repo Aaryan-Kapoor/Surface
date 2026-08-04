@@ -1107,12 +1107,26 @@ function renderGrid() {
     widget.src = "/display/home/html";
     widget.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
     gridView.appendChild(widget);
-    // Auto-size: listen for content height
-    widget.onload = () => {
+    // Auto-size to the widget's own content. The frame has to be collapsed
+    // first: an iframe gives its document a viewport, so documentElement
+    // .scrollHeight just reports back whatever height the frame already had.
+    const sizeWidget = () => {
       try {
-        const h = widget.contentDocument.documentElement.scrollHeight;
+        widget.style.height = "0px";
+        const doc = widget.contentDocument;
+        const h = Math.max(
+          doc.body ? doc.body.scrollHeight : 0,
+          doc.documentElement ? doc.documentElement.scrollHeight : 0,
+        );
         widget.style.height = Math.max(h, 60) + "px";
       } catch { widget.style.height = "200px"; }
+    };
+    widget.onload = () => {
+      sizeWidget();
+      // Re-measure once fonts have settled and again on resize; a widget that
+      // reflows at a different width would otherwise keep the old height.
+      requestAnimationFrame(sizeWidget);
+      window.addEventListener("resize", sizeWidget, { passive: true });
     };
   }
 

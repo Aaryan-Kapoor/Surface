@@ -1567,13 +1567,15 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
 /* ══ Home widget / overlay ══ */
 
+/* The home slot is an iframe, so it has to be inset with margins: padding would
+   shrink the content box out from under the auto-height measurement the shell
+   takes from its scrollHeight. */
 .home-widget {
-  width: 100%;
+  display: block;
+  width: calc(100% - 2 * var(--gutter));
+  margin: 4px var(--gutter) 8px;
   border: none;
   border-radius: var(--card-radius);
-  margin: 0 0 8px;
-  padding: 0 var(--gutter);
-  display: block;
   background: transparent;
 }
 
