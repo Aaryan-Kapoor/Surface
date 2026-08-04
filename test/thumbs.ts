@@ -297,7 +297,13 @@ await atest("closing the connection fails everything waiting on it", async () =>
 // ── Queue recovery ──
 
 const { initDb, getDb, closeDb } = await import("../server/db.js");
-const { createArtifact, updateArtifact } = await import("../server/artifacts.js");
+const {
+  createArtifact,
+  getArtifact,
+  getArtifactCard,
+  touchArtifact,
+  updateArtifact,
+} = await import("../server/artifacts.js");
 
 initDb();
 
@@ -359,6 +365,63 @@ await atest("a revision supersedes its predecessor in the queue instead of stack
   const jobs = thumbQueueStats().jobs;
   assert.equal(jobs.length, 1, "the superseded job must be dropped, not left to race the new one");
   assert.equal(jobs[0].generation, genAfter, "the queued job must carry the current revision");
+});
+
+// ── Rapid touches ──
+//
+// `surface link` + `surface touch` is the documented hot-reload loop, so two
+// touches inside one second is the normal case, not an exotic one. A linked
+// artifact's touch leaves current_version_id alone and moves only `updated_at`,
+// which SQLite writes at one-second resolution — so both touches used to hash
+// to the SAME generation. An in-flight capture of the FIRST edit then passed
+// the "is my generation still current?" check taken after the second, and was
+// written as the current thumbnail; the second enqueue was deduplicated against
+// it, so nothing ever corrected it. The wrong picture was pinned for good.
+await atest("every touch is a new generation, even inside one second", async () => {
+  const touchId = "touched-surface";
+  createArtifact(getDb(), {
+    id: touchId,
+    title: "Touched Surface",
+    mime: "text/html",
+    files: [{ path: "index.html", content: "<!doctype html><h1>v1</h1>", mime: "text/html" }],
+  });
+
+  const seen = new Set<string>();
+  const started = Date.now();
+  for (let i = 0; i < 4; i++) {
+    const generation = currentThumbGeneration(touchId);
+    assert.ok(generation, "a live surface always has a generation");
+    assert.ok(!seen.has(generation!), `touch ${i} reused generation ${generation}`);
+    seen.add(generation!);
+    touchArtifact(getDb(), touchId);
+  }
+  assert.ok(
+    Date.now() - started < 1000,
+    "the touches have to land inside one second or the test proves nothing about updated_at",
+  );
+  assert.equal(seen.size, 4, "four touches, four generations");
+
+  // The generation must be one value, not two. The card list computes it from
+  // the card row (to answer `has_thumb`) and /thumb computes it from the
+  // artifact row; if those two queries disagreed, the grid would report a
+  // capture the route cannot find.
+  assert.equal(
+    thumbGenerationFor(getArtifactCard(getDb(), touchId)),
+    thumbGenerationFor(getArtifact(getDb(), touchId)),
+    "the card row and the artifact row must produce the same generation",
+  );
+
+  // A touch has to supersede the queued job the way a new version does —
+  // otherwise the stale capture is still the one that lands.
+  enqueueThumb(touchId);
+  const queued = thumbQueueStats().jobs.filter((j) => j.id === touchId);
+  assert.equal(queued.length, 1);
+  touchArtifact(getDb(), touchId);
+  enqueueThumb(touchId);
+  const after = thumbQueueStats().jobs.filter((j) => j.id === touchId);
+  assert.equal(after.length, 1, "a touch must replace the queued job, not stack a second one");
+  assert.notEqual(after[0].generation, queued[0].generation, "…and the survivor carries the touched revision");
+  assert.equal(after[0].generation, currentThumbGeneration(touchId));
 });
 
 await atest("shutdownThumbnails is idempotent and stops accepting work", async () => {

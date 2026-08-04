@@ -86,20 +86,34 @@ function thumbsDir(): string {
 // It also let two concurrent captures of different revisions race for the same
 // destination, so an older shot could land last and win.
 //
-// The generation is that revision's identity: the current version row plus the
+// The generation is that revision's identity: the current version row, the
 // artifact's `updated_at` (which also moves for a touch or a metadata edit,
-// both of which change the picture). It is carried by the job, baked into the
-// filename, and re-checked immediately before the bytes are written.
+// both of which change the picture) and `content_rev`. It is carried by the
+// job, baked into the filename, and re-checked immediately before the bytes
+// are written.
+//
+// `content_rev` is what makes the identity actually unique. `updated_at` is
+// SQLite's one-second clock and a *linked* artifact's touch moves nothing else
+// — `surface link` + `surface touch` is the documented hot-reload loop, so two
+// touches inside one second is ordinary. With only the version row and the
+// second, both touches hashed the same: an in-flight capture of the first edit
+// passed the "is my generation still current?" check taken after the second and
+// was written as the current thumbnail, and the second enqueue was deduplicated
+// against it. Nothing ever corrected the picture. The counter is bumped by
+// every write that declares the content changed, and never reset.
 
 const GENERATION_RE = /^[0-9a-f]{16}$/;
 
 export function thumbGenerationFor(
-  artifact: { current_version_id?: string | null; updated_at?: string | null } | null | undefined,
+  artifact:
+    | { current_version_id?: string | null; updated_at?: string | null; content_rev?: number | null }
+    | null
+    | undefined,
 ): string | null {
   if (!artifact) return null;
   return crypto
     .createHash("sha1")
-    .update(`${artifact.current_version_id || ""}\0${artifact.updated_at || ""}`)
+    .update(`${artifact.current_version_id || ""}\0${artifact.updated_at || ""}\0${artifact.content_rev ?? ""}`)
     .digest("hex")
     .slice(0, 16);
 }

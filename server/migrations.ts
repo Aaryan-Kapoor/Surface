@@ -279,6 +279,30 @@ const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 15,
+    description: "artifacts.content_rev: a monotonic per-change counter",
+    up: (db) => {
+      // The thumbnail generation (server/thumbs.ts) is the identity of the
+      // revision a cached capture is a picture of. It was hashed from
+      // current_version_id + updated_at, and neither moves usefully for a
+      // *linked* artifact's touch: the version row is unchanged and updated_at
+      // is SQLite's one-second-resolution clock, so two touches inside one
+      // second produced the same generation and an in-flight capture of the
+      // first could be written — and then deduplicated against — as the
+      // picture of the second.
+      //
+      // Nothing already on the row is monotonic (metadata is the only other
+      // mutable field, and updateArtifact replaces that document wholesale,
+      // which would reset a counter kept there and let a generation repeat).
+      // So: one integer, bumped by every write that declares the rendered
+      // content changed, and never reset.
+      const columns = db.pragma("table_info(artifacts)") as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "content_rev")) {
+        db.exec(`ALTER TABLE artifacts ADD COLUMN content_rev INTEGER NOT NULL DEFAULT 0`);
+      }
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
