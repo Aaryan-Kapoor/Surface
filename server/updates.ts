@@ -283,6 +283,14 @@ export function isTerminal(phase: string | undefined): boolean {
  * the last phase ever written. `booted` marks the first read after a fresh
  * server start, where the running version is the honest answer to whether the
  * update landed.
+ *
+ * The reference version is what the run actually put ON DISK (`installed`),
+ * falling back to what it was aiming for (`to`) for a record written before the
+ * install step got that far. That is the same reference `staleServiceError()`
+ * in bin/upgrade.ts uses, and the two must agree — they are two routes to the
+ * one claim "the update is done". Comparing against `to` alone would fail a
+ * dev/local install, which legitimately converges skill + service without
+ * moving the package and which `surface upgrade` itself reports as success.
  */
 export function reconcileRun(
   run: UpgradeProgress | null,
@@ -290,7 +298,8 @@ export function reconcileRun(
 ): UpgradeProgress | null {
   if (!run || isTerminal(run.phase)) return run;
   const { version, now, booted } = opts;
-  if (booted && run.to && version !== "unknown" && !newerThan(run.to, version)) {
+  const target = run.installed || run.to;
+  if (booted && target && version !== "unknown" && !newerThan(target, version)) {
     return { ...run, phase: "done", installed: version, error: null, updated_at: new Date(now).toISOString() };
   }
   if (booted && run.phase === "restarting") {

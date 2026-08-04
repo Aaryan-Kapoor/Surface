@@ -401,11 +401,63 @@ async function latestVersion(): Promise<string> {
   return body.version;
 }
 
+interface ParsedVersion {
+  core: [number, number, number];
+  pre: string[]; // empty = a stable release
+}
+
+// `1.2.3-rc.1` used to parse as `[1,2,3]`, because the old splitter cut on
+// `-` as if it were a separator between core numbers. A prerelease therefore
+// compared EQUAL to its own stable release, so an installed `1.2.3-rc.1` never
+// saw `1.2.3` as an update, and — after the restart check below started using
+// this — a service still running the rc would have been called "done" on the
+// stable version. Precedence follows SemVer §11: build metadata is ignored, a
+// prerelease is lower than its stable release, and prerelease identifiers are
+// compared field by field (numeric < alphanumeric).
+function parseVersion(value: string): ParsedVersion {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(value ?? "").trim());
+  // Anything unparseable ("unknown", an empty string) sorts as 0.0.0 with no
+  // prerelease, so it is never *newer* than a real version — the conservative
+  // answer everywhere this is used.
+  if (!m) return { core: [0, 0, 0], pre: [] };
+  return {
+    core: [Number(m[1]), Number(m[2]), Number(m[3])],
+    pre: m[4] ? m[4].split(".") : [],
+  };
+}
+
+/** SemVer precedence: negative when a < b, 0 when equal, positive when a > b. */
+export function compareVersions(a: string, b: string): number {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i];
+  }
+  if (!pa.pre.length && !pb.pre.length) return 0;
+  if (!pa.pre.length) return 1; // a stable release outranks its prereleases
+  if (!pb.pre.length) return -1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    // "A larger set of pre-release fields has a higher precedence than a
+    // smaller set, if all of the preceding identifiers are equal."
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xNum = /^\d+$/.test(x);
+    const yNum = /^\d+$/.test(y);
+    if (xNum && yNum) {
+      if (Number(x) !== Number(y)) return Number(x) - Number(y);
+      continue;
+    }
+    // "Numeric identifiers always have lower precedence than non-numeric."
+    if (xNum !== yNum) return xNum ? -1 : 1;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
 export function newerThan(a: string, b: string): boolean {
-  const parse = (v: string) => v.split(/[.+-]/, 3).map((n) => Number(n) || 0);
-  const [a0, a1, a2] = parse(a);
-  const [b0, b1, b2] = parse(b);
-  return a0 !== b0 ? a0 > b0 : a1 !== b1 ? a1 > b1 : a2 > b2;
+  return compareVersions(a, b) > 0;
 }
 
 export type InstallContext = "global" | "local" | "dev";
@@ -562,20 +614,34 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   const service = await restartServiceIfStale(timeoutSec, name);
   const failedLinks = skill.links.filter((l) => l.mode === "failed");
 
-  const report = { previous: current, installed, latest, package: packageStep, context, skill, service };
-  const failed = (service.restarted && service.error) || failedLinks.length > 0;
+  // A healthy restart is not the same as a successful one. `waitHealthy` only
+  // asks "is something answering on this port?" — if the supervisor's ExecStart
+  // still points at an older installation (a stale unit file, a second prefix,
+  // a `--name` whose saved entry was never rewritten), the old server comes
+  // back green and we would write `done` while it keeps serving. That is the
+  // same lie the npm step above refuses, one layer down, and it is the lie the
+  // PWA repeats as "Updated to X". Same rule the boot-time reconciler applies
+  // (reconcileRun in server/updates.ts): the version actually answering has to
+  // be at least the one on disk.
+  const stale = staleServiceError(service, installed);
+  const report = {
+    previous: current, installed, latest, package: packageStep, context, skill,
+    service: stale ? { ...service, stale } : service,
+  };
+  const serviceFailed = (service.restarted && service.error) || stale;
+  const failed = Boolean(serviceFailed) || failedLinks.length > 0;
   progress(failed
     ? {
       phase: "failed",
       installed,
       error: service.restarted && service.error
         ? `the service restarted but did not come back healthy: ${service.error}`
-        : `${failedLinks.length} skill target(s) could not be written`,
+        : stale || `${failedLinks.length} skill target(s) could not be written`,
     }
     : { phase: "done", installed });
   if (json) {
     console.log(JSON.stringify(report, null, 2));
-    if ((service.restarted && service.error) || failedLinks.length) process.exit(1);
+    if (serviceFailed || failedLinks.length) process.exit(1);
     return;
   }
   console.log(available && packageStep.startsWith("updated") ? packageStep : `package: ${packageStep === "unchanged" ? `up to date (${current})` : packageStep}`);
@@ -586,6 +652,9 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   else if (service.restarted && service.error) {
     console.error(`service: restarted but not healthy — ${service.error}`);
     process.exit(1);
+  } else if (stale) {
+    console.error(`service: ${stale}`);
+    process.exit(1);
   } else if (service.restarted) console.log(`service: restarted, now ${service.version}`);
   else if (service.version) console.log(`service: already on ${service.version} — no restart needed`);
   else console.log(`service: ${service.state || "stopped"} — left as-is (start it with: surface service start)`);
@@ -593,6 +662,40 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
     console.error(`skill  : ${failedLinks.length} target(s) could not be written — see notes above`);
     process.exit(1);
   }
+}
+
+/**
+ * Did the service that came back actually land on the version now on disk?
+ *
+ * Returns the failure message, or null when the claim "the update is done" is
+ * honest. Pure so the rule can be unit-tested without a supervisor — and so it
+ * can be read side by side with `reconcileRun` in server/updates.ts, which
+ * resolves the *same* claim from the other direction (the restarted server
+ * reading the progress file the killed child left behind). The two must agree:
+ *
+ *   - a running version at or beyond the target is done — a version NEWER than
+ *     expected still counts, matching reconcileRun's `!newerThan(to, version)`;
+ *   - an older one is a failure that names the version actually running;
+ *   - "unknown" on our side means we have nothing to compare against, so we do
+ *     not manufacture a failure out of it.
+ *
+ * A restart that reported no version at all is not evidence of success either:
+ * the port answered, but nothing said what answered.
+ */
+export function staleServiceError(
+  service: { installed?: boolean; restarted?: boolean; version?: string; error?: string },
+  installed: string,
+): string | null {
+  if (!service.installed || !service.restarted) return null; // nothing was replaced
+  if (service.error) return null; // already failing as "restarted but not healthy"
+  if (!installed || installed === "unknown") return null;
+  if (!service.version) {
+    return `restarted but did not report a version, so ${installed} could not be confirmed running`;
+  }
+  if (newerThan(installed, service.version)) {
+    return `restarted but is still running ${service.version} (expected ${installed})`;
+  }
+  return null;
 }
 
 export function contextAdvice(context: InstallContext): string {
