@@ -1,8 +1,9 @@
 # Dashboard redesign — reference shots
 
 Captured from a throwaway server seeded with `surface seed-demos` (the bundled
-demo gallery) plus three linked surfaces of awkward shapes: a plain-text deploy
-log, an SVG chart, and a markdown doc with a title long enough to truncate.
+demo gallery) plus four linked surfaces of awkward shapes: a plain-text deploy
+log, an SVG chart, a PNG, and a markdown doc with a title long enough to
+truncate.
 
 Headless Chrome over CDP at deviceScaleFactor 2, with
 `prefers-color-scheme` emulated per shot and `--blink-settings` forcing the
@@ -18,3 +19,15 @@ hover/pointer capabilities per form factor (headless otherwise reports
 
 The open-surface shots are the bundled `ask-approval` demo, so the 40px bar is
 visible against real surface content.
+
+## The `-nocapture` shots
+
+The same server started with `SURFACE_CHROME` pointing at nothing, so no
+capture can ever land and every card falls back to the excerpt cover. This is
+not a rare state: a machine with no Chrome installed never gets a screenshot of
+anything, and it is what the dashboard looks like there.
+
+| | dark | light |
+|---|---|---|
+| Home, desktop | `home-desktop-dark-nocapture.png` | `home-desktop-light-nocapture.png` |
+| Home, phone | `home-phone-dark-nocapture.png` | — |
