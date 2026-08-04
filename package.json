@@ -53,6 +53,7 @@
     "test:runtime": "tsx test/runtime.ts",
     "test:cli": "tsx test/cli.ts",
     "test:app-routing": "tsx test/appRouting.ts",
+    "test:client-render": "tsx test/clientRender.ts",
     "test:bindings": "tsx test/bindings.ts",
     "test:codex-bridge": "tsx test/codexBridge.ts",
     "test:action-dispatch": "tsx test/actionDispatch.ts",

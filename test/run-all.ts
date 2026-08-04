@@ -6,6 +6,7 @@ const suites = [
   "test:runtime",
   "test:cli",
   "test:app-routing",
+  "test:client-render",
   "test:thumbs",
   "test:auth",
   "test:content-origin",
