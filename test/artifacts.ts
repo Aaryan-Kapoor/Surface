@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
-import { cleanupDir, isolatedPorts, killServer, makeClient, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import { thumbGenerationFor } from "../server/thumbs.js";
 import type { ChildProcess } from "node:child_process";
 
 let SURFACE_URL = "";
@@ -42,7 +43,12 @@ async function main() {
   const ports = await isolatedPorts();
   serverPort = ports.port;
   SURFACE_URL = `http://127.0.0.1:${serverPort}`;
-  server = spawnServer(serverPort, dataDir, {}, ports.contentPort);
+  // A binary that cannot start: thumbnail behaviour here is about the cache
+  // keys and the card flags, and a real capture landing mid-assertion would
+  // rewrite the files these tests place by hand.
+  server = spawnServer(serverPort, dataDir, {
+    SURFACE_CHROME: path.join(dataDir, "no-such-chrome"),
+  }, ports.contentPort);
   await waitForReady(SURFACE_URL, "/artifacts");
 
   const suffix = Date.now().toString(36);
@@ -443,6 +449,100 @@ async function main() {
   const imgType = imgThumb.headers.get("content-type") || "";
   assert(imgType.includes("image/svg+xml"), `image thumb should pass the bytes through, got ${imgType}`);
   assert(String(imgThumb.body).includes("<svg"), "image thumb must be the artifact's own file");
+
+  // ── The immutable cache key must mean exactly one picture ──
+  //
+  // `?v=<updated_at>` buys a one-year `immutable` response, and every revision
+  // used to be served from the same `<id>.png`. Right after an update the old
+  // PNG was still the only file on disk, so a request carrying the NEW key was
+  // answered with the OLD image — and cached under that key for a year. These
+  // assertions are about the bytes, not the header: the URL has to name the
+  // picture it returns.
+
+  const thumbsPath = path.join(dataDir, "thumbs");
+  fs.mkdirSync(thumbsPath, { recursive: true });
+  const cacheId = `artifact-test-thumbcache-${suffix}`;
+  const bytesA = Buffer.from("PNG-BYTES-REVISION-A");
+  const bytesB = Buffer.from("PNG-BYTES-REVISION-B");
+  const bytesC = Buffer.from("PNG-BYTES-REVISION-C");
+
+  async function fetchThumb(version: string): Promise<{ cacheControl: string; body: Buffer }> {
+    const res = await fetch(
+      `${SURFACE_URL}/artifacts/${cacheId}/thumb?v=${encodeURIComponent(version)}`,
+      { signal: AbortSignal.timeout(10000) },
+    );
+    return { cacheControl: res.headers.get("cache-control") || "", body: Buffer.from(await res.arrayBuffer()) };
+  }
+  async function currentArtifact(): Promise<any> {
+    return (await api("GET", `/artifacts/${cacheId}`)).artifact;
+  }
+  function placeCapture(artifact: any, bytes: Buffer): string {
+    const generation = thumbGenerationFor(artifact);
+    assert(generation, "an artifact must have a thumbnail generation");
+    fs.writeFileSync(path.join(thumbsPath, `${cacheId}.${generation}.png`), bytes);
+    return generation!;
+  }
+
+  await api("POST", "/artifacts", {
+    id: cacheId,
+    title: "Cache Key Surface",
+    mime: "text/html",
+    content: "<!doctype html><html><body><h1>revision A</h1></body></html>",
+  });
+  const revA = await currentArtifact();
+  const genA = placeCapture(revA, bytesA);
+
+  // `updated_at` has one-second resolution, so its key is only safe to pin once
+  // that second has closed and no further update can reuse the string.
+  await sleep(2300);
+  const servedA = await fetchThumb(revA.updated_at);
+  assert(servedA.cacheControl.includes("immutable"), `a captured revision should cache hard, got ${servedA.cacheControl}`);
+  assert(servedA.body.equals(bytesA), "the immutable response must be the revision its key names");
+
+  // Publish a new revision. The only capture on disk is still revision A's.
+  await api("PUT", `/artifacts/${cacheId}`, {
+    content: "<!doctype html><html><body><h1>revision B</h1></body></html>",
+  });
+  const revB = await currentArtifact();
+  assert(thumbGenerationFor(revB) !== genA, "a new version must be a new generation");
+  await sleep(2300);
+  const staleForB = await fetchThumb(revB.updated_at);
+  assert(
+    !staleForB.cacheControl.includes("immutable"),
+    `an older capture must never be pinned under the new revision's key, got ${staleForB.cacheControl}`,
+  );
+  assert(staleForB.body.equals(bytesA), "…it is still shown, just on a revalidating window");
+
+  // Now the capture for revision B lands: the same URL becomes immutable AND
+  // starts resolving to revision B's bytes.
+  placeCapture(revB, bytesB);
+  const servedB = await fetchThumb(revB.updated_at);
+  assert(servedB.cacheControl.includes("immutable"), `the captured revision should cache hard, got ${servedB.cacheControl}`);
+  assert(servedB.body.equals(bytesB), "the key must now mean revision B, not the picture cached before it");
+
+  // Rapid updates: `updated_at` is second-resolution, so two updates inside one
+  // second share a key. Until that second closes, pinning it would let revision
+  // C's key be claimed by a revision D nobody has photographed yet.
+  await api("PUT", `/artifacts/${cacheId}`, {
+    content: "<!doctype html><html><body><h1>revision C</h1></body></html>",
+  });
+  const revC = await currentArtifact();
+  placeCapture(revC, bytesC);
+  const freshC = await fetchThumb(revC.updated_at);
+  assert(freshC.body.equals(bytesC), "the current capture is served immediately");
+  assert(
+    !freshC.cacheControl.includes("immutable"),
+    `a version key whose second is still open must not be pinned, got ${freshC.cacheControl}`,
+  );
+  await sleep(2300);
+  const settledC = await fetchThumb(revC.updated_at);
+  assert(settledC.cacheControl.includes("immutable"), "once the second has closed the key is safe to pin");
+  assert(settledC.body.equals(bytesC), "and it still means revision C");
+
+  // Deleting a surface must take every generation with it, not just one.
+  await optionalDelete(`/artifacts/${cacheId}`);
+  const leftBehind = fs.readdirSync(thumbsPath).filter((n) => n.startsWith(`${cacheId}.`));
+  assert(leftBehind.length === 0, `deleting a surface must remove every cached capture, found ${leftBehind.join(", ")}`);
 
   await optionalDelete(`/artifacts/${thumbId}`);
   await optionalDelete(`/artifacts/${imgId}`);

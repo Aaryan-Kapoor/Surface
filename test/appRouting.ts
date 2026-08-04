@@ -109,15 +109,44 @@ test("client and server derive the same cover hue for a surface", () => {
   }
 });
 
-// The version key is what makes the route's immutable cache safe: drop it and
-// every card would keep serving a year-stale capture.
-test("card thumbnails are requested with a version key", () => {
+// The version key is what makes the route's immutable cache safe, and the two
+// sides have to agree on what it *is*: the server only answers `immutable` when
+// `?v=` is byte-for-byte the artifact's current `updated_at` (server/routes/
+// artifacts.ts). A card that sent anything else — a rounded timestamp, an
+// epoch, a version number — would silently drop off the hard cache, so assert
+// the exact string rather than "a parameter is present".
+test("card thumbnails are keyed on the exact revision string the server pins", () => {
+  const updatedAt = "2026-07-23 13:46:03";
+  const url = cardThumbUrl({ id: "abc", updated_at: updatedAt });
+  assert.equal(url, `/artifacts/abc/thumb?v=${encodeURIComponent(updatedAt)}`);
+  // …and it round-trips back to that revision, which is the value the route
+  // compares against.
+  assert.equal(new URLSearchParams(url.split("?")[1]).get("v"), updatedAt);
+
+  // updated_at wins over created_at: a capture must follow the latest revision,
+  // not the surface's birthday.
   assert.equal(
-    cardThumbUrl({ id: "abc", updated_at: "2026-07-23 13:46:03" }),
-    "/artifacts/abc/thumb?v=2026-07-23%2013%3A46%3A03",
+    cardThumbUrl({ id: "abc", updated_at: updatedAt, created_at: "2020-01-01 00:00:00" }),
+    `/artifacts/abc/thumb?v=${encodeURIComponent(updatedAt)}`,
   );
   assert.equal(cardThumbUrl({ id: "a b", created_at: "x" }), "/artifacts/a%20b/thumb?v=x");
+  // No revision to name means no cache key to pin — the route must revalidate.
   assert.equal(cardThumbUrl({ id: "abc" }), "/artifacts/abc/thumb");
+});
+
+// Documentation drift is a real defect here: pwa.md described a per-surface
+// EventSource the app has not opened for some time, which is exactly the kind
+// of claim a reader trusts over the code.
+test("pwa.md does not claim the detail view opens its own EventSource", () => {
+  const pwaDoc = fs.readFileSync(path.join(__dirname, "..", "docs", "display", "pwa.md"), "utf8");
+  assert.ok(
+    !/opens a per-surface `EventSource`/.test(pwaDoc),
+    "the detail view multiplexes over the global stream; pwa.md must not describe a second connection",
+  );
+  assert.ok(
+    /multiplexed over the global stream/i.test(pwaDoc),
+    "pwa.md must say where detail-view events actually come from",
+  );
 });
 
 console.log("\nsurfaceFrameSrc tests passed\n");

@@ -56,13 +56,15 @@ When there are no surfaces and no home widget (`client/app.js`), the grid shows 
 
 `renderSurface(id)` fetches `/artifacts/:id`, renders the bar, and mounts a full-screen iframe (`surface-frame`). The iframe `src` is the artifact's `view_url` (falling back to `/artifacts/:id/view`).
 
-**The bar** (`.surface-nav`) is a single 40px row — leave, identify, state — over a translucent blurred `--bg` with a hairline underneath, plus `env(safe-area-inset-top)`. It carries a chevron back button (Escape does the same, unless a modal/finder is open or focus is in a field), the surface title, a meta run of kind · time-ago · `live`, and two icon actions: copy link, and open the raw surface in a new tab. Under 760px the meta collapses to the live indicator alone so the title keeps the width. It opens a per-surface `EventSource` at `/artifacts/:id/stream` and handles:
+**The bar** (`.surface-nav`) is a single 40px row — leave, identify, state — over a translucent blurred `--bg` with a hairline underneath, plus `env(safe-area-inset-top)`. It carries a chevron back button (Escape does the same, unless a modal/finder is open or focus is in a field), the surface title, a meta run of kind · time-ago · `live`, and two icon actions: copy link, and open the raw surface in a new tab. Under 760px the meta collapses to the live indicator alone so the title keeps the width.
+
+**Detail-view events are multiplexed over the global stream.** The PWA opens **exactly one** `EventSource`, on `/stream` (see [Global SSE](#global-sse)) — enforced by `test/appRouting.ts` — and the detail view filters that stream for the surface it is showing. It does *not* open `/artifacts/:id/stream`; that route still exists for non-PWA consumers (`server/routes/artifacts.ts`), but the app never uses it, because a second connection per open surface bought nothing and cost a socket. The events the detail view acts on are:
 
 - **`surface_updated`**: on `reload`/`version_id`, reloads the iframe with a fresh `?v=<now>` and adds a `refreshing` blur-fade class; on `title`/`updated_at`, patches the nav text in place.
 - **`agent_reply`**: shows the reply text as a toast.
 - **`surface_exec`**: best-effort JS injection into the open iframe. It works for same-origin frames the PWA can access; device/browser isolation can make it a no-op, and errors are caught and logged.
 
-(`state_patch` and `stream_append` are consumed by the injected `surface.js` runtime inside the iframe itself, not by the PWA shell.)
+`state_patch` and `stream_append` are not acted on by the shell itself: it relays them to same-origin surface iframes through `window.__surfaceHostSubscribe`, so the injected `surface.js` runtime gets its events off the one connection instead of opening a third. Cross-origin device content cannot reach that function and keeps its own content-plane stream, which is the point — the trust boundary stays, the socket count does not.
 
 ## iframe actions and postMessage bridge
 
