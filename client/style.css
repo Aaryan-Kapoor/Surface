@@ -90,6 +90,8 @@
     --chip-line: rgba(0, 0, 0, 0.12);
     --chip-hover: rgba(0, 0, 0, 0.08);
     --chip-shadow: 0 1px 2px rgba(16, 18, 22, 0.10), 0 6px 18px -8px rgba(16, 18, 22, 0.34);
+
+    --icon-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'><path d='M1 1.2l3.5 3.4L8 1.2' fill='none' stroke='%236b6b70' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
   }
 }
 
@@ -340,6 +342,7 @@ button { -webkit-tap-highlight-color: transparent; }
 
 :root {
   --icon-search: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-3.6-3.6'/></svg>");
+  --icon-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'><path d='M1 1.2l3.5 3.4L8 1.2' fill='none' stroke='%23a0a0a4' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
 }
 
 .grid-search {
@@ -446,11 +449,26 @@ button { -webkit-tap-highlight-color: transparent; }
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
-  outline: none;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'><path d='M1 1.2l3.5 3.4L8 1.2' fill='none' stroke='%23888' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  /* A background image, not a mask: a mask on a <select> clips the element
+     itself, text and all, to the chevron. The URI carries the stroke colour, so
+     there is one per scheme rather than the hardcoded #888 that used to sit
+     unchanged on a white toolbar. */
+  background-image: var(--icon-chevron);
   background-repeat: no-repeat;
   background-position: right 11px center;
   transition: color 0.15s var(--ease-swift), background-color 0.15s var(--ease-swift);
+}
+
+/* A pointer click on a <select> raises the browser's own focus ring in some
+   engines, which is what the blanket `outline: none` here was for — but it
+   took the keyboard ring with it, and this control had no other focus state.
+   Suppress the one and restore the other. */
+.grid-sort:focus { outline: none; }
+
+.grid-sort:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+  color: var(--fg);
 }
 
 .grid-sort:hover { color: var(--fg); background-color: var(--panel); }
@@ -1254,8 +1272,15 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   text-align: left;
 }
 
-.portal-prompt:hover,
-.portal-prompt:focus-visible { color: var(--fg); outline: none; }
+.portal-prompt:hover { color: var(--fg); }
+
+/* Colour alone is not a focus indicator. */
+.portal-prompt:focus-visible {
+  color: var(--fg);
+  outline: 2px solid var(--fg);
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
 
 .portal-prompt-arrow { color: var(--fg-ghost); transition: transform 0.2s var(--ease-out), color 0.15s var(--ease-swift); }
 .portal-prompt:hover .portal-prompt-arrow,
