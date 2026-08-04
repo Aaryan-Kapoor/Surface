@@ -429,18 +429,23 @@ try {
     // Race the CLI and win from in-process: create the action, then claim it
     // before the CLI's SSE round-trip completes. Retry with a fresh action if
     // the CLI gets there first.
+    //
+    // Winning is SETUP, not the assertion — the thing under test is what
+    // happens after the winner releases. So retry generously: on a loaded
+    // Windows runner the CLI can win several in a row, and at four attempts
+    // this failed CI on a race it was never trying to measure.
     const ac = new AbortController();
     const streamed = fetch(`${BASE}/stream?wait_for_surface=dispatch-a`, { signal: ac.signal });
     const rivalId = await firstWaiterClientId(streamed);
     let contested: string | null = null;
     try {
-      for (let attempt = 0; attempt < 4 && !contested; attempt++) {
+      for (let attempt = 0; attempt < 15 && !contested; attempt++) {
         const id = await fire("dispatch-a", "contested", { attempt });
         const claim = await api("POST", `/actions/${id}/claim`, { token: `rival-${attempt}`, client_id: rivalId });
         if (claim.status === 200) contested = id;
-        else await sleep(300); // the CLI won that one; try again
+        else await sleep(150); // the CLI won that one; try again
       }
-      assert.ok(contested, "could not win a claim ahead of the CLI waiter");
+      assert.ok(contested, "could not win a claim ahead of the CLI waiter in 15 attempts");
       await sleep(1200); // the CLI has now attempted and lost
       const before = waiter.lines.map((l) => JSON.parse(l).id);
       assert.ok(!before.includes(contested), "the rival claim should have blocked the CLI");
