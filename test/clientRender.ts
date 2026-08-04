@@ -757,15 +757,16 @@ try {
     assert.match(pair, /--r-card:\s*18px/, "the pairing card must use the shared dialog radius");
     assert.match(ruleIn(css, ".modal-panel"), /border-radius:\s*18px/, "the modal radius moved away from the shared spec");
 
-    // Title and lede scale, shared across both files.
-    assert.match(ruleIn(pair, "h1"), /font-size:\s*23px/, "the pairing title left the shared scale");
-    assert.match(ruleIn(css, ".modal-title"), /font-size:\s*23px/, "the modal title left the shared scale");
-    assert.match(ruleIn(pair, ".eyebrow"), /font-size:\s*10\.5px/, "the pairing eyebrow left the shared scale");
+    // Rule 5: the *box* is shared; the header is one of exactly two. The modal
+    // is the task-dialog header, the pairing page is the front door, so their
+    // titles are deliberately not the same size.
+    assert.match(ruleIn(css, ".modal-title"), /font-size:\s*23px/, "the modal title left the task-dialog scale");
+    // The pairing page wears the wordmark instead of an eyebrow — it is a front
+    // door, not a section of one — so eyebrow parity is asserted only where an
+    // eyebrow exists. The title and lede scale is shared unconditionally.
+    assert.ok(!/class="eyebrow"/.test(pair), "the pairing page should carry the brand lockup, not an eyebrow");
     assert.match(ruleIn(css, ".modal-eyebrow"), /font-size:\s*10\.5px/, "the modal eyebrow left the shared scale");
-    for (const [src, sel] of [[pair, ".eyebrow"], [css, ".modal-eyebrow"]] as const) {
-      assert.match(ruleIn(src, sel), /text-transform:\s*uppercase/, `${sel} lost the shared eyebrow treatment`);
-      assert.match(ruleIn(src, sel), /letter-spacing:\s*0?\.18em/, `${sel} lost the shared eyebrow tracking`);
-    }
+    assert.match(ruleIn(css, ".modal-eyebrow"), /text-transform:\s*uppercase/, "the modal eyebrow lost its treatment");
 
     // Rule 3: what you click inside a dialog lifts off it.
     assert.match(ruleIn(pair, "input"), /background:\s*var\(--interactive\)/, "the token field must lift off the card");
@@ -796,6 +797,29 @@ try {
     assert.match(pair, /function\s*\(\s*\)\s*\{\s*done\(legacyCopy\(text\)\);\s*\}/,
       "a refused clipboard write must fall back, not report failure");
     assert.match(pair, /document\.execCommand\("copy"\)/, "no legacy clipboard fallback");
+  });
+
+  check("the pairing page leads with the Surface wordmark, centred", () => {
+    const pair = fs.readFileSync(path.join(REPO_ROOT, "client", "pair.html"), "utf8");
+    const brand = /<div class="brand">([\s\S]*?)<\/div>/.exec(pair);
+    assert.ok(brand, "no wordmark on the pairing page");
+    assert.equal(brand![1].trim(), "Surface");
+    // Surface has no mark. A glyph invented for this page would be a second
+    // identity, and the app icon is a launcher tile rather than a logo.
+    assert.ok(!/<svg/.test(brand![1]), "the wordmark is the identity — no invented glyph");
+
+    const rule = /[\n\s]\.brand\s*\{([^}]*)\}/.exec(pair);
+    assert.ok(rule, "no .brand rule");
+    assert.match(rule![1], /text-align:\s*center/, "the wordmark must be centred");
+    // It has to outrank the task line under it, or it is not a front door.
+    const brandSize = Number(/font-size:\s*([\d.]+)px/.exec(rule![1])![1]);
+    const h1Size = Number(/\.card > h1 \{[^}]*font-size:\s*([\d.]+)px/.exec(pair)![1]);
+    assert.ok(brandSize > h1Size, `wordmark (${brandSize}px) must lead the title (${h1Size}px)`);
+    const h1Rule = /\.card > h1 \{([^}]*)\}/.exec(pair);
+    assert.ok(h1Rule, "no .card > h1 rule");
+    assert.match(h1Rule![1], /text-align:\s*center/, "the task line must be centred under the wordmark");
+    // It supports the wordmark rather than competing with it.
+    assert.match(h1Rule![1], /color:\s*var\(--fg-muted\)/, "the task line must sit back from the wordmark");
   });
 
   // Pairing spans two machines, and the token cannot be typed until the command

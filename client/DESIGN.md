@@ -42,10 +42,17 @@ is told where to go. Dark is the scheme this ranking is defined in:
    one or two points into blue (`#0a0b0d`, `#131417`) and read as cold slate
    rather than black — a drift that is invisible in a diff and obvious on a
    screen. Guarded in `test:client-render`.
-5. **Every dialog is built to one spec.** The pairing card, the tutorial modal
-   and the finder are the same object: overlay plane, `18px` radius, `32px 32px
-   28px` padding, and the shared eyebrow / title / lede scale (`11.5px` ·
-   `23px/620` · `13.5px`). A second dialog style is a bug, not a variant.
+5. **Every dialog is built to one box.** The pairing card, the tutorial modal
+   and the finder share the overlay plane, an `18px` radius and `32px 32px 28px`
+   padding. A second dialog *style* is a bug.
+
+   They differ only in what leads, and there are exactly two headers. A **task
+   dialog** opens with an eyebrow (mono, uppercase, `10.5px`, `.18em`) over a
+   `23px/620` title. The **front door** — the pairing page, the first screen a
+   device ever sees — opens with the `Surface` wordmark at `30px/700` and
+   demotes its task line to `14px/550` in `--fg-muted` underneath. Two headings
+   at title weight, stacked, just compete; whichever element leads takes the
+   size, and the other one gets out of its way. A third header is a bug.
 6. **Light does not invert.** Going darker than the page in light mode reads as
    a shadow, not a plane, so both planes are white there and separation comes
    from lightness alone.

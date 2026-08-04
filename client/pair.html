@@ -89,13 +89,23 @@
       from { opacity: 0; transform: translateY(12px); }
       to   { opacity: 1; transform: none; }
     }
-    .eyebrow {
-      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase;
-      color: var(--fg-faint); margin-bottom: 12px;
+    /* The wordmark, in the shell's own type — Surface has no mark, and the
+       name set large in the system stack is the identity everywhere else. This
+       page is the product's front door rather than a section of it, so the
+       name leads and the task line sits under it. */
+    .brand {
+      text-align: center;
+      font-size: 30px; font-weight: 700; letter-spacing: -0.035em; line-height: 1;
+      color: var(--fg); margin-bottom: 7px;
     }
-    h1 { font-size: 23px; margin: 0 0 10px; font-weight: 620; letter-spacing: -0.024em; line-height: 1.18; }
-    p.sub { margin: 0 0 20px; color: var(--fg-muted); font-size: 13.5px; line-height: 1.55; }
+    /* The task line, not a second headline. Set at title weight and size it
+       competed with the wordmark directly above it, and the lede under it said
+       a third time what step 1's hint already says. */
+    .card > h1 {
+      text-align: center;
+      font-size: 14px; font-weight: 550; letter-spacing: 0; line-height: 1.4;
+      color: var(--fg-muted); margin: 0 0 26px;
+    }
     /* Numbered steps. Pairing is a three-move sequence that spans two machines
        — run a command over there, carry what it prints back here, then name
        this screen — and a flat stack of fields gave no clue that the token has
@@ -113,7 +123,7 @@
     .step-title { font-size: 14px; font-weight: 600; letter-spacing: -0.008em; margin: 4px 0 10px; }
     .step-title label { cursor: pointer; }
     .hint { margin: 8px 0 0; font-size: 12px; color: var(--fg-faint); line-height: 1.45; }
-    .mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; white-space: nowrap; }
     input {
       width: 100%; padding: 11px 13px;
       background: var(--interactive); color: var(--fg);
@@ -204,9 +214,8 @@
 </head>
 <body>
   <div class="card">
-    <div class="eyebrow">Surface · Pairing</div>
+    <div class="brand">Surface</div>
     <h1>Connect this device</h1>
-    <p class="sub">Link this device to the computer running Surface.</p>
 
     <form id="pair-form" autocomplete="off">
       <ol class="steps">
