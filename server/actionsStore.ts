@@ -45,7 +45,8 @@ export type ClaimFailure =
   | "action_not_found"
   | "already_claimed"
   | "already_handled"
-  | "claim_expired";
+  | "claim_expired"
+  | "token_in_use";
 
 export type ClaimResult =
   | { ok: true; action: SurfaceAction; replayed: boolean }
@@ -159,6 +160,19 @@ export function claimActionForWaiter(
       // rather than silently re-taking, so the CLI never prints a line for a
       // claim the server already gave up on.
       return { ok: false, reason: "claim_expired", action: existing };
+    }
+
+    // A token is one action's attempt, and v14 enforces that with a UNIQUE
+    // index. Reusing one across two actions is a caller bug — but letting the
+    // constraint fire raises a 500, which reads as "the server broke, retry",
+    // and the retry fails identically forever. Name it instead. Expired claims
+    // deliberately keep their token, so a retained one counts as in use: the
+    // index would reject it just the same.
+    const tokenOwner = db
+      .prepare(`SELECT id FROM surface_actions WHERE claim_token = ?`)
+      .get(params.token) as { id: string } | undefined;
+    if (tokenOwner && tokenOwner.id !== params.actionId) {
+      return { ok: false, reason: "token_in_use", action: existing };
     }
 
     if (take.run(String(deadline), params.token, params.clientId, params.actionId).changes > 0) {

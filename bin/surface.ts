@@ -651,7 +651,9 @@ async function waitForAction(opts: {
         // three more times. Retrying it only burns 600ms of sleep on every poll
         // and every `actions_available`. Report it unresolved so the action
         // stays re-offerable, but stop asking.
-        if (status === 400 || status === 403) return "unknown";
+        // `token_in_use` is the same shape of decided-caller-bug: this token
+        // belongs to another action, so no amount of retrying frees it.
+        if (status === 400 || status === 403 || code === "token_in_use") return "unknown";
         await sleep(200 * (attempt + 1)); // same token, so retrying is idempotent
       }
     }

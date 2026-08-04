@@ -478,6 +478,36 @@ try {
     await api("POST", `/actions/${id}/ack`, {});
   });
 
+  // v14 puts a UNIQUE index on claim_token, so a client that reuses one token
+  // for two actions hits a constraint violation. That has to come back as a
+  // decided 4xx: a 500 tells the caller "the server is broken, retry", and its
+  // retry will fail identically forever. The action must stay pending either
+  // way — the claim is a transaction, and a rejected one takes nothing.
+  await test("reusing a claim token on a second action is refused, not a 500", async () => {
+    const first = await fire("dispatch-a", "tokenreuse", { n: 1 });
+    const second = await fire("dispatch-a", "tokenreuse", { n: 2 });
+    const ac = new AbortController();
+    const streamed = fetch(`${BASE}/stream?wait_for_surface=dispatch-a`, { signal: ac.signal });
+    try {
+      const clientId = await firstWaiterClientId(streamed);
+      const won = await api("POST", `/actions/${first}/claim`, { token: "shared-token", client_id: clientId });
+      assert.equal(won.status, 200, `first claim should win: ${JSON.stringify(won.json)}`);
+
+      const reused = await api("POST", `/actions/${second}/claim`, { token: "shared-token", client_id: clientId });
+      assert.ok(
+        reused.status >= 400 && reused.status < 500,
+        `a reused token must be a client error, got ${reused.status} ${JSON.stringify(reused.json)}`,
+      );
+      const { json } = await api("GET", "/artifacts/dispatch-a/actions");
+      assert.ok(json.some((a: any) => a.id === second), "a refused claim must leave the action pending");
+    } finally {
+      ac.abort();
+      await streamed.catch(() => {});
+    }
+    await api("POST", `/actions/${first}/ack`, { token: "shared-token" });
+    await api("POST", `/actions/${second}/ack`, {});
+  });
+
   // Grace is per action. A live-but-not-claiming waiter (registered socket, no
   // claim — a wedged harness) must still get its full five seconds on EVERY
   // action, not just on the one whose timer happened to fire. Two clicks four
