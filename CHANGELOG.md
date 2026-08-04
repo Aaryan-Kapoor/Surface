@@ -24,6 +24,11 @@ All notable changes to Surface are recorded here.
   install`, `surface skill install` (both link targets verified), the
   sanity block, demo seed/clear, a first surface with live state, restart,
   uninstall. Publishing depends on this too.
+- New `scripts/test-npm-ci-no-toolchain.sh` + CI job covering the
+  *contributor* install path (`npm ci`) with no compiler present. It is a
+  genuinely different path from the user one: v13 resolved to its bundled
+  prebuild as a global tarball install but compiled from source under
+  `npm ci`, and every runner and dev box has a toolchain to hide that.
 - CI revamp: one packed tarball artifact feeds every install-shaped job;
   the test matrix is the full {ubuntu, windows, macos} × {Node 22, 24}
   cross; a scheduled canary installs the *published* package on
