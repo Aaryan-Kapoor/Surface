@@ -173,7 +173,8 @@ button { -webkit-tap-highlight-color: transparent; }
   white-space: nowrap;
 }
 
-.update-notice--available .update-notice-text { color: #ffffff; }
+.update-notice--available .update-notice-text,
+.update-notice--error .update-notice-text { color: #ffffff; }
 .update-notice--error { border-color: var(--danger); }
 .update-notice--busy .update-notice-text { animation: update-pulse 1.6s ease-in-out infinite; }
 
