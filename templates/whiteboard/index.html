@@ -110,6 +110,39 @@
     .tool, .send { padding: 9px 12px; }
   }
   @media (prefers-reduced-motion: reduce) { .tool, .hint { transition: none; } }
+
+  /* ── Tour rail ──
+     Present only while this surface is a step in the guided tour. It is the
+     one control that is the same object on every demo, so moving on never
+     depends on finding a different button in a different place. */
+  .tour-rail {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px 9px 16px;
+    background: var(--interactive, #121212);
+    border: 1px solid var(--line, rgba(255,255,255,.12));
+    border-radius: 999px;
+    box-shadow: 0 12px 34px rgba(0,0,0,.45);
+    z-index: 50;
+  }
+  .tour-rail[data-on="1"] { display: flex; }
+  .tour-step {
+    font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fg-faint, rgba(255,255,255,.4)); white-space: nowrap;
+  }
+  .tour-next {
+    font: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--bg, #0a0a0a); background: var(--fg, #fff);
+    border: 0; border-radius: 999px; padding: 8px 18px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .tour-next:disabled { opacity: .4; cursor: default; }
+  .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
+  @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
 </style>
 </head>
 <body>
@@ -337,6 +370,38 @@
       render();
     }
 
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  })();
+  </script>
+  <div class="tour-rail" id="tour-rail">
+    <span class="tour-step" id="tour-step"></span>
+    <button class="tour-next" id="tour-next" type="button">Next</button>
+  </div>
+
+  <script>
+  // The tour rail. Every demo carries the identical control so that "move on"
+  // is one gesture in one place, and pressing it is an ordinary action — the
+  // agent is what advances the tour, not the page.
+  (function () {
+    function init() {
+      var P = window.__TEMPLATE_PARAMS || {};
+      if (!P.tour_step && !P.tour_next) return;
+      var rail = document.getElementById("tour-rail");
+      var step = document.getElementById("tour-step");
+      var next = document.getElementById("tour-next");
+      if (!rail || !next) return;
+
+      rail.setAttribute("data-on", "1");
+      step.textContent = String(P.tour_step || "");
+      next.textContent = String(P.tour_next || "Next");
+      next.addEventListener("click", function () {
+        next.disabled = true;
+        next.textContent = "Coming up…";
+        var Surface = window.Surface || { action: function () {} };
+        Surface.action("next", { from: P.tour_id || null });
+      });
+    }
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
     else init();
   })();

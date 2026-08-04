@@ -1,21 +1,26 @@
 {
-  "name": "mockup",
-  "description": "Live design variants side by side — the human picks one and says why, and both come back as an action",
+  "name": "gauge",
+  "description": "A live number the agent keeps updating — state changes redraw it without touching the page",
   "params": {
     "title": {
       "type": "string",
-      "default": "Which one?",
+      "default": "Live",
       "description": "Heading"
     },
-    "question": {
+    "unit": {
       "type": "string",
       "default": "",
-      "description": "Optional line under the heading"
+      "description": "Suffix after the number, e.g. % or ms"
     },
-    "variants": {
-      "type": "list",
-      "default": [],
-      "description": "[{ label, caption, html }] — html renders in its own frame, so a variant cannot restyle the page"
+    "max": {
+      "type": "number",
+      "default": 100,
+      "description": "Full-scale value for the arc"
+    },
+    "caption": {
+      "type": "string",
+      "default": "",
+      "description": "One line under the number"
     },
     "tour_step": {
       "type": "string",
@@ -34,17 +39,20 @@
     }
   },
   "state": {
-    "status": {
-      "type": "string",
-      "default": "open"
+    "value": {
+      "type": "number",
+      "default": 0
     },
-    "chosen": {
+    "label": {
+      "type": "string",
+      "default": ""
+    },
+    "note": {
       "type": "string",
       "default": ""
     }
   },
   "actions": [
-    "vote",
     "next"
   ]
 }

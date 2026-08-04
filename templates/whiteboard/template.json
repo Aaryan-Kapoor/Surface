@@ -2,13 +2,49 @@
   "name": "whiteboard",
   "description": "A canvas the human draws on and the agent can both see and draw back on — strokes and a PNG come back as an action, the agent's own strokes arrive as state",
   "params": {
-    "title": { "type": "string", "default": "Whiteboard", "description": "Heading above the canvas" },
-    "prompt": { "type": "string", "default": "Draw something and send it over.", "description": "One line of instruction" }
+    "title": {
+      "type": "string",
+      "default": "Whiteboard",
+      "description": "Heading above the canvas"
+    },
+    "prompt": {
+      "type": "string",
+      "default": "Draw something and send it over.",
+      "description": "One line of instruction"
+    },
+    "tour_step": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: the step indicator, e.g. \"2 of 7\". Empty hides the tour rail."
+    },
+    "tour_next": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: label for the advance button"
+    },
+    "tour_id": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: which step this is, echoed back on the next action"
+    }
   },
   "state": {
-    "agent_strokes": { "type": "array", "default": [] },
-    "note": { "type": "string", "default": "" },
-    "status": { "type": "string", "default": "idle" }
+    "agent_strokes": {
+      "type": "array",
+      "default": []
+    },
+    "note": {
+      "type": "string",
+      "default": ""
+    },
+    "status": {
+      "type": "string",
+      "default": "idle"
+    }
   },
-  "actions": ["snapshot", "cleared"]
+  "actions": [
+    "snapshot",
+    "cleared",
+    "next"
+  ]
 }

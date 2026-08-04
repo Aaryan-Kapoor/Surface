@@ -1,6 +1,6 @@
 {
   "name": "triage",
-  "description": "Drag items onto an impact/effort plane \u2014 the whole layout comes back as one action when the human sends it",
+  "description": "Drag items onto an impact/effort plane — the whole layout comes back as one action when the human sends it",
   "params": {
     "title": {
       "type": "string",
@@ -31,6 +31,21 @@
       "type": "list",
       "default": [],
       "description": "Chips: [{ id, label, meta }] or plain strings"
+    },
+    "tour_step": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: the step indicator, e.g. \"2 of 7\". Empty hides the tour rail."
+    },
+    "tour_next": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: label for the advance button"
+    },
+    "tour_id": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: which step this is, echoed back on the next action"
     }
   },
   "state": {
@@ -48,6 +63,7 @@
     }
   },
   "actions": [
-    "ranked"
+    "ranked",
+    "next"
   ]
 }

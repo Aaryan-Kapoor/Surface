@@ -497,7 +497,7 @@ let notifCache = [];
 let notifUnread = 0;
 
 function notifButtonMarkup(id) {
-  return `<button type="button" class="grid-icon-btn notif-btn" id="${id}" title="Notifications" aria-label="Notifications">${ICON_BELL}<span class="notif-badge" hidden></span></button>`;
+  return `<button type="button" class="grid-icon-btn notif-btn" id="${escapeAttr(id)}" title="Notifications" aria-label="Notifications">${ICON_BELL}<span class="notif-badge" hidden></span></button>`;
 }
 
 function paintNotifBadges() {
@@ -2567,7 +2567,11 @@ function connectGlobalSSE() {
     notifUnread = Number(data.unread) || 0;
     paintNotifBadges();
     // Another screen answered it; a live toast for the same question is stale.
-    for (const toast of document.querySelectorAll(`[data-notification="${data.id}"]`)) {
+    // Matched in JS rather than through a selector: an id is server data, and
+    // building a selector out of server data is the same mistake as building
+    // markup out of it.
+    for (const toast of document.querySelectorAll("[data-notification]")) {
+      if (toast.getAttribute("data-notification") !== data.id) continue;
       for (const btn of toast.querySelectorAll(".toast-btn")) btn.disabled = true;
     }
   });
