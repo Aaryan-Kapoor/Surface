@@ -97,7 +97,24 @@ test("a lone surrogate escape is left alone rather than decoded", () => {
   // makes the JSON payload for the whole card list unencodable.
   const p = extractPreview(`<p>x &#xD800; y</p>`, "text/html");
   assert.ok(p!.lines[0].includes("&#xD800;"), `expected the escape to survive verbatim: ${p!.lines[0]}`);
-  assert.ok(!/[\uD800-\uDFFF]/.test(JSON.stringify(p!.lines)) || JSON.stringify(p!.lines).length > 0);
+  // The point of the test. The old second assertion was `!surrogate || length > 0`,
+  // whose right operand is always true — it asserted nothing at all.
+  assert.ok(
+    !/[\uD800-\uDFFF]/.test(p!.lines.join("\n")),
+    `decoded an unpaired surrogate: ${JSON.stringify(p!.lines)}`,
+  );
+});
+
+// A media type reaches this module both from a stored row and from a response
+// Content-Type, and only one of those is guaranteed parameter-free. Missing the
+// parameter form sends an HTML surface down the plain-text path, which puts its
+// raw markup on the card.
+test("a media type with parameters dispatches like the bare type", () => {
+  const html = extractPreview(`<h1>Ship it</h1>`, "text/html; charset=utf-8");
+  assert.deepEqual(html!.lines, ["Ship it"], "charset must not defeat the html path");
+
+  const md = extractPreview("# Heading", "TEXT/MARKDOWN; charset=UTF-8");
+  assert.deepEqual(md!.lines, ["Heading"], "case and parameters must not defeat the markdown path");
 });
 
 // ── Markdown ──

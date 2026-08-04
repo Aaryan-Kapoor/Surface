@@ -581,7 +581,11 @@ try {
   updates.startUpdateChecks();
   const blocked = updates.applyBlockedReason("system");
   const applied = updates.applyUpdate("system");
-  process.env.NODE_ENV = savedEnv;
+  // Assigning `undefined` stores the string "undefined", which is not the
+  // same thing as unset — any later `NODE_ENV === "test"` or absence check
+  // in this process then reads a value that was never there.
+  if (savedEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = savedEnv;
   assert.ok(blocked, "a repo clone must not offer a one-click update");
   assert.equal(applied.started, false, "…and must not start one either");
   assert.equal(applied.error, blocked,

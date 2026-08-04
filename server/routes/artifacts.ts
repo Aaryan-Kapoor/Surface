@@ -82,15 +82,32 @@ export function hasRealThumb(
 
 // Full card payload for SSE listeners. Includes hidden rows so clients can see
 // a hidden=true update and remove the card themselves (the default list
-// filters them out).
+// filters them out). Null when the row is gone — see broadcastCard.
 export function cardPayload(id: string) {
   const card = getArtifactCard(getDb(), id);
-  if (!card) return { id };
+  if (!card) return null;
   return {
     ...card,
     has_thumb: hasRealThumb(card.id, card.artifact_mime, thumbGenerationFor(card)),
     preview: previewForCard(getDb(), card),
   };
+}
+
+/**
+ * Announce a card, or say nothing at all.
+ *
+ * The dashboard treats these payloads as whole cards: `surface_created`
+ * unshifts one into the list and builds a card from it, and `surface_updated`
+ * does the same for a row it has never seen. A stub carrying only `{ id }` —
+ * which is what a row deleted between the write and the broadcast used to
+ * produce — becomes a card with no title, no kind and no preview, and it stays
+ * on every connected display until someone reloads. Not broadcasting is the
+ * honest answer: the row is gone, and a `surface_deleted` is already on its way.
+ */
+function broadcastCard(event: string, id: string): void {
+  const payload = cardPayload(id);
+  if (!payload) return;
+  broadcastGlobal(event, payload);
 }
 
 // Remember which agent session created (or re-rendered) a surface, so the
@@ -174,7 +191,7 @@ artifactsRouter.post("/artifacts/present-file", (req, res) => {
   try {
     const result = presentFile(getDb(), { filePath, title, metadata, copy, open, project_root });
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    broadcastCard("surface_created", result.artifact.id);
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
@@ -201,7 +218,7 @@ artifactsRouter.post("/artifacts/link", (req, res) => {
       : metadata;
     const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata: mergedMetadata, project_root, template });
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    broadcastCard("surface_created", result.artifact.id);
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
@@ -218,7 +235,7 @@ artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
   }
   captureAgentLink(req, req.params.id);
   const artifact = getArtifact(getDb(), req.params.id);
-  broadcastGlobal("surface_updated", cardPayload(req.params.id));
+  broadcastCard("surface_updated", req.params.id);
   broadcastToSurface(req.params.id, "surface_updated", {
     id: req.params.id,
     title: artifact?.title,
@@ -282,7 +299,7 @@ function instantiateTemplate(req: Request, res: Response): void {
         files: inputFiles,
         reason: "template_rerender",
       })!;
-      broadcastGlobal("surface_updated", cardPayload(id));
+      broadcastCard("surface_updated", id);
       broadcastToSurface(id, "surface_updated", { id, reload: true, updated_at: result.artifact.updated_at });
     } else {
       result = createArtifact(db, {
@@ -300,7 +317,7 @@ function instantiateTemplate(req: Request, res: Response): void {
       if (Object.keys(rendered.stateDefaults).length) {
         setStateIfEmpty(db, result.artifact.id, rendered.stateDefaults);
       }
-      broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+      broadcastCard("surface_created", result.artifact.id);
     }
     // Re-renders re-stamp the link: `surface sync` runs at session start, so
     // the freshest session becomes the flowback target.
@@ -347,7 +364,7 @@ artifactsRouter.post("/artifacts", (req, res) => {
       author_plane: planeOf(req),
     });
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    broadcastCard("surface_created", result.artifact.id);
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
   } catch (err: any) {
@@ -434,7 +451,7 @@ artifactsRouter.post("/artifacts/:id/rollback", (req, res) => {
     res.status(404).json({ error: "Artifact version not found" });
     return;
   }
-  broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+  broadcastCard("surface_updated", result.artifact.id);
   broadcastToSurface(result.artifact.id, "surface_updated", {
     id: result.artifact.id,
     title: result.artifact.title,
@@ -492,7 +509,7 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
     // Updates re-stamp too: the session that just rewrote a surface is the
     // freshest flowback target.
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+    broadcastCard("surface_updated", result.artifact.id);
     broadcastToSurface(result.artifact.id, "surface_updated", {
       id: result.artifact.id,
       title: result.artifact.title,
@@ -555,7 +572,7 @@ artifactsRouter.patch("/artifacts/:id/state", (req, res) => {
           ],
           reason: "board_first_write",
         });
-        broadcastGlobal("surface_created", cardPayload("board"));
+        broadcastCard("surface_created", "board");
         enqueueThumb("board");
       } catch (err: any) {
         res.status(400).json({ error: `Could not create the board: ${err.message}` });

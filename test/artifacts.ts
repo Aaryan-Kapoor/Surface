@@ -504,6 +504,14 @@ async function main() {
   );
 
   const goneFiles = path.join(dataDir, "artifacts", goneId, "versions", "1", "files");
+  // Both lines below pass on a path that was never right: rmSync with
+  // `force` succeeds on a file that does not exist, and the absence check then
+  // agrees. Assert the file is there first, so a change to the storage layout
+  // reports itself here instead of leaving the test asserting nothing.
+  assert(
+    fs.existsSync(path.join(goneFiles, "image.png")),
+    `the fixture expects the stored file at ${goneFiles}; the storage layout moved`,
+  );
   fs.rmSync(path.join(goneFiles, "image.png"), { force: true });
   assert(!fs.existsSync(path.join(goneFiles, "image.png")), "the fixture must really remove the file");
 
@@ -642,6 +650,42 @@ async function main() {
   const settledC = await fetchThumb(revC.updated_at);
   assert(settledC.cacheControl.includes("immutable"), "once the second has closed the key is safe to pin");
   assert(settledC.body.equals(bytesC), "and it still means revision C");
+
+  // The dashboard treats a card event as a whole card: surface_created unshifts
+  // it into the list and builds a card from it, and surface_updated does the
+  // same for a row it has never seen. A payload carrying only `{ id }` — which
+  // is what a row deleted between the write and the broadcast used to produce —
+  // becomes a titleless ghost that sits on every connected display until
+  // someone reloads.
+  {
+    const cardStream = openGlobalStream();
+    await sleep(150);
+    const ghostId = `artifact-test-ghost-${suffix}`;
+    await api("POST", "/artifacts", {
+      id: ghostId,
+      title: "Ghost check",
+      files: [{ path: "index.html", content: "<h1>Ghost check</h1>", mime: "text/html" }],
+    });
+    await api("PUT", `/artifacts/${ghostId}`, { title: "Ghost check, renamed" });
+    await sleep(400);
+    cardStream.close();
+
+    const cardEvents = cardStream.events.filter(
+      (e) => e.event === "surface_created" || e.event === "surface_updated",
+    );
+    assert(cardEvents.length >= 2, `expected create and update events, saw ${cardEvents.length}`);
+    for (const e of cardEvents) {
+      assert(
+        typeof e.data?.title === "string" && e.data.title.length > 0,
+        `${e.event} carried no title — a stub payload renders as an empty card: ${JSON.stringify(e.data)}`,
+      );
+      assert(
+        "has_thumb" in e.data && "preview" in e.data,
+        `${e.event} must carry the same fields the card list does: ${JSON.stringify(Object.keys(e.data || {}))}`,
+      );
+    }
+    await optionalDelete(`/artifacts/${ghostId}`);
+  }
 
   // Deleting a surface must take every generation with it, not just one.
   await optionalDelete(`/artifacts/${cacheId}`);

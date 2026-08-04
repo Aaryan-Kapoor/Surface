@@ -67,10 +67,21 @@ export function clearPreviewCache(): void {
   cache.clear();
 }
 
+/**
+ * `text/html; charset=utf-8` is the same type as `text/html`. Media types reach
+ * this module from stored rows and from response Content-Type values, and only
+ * one of those is guaranteed parameter-free — so every comparison is made
+ * against the bare type.
+ */
+function baseType(mime: string | null | undefined): string {
+  return (mime || "").split(";")[0].trim().toLowerCase();
+}
+
 function isTextual(mime: string | null | undefined): boolean {
-  if (!mime) return false;
-  if (mime.startsWith("text/")) return true;
-  return mime === "application/json" || mime === "application/xml";
+  const type = baseType(mime);
+  if (!type) return false;
+  if (type.startsWith("text/")) return true;
+  return type === "application/json" || type === "application/xml";
 }
 
 /** Read the head of a file without pulling a multi-megabyte log into memory. */
@@ -252,8 +263,9 @@ function fromPlain(text: string): CardPreview | null {
 }
 
 export function extractPreview(text: string, mime: string): CardPreview | null {
-  if (mime === "text/html") return fromHtml(text);
-  if (mime === "text/markdown" || mime === "text/x-markdown") return fromMarkdown(text);
+  const type = baseType(mime);
+  if (type === "text/html") return fromHtml(text);
+  if (type === "text/markdown" || type === "text/x-markdown") return fromMarkdown(text);
   return fromPlain(text);
 }
 
