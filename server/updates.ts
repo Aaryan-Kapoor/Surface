@@ -15,6 +15,7 @@
 //      and reads the progress file it writes. See applyUpdate() for why the
 //      device plane is refused.
 import { spawn } from "child_process";
+import { randomUUID } from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -23,6 +24,7 @@ import {
   contextAdvice,
   installContext,
   newerThan,
+  redactUrls,
   type InstallContext,
   type UpgradeProgress,
 } from "../bin/upgrade.js";
@@ -104,6 +106,8 @@ export function resetUpdateStateForTests(): void {
   cache = null;
   contextCache = undefined;
   serviceNameCache = undefined;
+  runCache = null;
+  ownRunId = null;
 }
 
 // ── configuration ──
@@ -224,7 +228,10 @@ export async function runUpdateCheck(): Promise<void> {
     saveCache({
       checked_at: new Date().toISOString(),
       latest: prev.latest,
-      error: String(err?.cause?.code || err?.code || err?.message || err).slice(0, 200),
+      // SURFACE_NPM_REGISTRY can carry credentials, and Node names the whole
+      // URL when it rejects one. This string is served by a device-readable
+      // endpoint and broadcast over SSE — launder it before it is stored.
+      error: redactUrls(err?.cause?.code || err?.code || err?.message || err).slice(0, 200),
       failures: prev.failures + 1,
     });
   } finally {
@@ -307,14 +314,45 @@ export function reconcileRun(
   return run;
 }
 
+/**
+ * Which record describes the current run — the one in memory, or the one on
+ * disk? Pure so the rule is unit-testable.
+ *
+ * A run THIS process started is the authority while it is live. Its file may be
+ * *temporarily* absent — the detached child takes a node boot to write its first
+ * record, and every later write is a tmp+rename — and letting a missing file
+ * clear the in-memory run is exactly how a second POST slipped past the
+ * single-flight guard and started a second global npm install. A record
+ * carrying a different run_id belongs to somebody else and must not replace
+ * ours either.
+ *
+ * A record we merely *adopted* from the file (a run from before a restart, or
+ * one started by `surface upgrade` on the host) gets no such protection: there
+ * the file is the only source of truth, so if it goes away, so does the run.
+ */
+export function chooseRunRecord(
+  memory: UpgradeProgress | null,
+  disk: UpgradeProgress | null,
+  ownRunId: string | null,
+): UpgradeProgress | null {
+  if (!memory || isTerminal(memory.phase)) return disk;
+  if (!memory.run_id || memory.run_id !== ownRunId) return disk;
+  if (!disk) return memory;
+  if (disk.run_id !== memory.run_id) return memory;
+  return disk;
+}
+
 // Cached because the status endpoint reads it on every request: the file only
 // changes while a run is in flight, and the watcher below refreshes it then.
 let runCache: UpgradeProgress | null = null;
+// The id of the run THIS process spawned, if any — see chooseRunRecord().
+let ownRunId: string | null = null;
 
 function reconcileRunFile(booted: boolean): UpgradeProgress | null {
-  const raw = readRun();
+  const disk = readRun();
+  const raw = chooseRunRecord(runCache, disk, ownRunId);
   const resolved = reconcileRun(raw, { version: serverVersion(), now: Date.now(), booted });
-  if (resolved && raw && resolved.phase !== raw.phase) {
+  if (resolved && raw && raw === disk && resolved.phase !== raw.phase) {
     try {
       writeAtomic(progressFilePath(), resolved);
     } catch {
@@ -387,8 +425,37 @@ export function applyBlockedReason(role: "system" | "device"): string | null {
   return null;
 }
 
+/**
+ * The status as a given plane may see it.
+ *
+ * Errors here are already laundered where they are produced (see redactUrls),
+ * so this is the second wall rather than the first: a device gets to know THAT
+ * the check or the run failed — enough for an honest pill — without being
+ * handed a host-side diagnostic it cannot act on and that may name internal
+ * infrastructure. The system plane, which is the only plane that can do
+ * anything about a failure, still gets the full text.
+ */
+export function updateStatusFor(role: "system" | "device"): UpdateStatus {
+  const status = updateStatus();
+  if (role === "system") return status;
+  return {
+    ...status,
+    check_error: status.check_error ? "the last release check failed" : null,
+    run: status.run
+      ? {
+        ...status.run,
+        error: status.run.error ? "the update failed — check Surface on the host" : null,
+      }
+      : null,
+  };
+}
+
+// SSE has no per-plane fan-out (a global client's target is a device session id
+// or "local", and the content plane on loopback is "local" too), so the pushed
+// payload is the device-safe one for everybody. The system dashboard polls
+// GET /api/update/status while a run is live and gets the full detail there.
 export function broadcastUpdateStatus(): void {
-  broadcastGlobal("update_status", updateStatus());
+  broadcastGlobal("update_status", updateStatusFor("device"));
 }
 
 // ── the apply ──
@@ -398,6 +465,26 @@ function cliPath(): string {
   // a repo clone the server runs from server/ and the bundle is in ../dist.
   const bundled = path.join(__dirname, "surface.mjs");
   return fs.existsSync(bundled) ? bundled : path.join(__dirname, "..", "dist", "surface.mjs");
+}
+
+/**
+ * Write the run record with an exclusive create, so the slot is taken before
+ * anything is spawned. Throws when a live run already owns the file.
+ *
+ * Synchronous on purpose: applyUpdate() must not yield between "no run is in
+ * flight" and "this run owns the file", or the check is decoration.
+ */
+function claimRunFile(file: string, record: UpgradeProgress): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const existing = readRun();
+  if (existing && !isTerminal(existing.phase)) throw new Error("a run already owns the progress file");
+  fs.rmSync(file, { force: true });
+  const fd = fs.openSync(file, "wx"); // EEXIST if anyone re-created it in between
+  try {
+    fs.writeSync(fd, JSON.stringify(record, null, 2) + "\n");
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 export interface ApplyResult {
@@ -436,11 +523,28 @@ export function applyUpdate(role: "system" | "device"): ApplyResult {
   }
 
   const progressFile = progressFilePath();
+  const runId = randomUUID();
+  const startedAt = new Date().toISOString();
+  const claim: UpgradeProgress = {
+    phase: "checking",
+    started_at: startedAt,
+    updated_at: startedAt,
+    pid: 0,
+    from: serverVersion(),
+    run_id: runId,
+  };
+  // Claim the slot BEFORE spawning, by exclusive creation. The child needs a
+  // node boot to write its own first record, and until this claim existed that
+  // gap was wide enough for a second POST to see no run at all — two global npm
+  // installs, two service restarts, one progress file. The claim also carries
+  // the run id, so a record written by anybody else can be told apart later.
   try {
-    fs.rmSync(progressFile, { force: true });
+    claimRunFile(progressFile, claim);
   } catch {
-    // a leftover file is overwritten by the child's first write anyway
+    return { started: false, status: 409, error: "An update is already running." };
   }
+  ownRunId = runId;
+  runCache = claim;
 
   // No shell, fixed argv — nothing here is caller-supplied; the version to
   // install is resolved by the converger itself and semver-gated there.
@@ -455,6 +559,7 @@ export function applyUpdate(role: "system" | "device"): ApplyResult {
     "--json",
     "--name", serviceName(),
     "--progress-file", progressFile,
+    "--run-id", runId,
   ], {
     detached: true,
     stdio: "ignore",
@@ -463,11 +568,9 @@ export function applyUpdate(role: "system" | "device"): ApplyResult {
   });
   child.on("error", (err) => {
     runCache = {
+      ...claim,
       phase: "failed",
-      started_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      pid: 0,
-      from: serverVersion(),
       error: `could not start the upgrade: ${err.message}`,
     };
     try { writeAtomic(progressFile, runCache); } catch {}
@@ -475,13 +578,7 @@ export function applyUpdate(role: "system" | "device"): ApplyResult {
   });
   child.unref();
 
-  runCache = {
-    phase: "checking",
-    started_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    pid: child.pid ?? 0,
-    from: serverVersion(),
-  };
+  runCache = { ...claim, pid: child.pid ?? 0 };
   watchRun();
   broadcastUpdateStatus();
   return { started: true, status: 202 };

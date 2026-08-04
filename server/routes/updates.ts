@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { sendError } from "../errors.js";
-import { applyBlockedReason, applyUpdate, updateStatus } from "../updates.js";
+import { applyBlockedReason, applyUpdate, updateStatusFor } from "../updates.js";
 import { planeOf } from "./helpers.js";
 
 export const updatesRouter = Router();
@@ -12,12 +12,14 @@ export const updatesRouter = Router();
 //
 // Readable from both planes — the *notification* is information a paired
 // display should see (the version is already visible in the UI anyway). What
-// the plane changes is `can_apply`.
+// the plane changes is `can_apply`, and how much of a failure it is told:
+// updateStatusFor() keeps host-side diagnostics (which can name the configured
+// npm registry) on the system plane.
 updatesRouter.get("/api/update/status", (req: Request, res: Response) => {
   const role = planeOf(req);
   const blocked = applyBlockedReason(role);
   res.setHeader("Cache-Control", "no-store");
-  res.json({ ...updateStatus(), can_apply: blocked === null, apply_blocked_reason: blocked });
+  res.json({ ...updateStatusFor(role), can_apply: blocked === null, apply_blocked_reason: blocked });
 });
 
 // Install the new release and restart the service. System plane only — this
@@ -30,5 +32,5 @@ updatesRouter.post("/api/update/apply", (req: Request, res: Response) => {
     sendError(res, result.status, result.error || "Update refused");
     return;
   }
-  res.status(202).json({ started: true, ...updateStatus() });
+  res.status(202).json({ started: true, ...updateStatusFor(planeOf(req)) });
 });
