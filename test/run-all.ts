@@ -8,6 +8,7 @@ const suites = [
   "test:app-routing",
   "test:source-hygiene",
   "test:client-render",
+  "test:preview",
   "test:thumbs",
   "test:auth",
   "test:content-origin",
