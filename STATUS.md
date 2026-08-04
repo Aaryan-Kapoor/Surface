@@ -51,6 +51,8 @@ bash scripts/check-leaks.sh
 
 `npm test` builds the CLI + server bundles and runs the isolated regression suites. The OpenRouter e2e loop is opt-in with `SURFACE_TEST_E2E=1` and is skipped by default to avoid touching a live service or requiring credentials.
 
+`bash scripts/test-fresh-install.sh` (needs Docker) is the fresh-machine gate: it global-installs the packed tarball in toolchain-free `node:22/24/25-slim` containers and drives the CLI against a booted server. Added 2026-08-04 after every fresh install on Node 24/25 failed for a month (better-sqlite3 11.x had no prebuilds there; dev machines and CI runners have compilers, so nothing caught it). CI runs it per Node version and `publish` depends on it. Supported Node floor is 22 (Node 20 is EOL, no prebuilds in better-sqlite3 v12/v13).
+
 ## Distribution (decided 2026-07-07)
 
 - Published npm package: **`surface-display`** (bare `surface`/`surface-cli`

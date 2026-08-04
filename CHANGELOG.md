@@ -4,6 +4,17 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- **Fixed fresh installs on current Node.** `npm install -g surface-display`
+  failed on Node 24/25 (any machine without python/make/g++): better-sqlite3
+  11.x has no prebuilt binaries there, so npm fell back to a node-gyp source
+  build and died. better-sqlite3 is now ^13 (prebuilds verified on Node
+  22/24/25) and the supported Node floor is 22 (Node 20 is EOL and has no
+  prebuilds in the v12/v13 lines).
+- New `scripts/test-fresh-install.sh` + CI job: global-installs the packed
+  tarball in toolchain-free `node:*-slim` containers and drives the CLI
+  against a booted server, so a missing native prebuild can never reach a
+  release again. Publishing now depends on it.
+
 ## 0.2.3 - 2026-07-31
 
 - New Codex flowback bridge (`docs/interaction/codex.md`): surfaces created

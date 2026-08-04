@@ -43,6 +43,13 @@ Windows. There is no per-platform install path.
 surface service health || npm install -g surface-display
 ```
 
+If the `npm install` fails with `gyp ERR!` / "Could not find any Python" /
+missing C++ compiler errors: the Node on PATH is outside the supported range
+(`node -v`; Surface needs **Node 22+**, where every native dependency ships a
+prebuilt binary and no compiler is needed). Tell the user to install a
+current Node LTS and retry. **Do not** install python/gcc/build tools to
+force a source build — that patches one machine and hides the real problem.
+
 If `surface service health` exits 0: set `service: "running"` and continue to Step 2.
 
 If the service is not healthy, ask the user before installing:
