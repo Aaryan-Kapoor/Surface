@@ -1349,7 +1349,7 @@ function createGridToolbar() {
   bar.innerHTML = `
     <div class="grid-toolbar-left" role="group" aria-label="Filter by kind">
       ${groups.map((f) => `
-        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${escapeAttr(f.id)}" aria-pressed="${escapeAttr(String(f.id === gridFilter))}">${escapeText(f.label)}</button>
+        <button type="button" class="grid-chip" data-filter="${escapeAttr(f.id)}" aria-pressed="${escapeAttr(String(f.id === gridFilter))}">${escapeText(f.label)}</button>
       `).join("")}
     </div>
     <select class="grid-sort" aria-label="Sort surfaces">
@@ -1360,6 +1360,10 @@ function createGridToolbar() {
     </select>
   `;
   bar.querySelectorAll(".grid-chip").forEach((btn) => {
+    // The active chip is marked here rather than interpolated into `class`:
+    // every attribute-value interpolation in this file has to go through
+    // escapeAttr, and the build guard in test/clientRender.ts holds that line.
+    btn.classList.toggle("grid-chip--active", btn.dataset.filter === gridFilter);
     btn.addEventListener("click", () => {
       gridFilter = btn.dataset.filter;
       bar.querySelectorAll(".grid-chip").forEach((b) => {

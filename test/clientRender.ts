@@ -146,6 +146,124 @@ function renderGridWith(app: App, surfaces: unknown[]): void {
   app.run(`surfaces = JSON.parse(${JSON.stringify(JSON.stringify(surfaces))}); renderGrid();`);
 }
 
+// ── the attribute-interpolation guard ──
+//
+// Every `="…"` / `='…'` attribute value in client/app.js that carries a `${…}`
+// has to run that value through escapeAttr() or encodeURIComponent().
+// escapeText() is NOT safe here (it leaves quotes alone), which is exactly how
+// the card title became a sink.
+//
+// This walks the source instead of matching /=(["'])\$\{([^}]*)\}/g, because
+// that pattern had two holes big enough to drive the original bug back through:
+//
+//   * it only fired when `${` sat flush against the opening quote, so
+//     `title="Surface ${s.title}"` and `class="chip${on ? " on" : ""}"` were
+//     never inspected at all;
+//   * `[^}]*` stopped at the first `}`, so an expression holding a brace was
+//     classified on a truncated prefix — `${escapeAttr(pick({ a: 1 })) + raw}`
+//     reads as "starts with escapeAttr(" and passes.
+//
+// So: find the end of a string literal properly, find the end of an
+// interpolation properly, and require each interpolation to be wrapped *whole*
+// rather than merely to mention an encoder somewhere inside.
+
+/** Index just past the string literal that starts at `i` (`src[i]` is its quote). */
+function endOfString(src: string, i: number): number {
+  const quote = src[i];
+  i++;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") { i += 2; continue; }
+    // A template literal can hold its own `${…}`, which can hold more strings.
+    if (quote === "`" && c === "$" && src[i + 1] === "{") { i = endOfExpr(src, i + 2); continue; }
+    if (c === quote) return i + 1;
+    i++;
+  }
+  return i;
+}
+
+/** Index just past the `${…}` whose body starts at `i` (i.e. past the `}`). */
+function endOfExpr(src: string, i: number): number {
+  let depth = 1;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") { i += 2; continue; }
+    if (c === '"' || c === "'" || c === "`") { i = endOfString(src, i); continue; }
+    if (c === "{") { depth++; i++; continue; }
+    if (c === "}") { depth--; i++; if (depth === 0) return i; continue; }
+    i++;
+  }
+  return i;
+}
+
+/** Index just past the `(…)` that opens at `i`, or -1 if it never closes. */
+function endOfParen(src: string, i: number): number {
+  let depth = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") { i += 2; continue; }
+    if (c === '"' || c === "'" || c === "`") { i = endOfString(src, i); continue; }
+    if (c === "(") { depth++; i++; continue; }
+    if (c === ")") { depth--; i++; if (depth === 0) return i; continue; }
+    i++;
+  }
+  return -1;
+}
+
+// Not "mentions escapeAttr" — the whole value has to be the encoder's result.
+// `${escapeAttr(a) + b}` concatenates raw `b` into the attribute and is a sink.
+const ATTR_ENCODERS = ["escapeAttr(", "encodeURIComponent("];
+function wrappedWhole(expr: string): boolean {
+  const e = expr.trim();
+  for (const fn of ATTR_ENCODERS) {
+    if (!e.startsWith(fn)) continue;
+    if (endOfParen(e, fn.length - 1) === e.length) return true;
+  }
+  return false;
+}
+
+/**
+ * Every `${…}` body that sits inside an `="…"` attribute value in `src`,
+ * wherever in the value it sits and however many braces it contains.
+ */
+function attrInterpolations(src: string): { attr: string; expr: string }[] {
+  const found: { attr: string; expr: string }[] = [];
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] !== "=") continue;
+    const quote = src[i + 1];
+    if (quote !== '"' && quote !== "'") continue;
+    const exprs: string[] = [];
+    let j = i + 2;
+    let closed = -1;
+    while (j < src.length) {
+      const c = src[j];
+      if (c === quote) { closed = j; break; }
+      if (c === "\\") { j += 2; continue; }
+      // A quote inside `${…}` does not end the attribute value, so the
+      // interpolation has to be skipped as a unit.
+      if (c === "$" && src[j + 1] === "{") {
+        const end = endOfExpr(src, j + 2);
+        exprs.push(src.slice(j + 2, end - 1));
+        j = end;
+        continue;
+      }
+      j++;
+    }
+    if (closed === -1) continue;
+    const attr = src.slice(i, closed + 1);
+    for (const expr of exprs) found.push({ attr, expr });
+    i = closed;
+  }
+  return found;
+}
+
+/** The interpolations from `attrInterpolations` that no encoder wraps. */
+function unsafeAttrInterpolations(src: string): string[] {
+  return attrInterpolations(src)
+    .filter(({ expr }) => !wrappedWhole(expr))
+    .map(({ expr }) => `="…\${${expr}}…"`);
+}
+
 // Anything a browser would fire as script: inline handlers, javascript: URLs.
 function injectedAttributes(root: FakeElement): string[] {
   return allAttributes(root)
@@ -187,16 +305,52 @@ try {
 
   check("no attribute in app.js interpolates anything but escapeAttr/encodeURIComponent", () => {
     const src = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
-    // `="${…}"` is an attribute-value interpolation. Every one of them has to
-    // use the attribute encoder — escapeText() is NOT safe here (it leaves
-    // quotes alone), which is exactly how the card title became a sink.
-    const bad: string[] = [];
-    for (const m of src.matchAll(/=(["'])\$\{([^}]*)\}/g)) {
-      const expr = m[2];
-      if (/escapeAttr\(|encodeURIComponent\(/.test(expr)) continue;
-      bad.push(m[0]);
-    }
+    const bad = unsafeAttrInterpolations(src);
     assert.deepEqual(bad, [], `unsafe attribute interpolation(s): ${bad.join(", ")}`);
+  });
+
+  // The guard above is the standing defence against reintroducing the stored
+  // XSS this file exists for, so it gets a guard of its own: these are the
+  // shapes the old flush-quote regex waved through.
+  check("the attribute guard sees interpolations the old flush-quote pattern missed", () => {
+    const OLD = /=(["'])\$\{([^}]*)\}/g;
+    const oldVerdict = (sample: string): string[] => {
+      const bad: string[] = [];
+      for (const m of sample.matchAll(OLD)) {
+        if (/escapeAttr\(|encodeURIComponent\(/.test(m[2])) continue;
+        bad.push(m[0]);
+      }
+      return bad;
+    };
+    // No template interpolation runs in these: they are ordinary quoted
+    // strings, so `${…}` reaches the scanner as source text.
+    const sinks = [
+      // `${` is not flush against the opening quote — a prefixed value.
+      '<a title="Surface ${s.title}">',
+      // …nor is it in the conditional-class shape, the one that was live.
+      '<button class="grid-chip${on ? " grid-chip--active" : ""}">',
+      // A brace inside the expression truncated the old match, so the old
+      // classifier read "escapeAttr(" and passed a value that concatenates raw.
+      '<a title="${escapeAttr(pick({ a: 1 })) + s.title}">',
+      // A second interpolation later in the same value.
+      '<a title="${escapeAttr(s.title)} — ${s.subtitle}">',
+    ];
+    for (const sample of sinks) {
+      assert.deepEqual(oldVerdict(sample), [], `the old pattern already caught: ${sample}`);
+      assert.equal(unsafeAttrInterpolations(sample).length, 1, `not caught: ${sample}`);
+    }
+    // …and the encoded forms of the same shapes still pass.
+    for (const safe of [
+      '<a title="Surface ${escapeAttr(s.title)}">',
+      '<a href="/artifact/${encodeURIComponent(s.id)}/raw">',
+      '<a title="${escapeAttr(pick({ a: 1 }))}">',
+      '<a title="${escapeAttr(a ? "x" : "y")}">',
+    ]) {
+      assert.deepEqual(unsafeAttrInterpolations(safe), [], `false positive: ${safe}`);
+    }
+    // An interpolation outside a value (`<option value="az"${sel}>`) adds an
+    // attribute rather than filling one, and is not this guard's business.
+    assert.deepEqual(unsafeAttrInterpolations('<option value="az"${on ? " selected" : ""}>'), []);
   });
 
   // ══ 2. a hostile title through the real device plane ════════════════════
@@ -299,7 +453,32 @@ try {
     assert.deepEqual(injected, [], `injected attribute(s): ${injected.join(" ")}`);
     const input = searched.document.querySelector(".grid-search");
     assert.ok(input, "the header search input is missing");
-    assert.equal(input!.getAttribute("value"), `" onfocus="alert(1)`);
+    // renderGrid assigns the IDL property (`headerSearch.value = …`); a browser
+    // reflects nothing into markup from that, so the property is what to read.
+    assert.equal(input!.value, `" onfocus="alert(1)`);
+  });
+
+  // The active chip used to be interpolated into `class`, which is the shape
+  // the attribute guard now rejects; it is set through classList instead, so
+  // the state it carries needs its own test.
+  check("the filter toolbar marks exactly the active chip", () => {
+    const chips = loadApp();
+    const mixed = [
+      { id: "a", title: "one", artifact_mime: "text/html", updated_at: "2026-01-01T00:00:00Z" },
+      { id: "b", title: "two", artifact_mime: "image/png", updated_at: "2026-01-02T00:00:00Z" },
+      { id: "c", title: "three", artifact_mime: "video/mp4", updated_at: "2026-01-03T00:00:00Z" },
+    ];
+    chips.run(`gridFilter = "image"; surfaces = JSON.parse(${JSON.stringify(JSON.stringify(mixed))}); renderGrid();`);
+    const all = [...chips.document.querySelectorAll(".grid-chip")];
+    assert.ok(all.length >= 3, `expected a filter row, got ${all.length} chip(s)`);
+    const active = all.filter((c) => c.classList.contains("grid-chip--active"));
+    assert.equal(active.length, 1, "exactly one chip must read as active");
+    assert.equal(active[0].getAttribute("data-filter"), "image");
+    assert.equal(active[0].getAttribute("aria-pressed"), "true");
+    for (const chip of all) {
+      if (chip === active[0]) continue;
+      assert.equal(chip.getAttribute("aria-pressed"), "false", `${chip.getAttribute("data-filter")} must not claim to be pressed`);
+    }
   });
 
   check("the update notice renders server text without injecting anything", () => {
