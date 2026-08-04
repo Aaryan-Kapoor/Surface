@@ -21,7 +21,7 @@
     "url": "https://github.com/Aaryan-Kapoor/Surface.git"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "files": [
     "client/",
@@ -61,7 +61,7 @@
     "surface": "./dist/surface.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.2",
+    "better-sqlite3": "^13.0.2",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "uuid": "^11.1.0",
