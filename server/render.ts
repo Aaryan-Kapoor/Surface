@@ -53,7 +53,9 @@ export function renderArtifactShell(params: {
       --accent: #ffffff;
       --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     }
-    @import url("https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800;900&display=swap");
+    /* No web-font load: surfaces must render identically offline and inside the
+       headless thumbnailer, which has no network. The stack above resolves to
+       the platform UI face everywhere. */
     html, body { margin: 0; width: 100%; height: 100%; background: var(--void); color: var(--text-primary); font-family: var(--font); -webkit-font-smoothing: antialiased; }
     body { display: flex; flex-direction: column; overflow: hidden; }
     .bar {
@@ -135,6 +137,9 @@ export function renderArtifactShell(params: {
     .viewer { flex: 1; min-height: 0; display: flex; align-items: stretch; justify-content: stretch; overflow: auto; }
     .viewer.preview { overflow: hidden; }
     img, video { display: block; max-width: 100%; max-height: 100%; margin: auto; }
+    /* Thumbnail capture: fill the square instead of letterboxing, so an image
+       surface reads as the image and not as a picture floating in a black box. */
+    .viewer.preview img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; object-position: center; }
     audio { margin: auto; width: min(720px, 90vw); }
     iframe { width: 100%; height: 100%; border: 0; background: white; }
     pre {
@@ -255,48 +260,83 @@ function thumbLabelForMime(mime: string): string {
   return "FILE";
 }
 
-function wrapForThumb(text: string, max: number): string[] {
+// Greedy wrap to at most `maxLines` lines of `max` characters. The final line
+// is ellipsised rather than dropped, so a long title still reads as a truncated
+// sentence instead of stopping mid-thought.
+function wrapForThumb(text: string, max: number, maxLines = 3): string[] {
   const trimmed = text.trim();
+  if (!trimmed) return [""];
   if (trimmed.length <= max) return [trimmed];
   const words = trimmed.split(/\s+/);
   const lines: string[] = [];
   let current = "";
-  for (const w of words) {
+  let truncated = false;
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
     const candidate = current ? current + " " + w : w;
     if (candidate.length <= max) {
       current = candidate;
-    } else {
-      if (current) lines.push(current);
-      current = w;
-      if (lines.length === 2) break;
+      continue;
     }
+    if (current) lines.push(current);
+    if (lines.length === maxLines) { truncated = true; current = ""; break; }
+    // A single word longer than the line: hard-cut it rather than overflow.
+    current = w.length > max ? w.slice(0, max - 1) + "…" : w;
   }
-  if (current && lines.length < 2) lines.push(current);
-  if (lines.length === 2 && lines[1].length > max) {
-    lines[1] = lines[1].slice(0, max - 1) + "…";
+  if (current && lines.length < maxLines) lines.push(current);
+  else if (current) truncated = true;
+  if (truncated && lines.length) {
+    const last = lines.length - 1;
+    lines[last] = lines[last].replace(/[.,;:]?$/, "") + "…";
   }
-  return lines.slice(0, 2);
+  return lines.slice(0, maxLines);
 }
 
-// Matches the PWA's monochrome theme: black void, hairline ring, mono label.
-export function renderThumbPlaceholder(params: { title: string; mime: string }): string {
+// Deterministic hue per surface, so a placeholder is stable across reloads and
+// two neighbouring cards rarely land on the same colour. Mirrors `hueForId` in
+// client/app.js — the two covers must be the same picture.
+function hueForSeed(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+// The cover a surface wears until a real capture exists. This is the picture the
+// grid shows first, so it is a designed object rather than a file-extension
+// chip: a tinted field keyed to the surface, the title set large enough to read
+// at card size, and the kind as a quiet caption.
+export function renderThumbPlaceholder(params: { id?: string; title: string; mime: string }): string {
   const label = escapeHtml(thumbLabelForMime(params.mime));
-  const lines = wrapForThumb(params.title, 18).map(escapeHtml);
-  const titleY = lines.length === 1 ? 366 : 346;
+  const lines = wrapForThumb(params.title, 16).map(escapeHtml);
+  const hue = hueForSeed(params.id || params.title || "surface");
+  const hue2 = (hue + 34) % 360;
+  const top = `hsl(${hue}, 46%, 28%)`;
+  const bottom = `hsl(${hue2}, 38%, 12%)`;
+  // Bottom-anchored, like the card caption: last line sits above the kind label.
+  const baseline = 470 - (lines.length - 1) * 56;
   const titleLines = lines.map((line, i) =>
-    `<text x="300" y="${titleY + i * 48}" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif" font-size="36" font-weight="500" fill="#ffffff" fill-opacity="0.92" letter-spacing="-0.5">${line}</text>`
+    `<text x="56" y="${baseline + i * 56}" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="46" font-weight="600" fill="#ffffff" fill-opacity="0.96" letter-spacing="-1.2">${line}</text>`
   ).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600" role="img" aria-label="${escapeHtml(params.title)}">
     <defs>
-      <radialGradient id="halo" cx="32%" cy="-6%" r="130%">
-        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10"/>
-        <stop offset="45%" stop-color="#ffffff" stop-opacity="0"/>
+      <linearGradient id="field" x1="0" y1="0" x2="0.55" y2="1">
+        <stop offset="0%" stop-color="${top}"/>
+        <stop offset="62%" stop-color="${bottom}"/>
+        <stop offset="100%" stop-color="${bottom}"/>
+      </linearGradient>
+      <radialGradient id="sheen" cx="24%" cy="6%" r="62%">
+        <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
+        <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
       </radialGradient>
     </defs>
-    <rect width="600" height="600" fill="#0a0a0a"/>
-    <rect width="600" height="600" fill="url(#halo)"/>
-    <circle cx="300" cy="218" r="58" fill="none" stroke="#ffffff" stroke-opacity="0.28" stroke-width="1.5"/>
-    <text x="300" y="224" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="16" font-weight="500" fill="#ffffff" fill-opacity="0.65" letter-spacing="4">${label}</text>
+    <rect width="600" height="600" fill="url(#field)"/>
+    <rect width="600" height="600" fill="url(#sheen)"/>
+    <g fill="none" stroke="#ffffff" stroke-opacity="0.10" stroke-width="1.5">
+      <circle cx="470" cy="150" r="150"/>
+      <circle cx="470" cy="150" r="96"/>
+      <circle cx="470" cy="150" r="46"/>
+    </g>
+    <text x="56" y="${baseline - 58}" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="19" font-weight="500" fill="#ffffff" fill-opacity="0.60" letter-spacing="3.4">${label}</text>
     ${titleLines}
   </svg>`;
 }

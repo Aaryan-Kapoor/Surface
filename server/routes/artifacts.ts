@@ -51,6 +51,14 @@ function canMutateArtifact(req: Request, res: Response, existing: { metadata: st
 
 export const artifactsRouter = Router();
 
+// True when GET /artifacts/:id/thumb has a real picture to serve — a cached
+// capture, or an image artifact it can pass through. False means the route
+// would fall back to the generated placeholder.
+export function hasRealThumb(id: string, mime: string | null | undefined): boolean {
+  if (mime && mime.startsWith("image/")) return true;
+  try { return hasThumb(id); } catch { return false; }
+}
+
 // Full card payload for SSE listeners. Includes hidden rows so clients can see
 // a hidden=true update and remove the card themselves (the default list
 // filters them out).
@@ -105,6 +113,10 @@ artifactsRouter.get("/artifacts", (req, res) => {
   res.json(listArtifactCards(getDb(), { includeHidden, project, agent }).map((card) => ({
     ...card,
     listening: hasWaiter(card.id, undefined, card.project_root),
+    // Whether /thumb would answer with a real picture. The dashboard uses this
+    // to paint its own cover for a not-yet-captured surface instead of
+    // fetching a placeholder it will replace seconds later.
+    has_thumb: hasRealThumb(card.id, card.artifact_mime),
   })));
 });
 
@@ -610,14 +622,23 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
     return;
   }
   const mime = result.artifact.mime || "";
-  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
+  // The dashboard requests ?v=<updated_at>, so a cached capture for a given
+  // version can never go stale: cache it hard and let the version key do the
+  // invalidating. Unversioned requests (and placeholders, which are replaced
+  // the moment a capture lands) stay on a short revalidating window.
+  const versioned = typeof req.query.v === "string" && req.query.v.length > 0;
+  const immutableCache = "public, max-age=31536000, immutable";
+  const shortCache = "public, max-age=30, stale-while-revalidate=300";
+  res.setHeader("Cache-Control", shortCache);
 
   if (req.query.regenerate === "1") {
     if (!requireSystem(req, res)) return; // re-renders artifact content in headless Chrome
     try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
     enqueueThumb(req.params.id);
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
     res.send(renderThumbPlaceholder({
+      id: req.params.id,
       title: result.artifact.title || "Untitled",
       mime,
     }));
@@ -626,6 +647,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
 
   if (hasThumb(req.params.id)) {
     try {
+      if (versioned) res.setHeader("Cache-Control", immutableCache);
       res.setHeader("Content-Type", "image/png");
       res.sendFile(getThumbPath(req.params.id));
       return;
@@ -648,6 +670,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
   enqueueThumb(req.params.id);
   res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
   res.send(renderThumbPlaceholder({
+    id: req.params.id,
     title: result.artifact.title || "Untitled",
     mime,
   }));

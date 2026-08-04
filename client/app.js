@@ -724,20 +724,23 @@ function applyTheme(config) {
   if (typeof config.starfield === "string") config.starfield = config.starfield === "true";
   if (typeof config.nebula === "string") config.nebula = config.nebula === "true";
 
-  // CSS custom properties
+  // CSS custom properties. `void` and `textPrimary` map onto the two tokens the
+  // shell actually derives everything else from (--bg / --fg); the legacy
+  // --void/--text-* names are kept so older theme CSS still resolves.
   if (config.colors && typeof config.colors === "object") {
     const map = {
-      void: "--void",
-      glass: "--glass",
-      glassBorder: "--glass-border",
-      glassGlow: "--glass-glow",
-      textPrimary: "--text-primary",
-      textSecondary: "--text-secondary",
-      textGhost: "--text-ghost",
-      accent: "--accent",
+      void: ["--void", "--bg"],
+      glass: ["--glass", "--panel-solid"],
+      glassBorder: ["--glass-border", "--line"],
+      glassGlow: ["--glass-glow"],
+      textPrimary: ["--text-primary", "--fg"],
+      textSecondary: ["--text-secondary", "--fg-muted"],
+      textGhost: ["--text-ghost", "--fg-faint"],
+      accent: ["--accent"],
     };
-    for (const [key, prop] of Object.entries(map)) {
-      if (config.colors[key]) root.style.setProperty(prop, config.colors[key]);
+    for (const [key, props] of Object.entries(map)) {
+      if (!config.colors[key]) continue;
+      for (const prop of props) root.style.setProperty(prop, config.colors[key]);
     }
   }
 
@@ -790,10 +793,15 @@ function applyTheme(config) {
     customStyle.remove();
   }
 
-  // Theme color meta tag
-  if (config.colors && config.colors.void) {
-    let meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = config.colors.void;
+  // Theme colour meta. The document ships one tag per colour scheme; an agent
+  // theme is scheme-agnostic, so it overrides both (and drops the media query
+  // that would otherwise keep one of them inert).
+  const themeColor = (config.colors && config.colors.void) || config.background;
+  if (themeColor && typeof themeColor === "string" && !themeColor.includes("(")) {
+    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+      meta.removeAttribute("media");
+      meta.content = themeColor;
+    });
   }
 
   // Persistent overlay (across all views) — driven by the overlay slot.
@@ -869,6 +877,18 @@ window.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     openSurfaceFinder();
+    return;
+  }
+  if (e.key === "Escape") {
+    document.querySelectorAll(".surface-card.is-menu-open").forEach((el) => el.classList.remove("is-menu-open"));
+  }
+  // Escape leaves an open surface — but only when nothing layered (finder,
+  // modal) is on screen and focus isn't inside a field.
+  if (e.key === "Escape" && currentSurfaceId) {
+    if (document.getElementById("surface-finder") || document.querySelector(".modal-overlay")) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    navigate("/");
   }
 });
 
@@ -963,184 +983,17 @@ function openSurfaceFinder() {
   input.focus();
 }
 
-// ── Cosmic substrate ──
-// One container holds: aurora ribbon, two/three nebulae, three star
-// layers (parallax via initParallax), and a positioning surface for
-// comets. The container is always inserted; an explicit theme
-// `starfield: false` hides everything cosmic via display:none.
+// ── Retired: cosmic substrate ──
+// The starfield / nebulae / aurora / comet layers are gone. They were hidden by
+// the shell CSS anyway, but building them cost ~180 DOM nodes on every grid
+// render plus a mousemove parallax listener. These stubs keep the SSE handlers
+// and older themes that call them working.
 
-function createAurora() {
-  const el = document.createElement("div");
-  el.className = "aurora";
-  el.id = "aurora";
-  return el;
-}
-
-function createGrain() {
-  const el = document.createElement("div");
-  el.className = "grain";
-  el.id = "grain";
-  return el;
-}
-
-// Fire one comet at a random angle from offscreen-left across the
-// upper third of the canvas. Throttled by `pulseSpace`.
-function fireComet() {
-  const starfield = document.getElementById("starfield");
-  if (!starfield || starfield.style.display === "none") return;
-  const c = document.createElement("div");
-  c.className = "comet";
-  const y = 8 + Math.random() * 38;
-  const angle = 12 + Math.random() * 14;
-  c.style.setProperty("--cy", y + "%");
-  c.style.setProperty("--cx", (-5 - Math.random() * 8) + "%");
-  c.style.setProperty("--angle", angle + "deg");
-  starfield.appendChild(c);
-  setTimeout(() => c.remove(), 1700);
-}
-
-// SSE event coupling: aurora pulses, occasionally a comet streaks.
-let spacePulseT = 0;
-function pulseSpace(opts) {
-  const starfield = document.getElementById("starfield");
-  if (!starfield) return;
-  if (Date.now() - spacePulseT < 450) return; // throttle
-  spacePulseT = Date.now();
-  starfield.classList.remove("aurora-burst");
-  void starfield.offsetWidth; // reflow to restart aurora animation
-  starfield.classList.add("aurora-burst");
-  setTimeout(() => starfield.classList.remove("aurora-burst"), 1500);
-  // Comet on bigger events (creates, theme changes) — not on every tick.
-  if (opts && opts.comet) fireComet();
-}
-
-// Background comet shower — one streak every 22-52s when the tab is
-// visible. The cosmos isn't static, just patient.
-let cometShowerT = null;
-function startCometShower() {
-  if (cometShowerT) clearTimeout(cometShowerT);
-  const tick = () => {
-    if (document.visibilityState === "visible") fireComet();
-    cometShowerT = setTimeout(tick, 22000 + Math.random() * 30000);
-  };
-  cometShowerT = setTimeout(tick, 6000 + Math.random() * 8000);
-}
-
-// ── Starfield (3 parallax layers) — always on, themes opt out ──
-
-function createStarfield() {
-  const el = document.createElement("div");
-  el.className = "starfield";
-  el.id = "starfield";
-
-  // Aurora goes inside so it benefits from the same z=0 stacking +
-  // can be color-pulsed by toggling .aurora-burst on the parent.
-  el.appendChild(createAurora());
-
-  const layers = [
-    { class: "star--far",  count: 110, parallax: 0.008 },
-    { class: "star--mid",  count: 55,  parallax: 0.022 },
-    { class: "star--near", count: 18,  parallax: 0.048 },
-  ];
-
-  layers.forEach((layer) => {
-    const layerEl = document.createElement("div");
-    layerEl.className = "star-layer";
-    layerEl.dataset.parallax = layer.parallax;
-    for (let i = 0; i < layer.count; i++) {
-      const star = document.createElement("div");
-      star.className = "star " + layer.class;
-      star.style.left = Math.random() * 100 + "%";
-      star.style.top = Math.random() * 100 + "%";
-      star.style.animationDelay = Math.random() * 8 + "s";
-      layerEl.appendChild(star);
-    }
-    el.appendChild(layerEl);
-  });
-
-  // Cosmic substrate is on by default. Themes that set
-  // `starfield: false` hide the whole stack (applyTheme handles it).
-  if (displayConfig.starfield === false) el.style.display = "none";
-
-  return el;
-}
-
-function createNebulae() {
-  const frag = document.createDocumentFragment();
-  const n1 = document.createElement("div");
-  n1.className = "nebula nebula--1";
-  const n2 = document.createElement("div");
-  n2.className = "nebula nebula--2";
-  const n3 = document.createElement("div");
-  n3.className = "nebula nebula--3";
-
-  if (displayConfig.nebulaColors && displayConfig.nebulaColors.length >= 2) {
-    n1.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[0]}, transparent 70%)`;
-    n2.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[1]}, transparent 70%)`;
-  }
-
-  if (displayConfig.starfield === false) {
-    n1.style.display = "none";
-    n2.style.display = "none";
-    n3.style.display = "none";
-  }
-
-  frag.appendChild(n1);
-  frag.appendChild(n2);
-  frag.appendChild(n3);
-  return frag;
-}
-
-// ── Parallax on pointer/gyro ──
-
-function initParallax() {
-  document.addEventListener("mousemove", (e) => {
-    const cx = (e.clientX / window.innerWidth - 0.5) * 2;
-    const cy = (e.clientY / window.innerHeight - 0.5) * 2;
-    applyParallax(cx, cy);
-  });
-
-  if (window.DeviceOrientationEvent) {
-    window.addEventListener("deviceorientation", (e) => {
-      if (e.gamma === null) return;
-      const cx = Math.max(-1, Math.min(1, e.gamma / 30));
-      const cy = Math.max(-1, Math.min(1, (e.beta - 45) / 30));
-      applyParallax(cx, cy);
-    });
-  }
-}
-
-function applyParallax(cx, cy) {
-  const layers = document.querySelectorAll(".star-layer");
-  layers.forEach((layer) => {
-    const p = parseFloat(layer.dataset.parallax) || 0;
-    const x = cx * p * 200;
-    const y = cy * p * 200;
-    layer.style.transform = `translate(${x}px, ${y}px)`;
-  });
-}
-
-initParallax();
-
-// Card tilt-to-pointer — 3D rotateX/Y based on pointer position within
-// the card bounds. Clamped to ±3.2deg. Resets on mouseleave.
-function bindCardTilt(card) {
-  card.addEventListener("mousemove", (e) => {
-    const r = card.getBoundingClientRect();
-    const px = (e.clientX - r.left) / r.width - 0.5;   // -0.5..0.5
-    const py = (e.clientY - r.top)  / r.height - 0.5;
-    const rx = +(px * 6.4).toFixed(2);  // rotateY
-    const ry = +(-py * 4.2).toFixed(2); // rotateX (inverted)
-    card.style.setProperty("--rx", rx + "deg");
-    card.style.setProperty("--ry", ry + "deg");
-    card.classList.add("tilt");
-  });
-  card.addEventListener("mouseleave", () => {
-    card.classList.remove("tilt");
-    card.style.setProperty("--rx", "0deg");
-    card.style.setProperty("--ry", "0deg");
-  });
-}
+function pulseSpace() {}
+function startCometShower() {}
+function createStarfield() { return document.createDocumentFragment(); }
+function createNebulae() { return document.createDocumentFragment(); }
+function createGrain() { return document.createDocumentFragment(); }
 
 // ── Helpers ──
 
@@ -1175,16 +1028,6 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
-}
-
-function iconForMime(mime) {
-  if (mime === "application/pdf") return "PDF";
-  if (mime === "text/markdown") return "MD";
-  if (mime === "text/html") return "HTML";
-  if (mime && mime.startsWith("image/")) return "IMG";
-  if (mime && mime.startsWith("video/")) return "VID";
-  if (mime && mime.startsWith("audio/")) return "AUD";
-  return "\u25C9";
 }
 
 function labelForMime(mime) {
@@ -1229,21 +1072,31 @@ function renderGrid() {
   if (surfaces.length > 0) gridView.classList.add("has-cards");
 
   const title = displayConfig.title || "Surface";
-  const header = document.createElement("div");
+  const header = document.createElement("header");
   header.className = "grid-header";
   const count = surfaces.length;
-  const countLabel = count === 0 ? "" : `${String(count).padStart(2, "0")} ${count === 1 ? "surface" : "surfaces"}`;
   header.innerHTML = `
-    <div class="grid-title-block">
-      <div class="grid-title">${escapeHtml(title)}</div>
-      <div class="grid-subtitle">a universal display for your agents</div>
+    <div class="grid-brand">
+      <span class="grid-title">${escapeHtml(title)}</span>
+      <span class="grid-subtitle">a universal display for your agents</span>
     </div>
+    <div class="grid-header-spacer"></div>
+    ${count > 0 ? `
+    <span class="grid-search-wrap">
+      <input type="text" class="grid-search" placeholder="Search surfaces" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off" aria-label="Search surfaces">
+      <button type="button" class="grid-kbd" title="Find a surface (⌘K)" aria-label="Find a surface">⌘K</button>
+    </span>` : ""}
     <div class="grid-meta" id="grid-meta">
       <span class="update-notice" id="update-notice" hidden></span>
-      ${count > 0 ? `<span class="grid-meta-count">${escapeHtml(countLabel)}</span>` : ""}
-      <span class="grid-meta-live"><span class="live-dot"></span></span>
+      ${count > 0 ? `<span class="grid-meta-count">${count} ${count === 1 ? "surface" : "surfaces"}</span>` : ""}
+      <span class="grid-meta-live" role="status"><span class="live-dot"></span></span>
     </div>
   `;
+  const headerSearch = header.querySelector(".grid-search");
+  if (headerSearch) {
+    headerSearch.addEventListener("input", () => { gridQuery = headerSearch.value; paintGrid(); });
+    header.querySelector(".grid-kbd").addEventListener("click", () => openSurfaceFinder());
+  }
   gridView.appendChild(header);
 
   // Home widget (full HTML/JS iframe on the homescreen)
@@ -1280,12 +1133,13 @@ function renderGrid() {
     empty.className = "empty-state";
     empty.innerHTML = `
       <div class="empty-text">
+        <div class="empty-eyebrow">Surface is listening</div>
         <div class="empty-prompt">What should I make?</div>
         <div class="empty-suggestions">
           <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
         </div>
-        <div class="empty-sub">tell your agent</div>
-        <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">Start Tutorial</button>
+        <div class="empty-sub">Say it to your agent — it lands here.</div>
+        <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">Start the tutorial</button>
       </div>
       <div class="empty-portal" id="empty-portal">
         <div class="portal-gallery">
@@ -1310,6 +1164,19 @@ function renderGrid() {
     gridView.appendChild(grid);
     paintGrid(grid);
   }
+
+  // The sticky header only grows a rule once content passes under it. Read the
+  // scroll position inside rAF so the listener never forces a synchronous
+  // layout on the scroll thread.
+  let scrollQueued = false;
+  gridView.addEventListener("scroll", () => {
+    if (scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      scrollQueued = false;
+      gridView.classList.toggle("is-scrolled", gridView.scrollTop > 4);
+    });
+  }, { passive: true });
 
   container.appendChild(gridView);
   app.innerHTML = "";
@@ -1340,33 +1207,40 @@ const FILTER_GROUPS = [
   { id: "other", label: "Other", match: (m) => !(m === "text/html" || m === "" || m.startsWith("video/") || m.startsWith("audio/") || m.startsWith("image/")) },
 ];
 
+// Only offer a filter that would actually return something. A wall of empty
+// chips ("Video", "Audio") is noise on a display that holds seven HTML surfaces.
+function activeFilterGroups(list) {
+  const mimes = list.map((s) => s.artifact_mime || (s.artifact && s.artifact.mime) || "");
+  const groups = FILTER_GROUPS.filter((f) => f.id === "all" || mimes.some((m) => f.match(m)));
+  // A lone "All" chip filters nothing — drop the row entirely.
+  return groups.length > 2 ? groups : [];
+}
+
 function createGridToolbar() {
   const bar = document.createElement("div");
   bar.className = "grid-toolbar";
+  const groups = activeFilterGroups(surfaces);
   bar.innerHTML = `
-    <div class="grid-toolbar-left">
-      <span class="grid-search-wrap">
-        <input type="text" class="grid-search" placeholder="Search…" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off">
-        <button type="button" class="grid-kbd" title="Find a surface (⌘K)" aria-label="Find a surface">⌘K</button>
-      </span>
-      ${FILTER_GROUPS.map((f) => `
-        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${f.id}">${escapeHtml(f.label)}</button>
+    <div class="grid-toolbar-left" role="group" aria-label="Filter by kind">
+      ${groups.map((f) => `
+        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${f.id}" aria-pressed="${f.id === gridFilter}">${escapeHtml(f.label)}</button>
       `).join("")}
     </div>
-    <select class="grid-sort" aria-label="Sort">
+    <select class="grid-sort" aria-label="Sort surfaces">
       <option value="newest"${gridSort === "newest" ? " selected" : ""}>Newest</option>
       <option value="oldest"${gridSort === "oldest" ? " selected" : ""}>Oldest</option>
       <option value="az"${gridSort === "az" ? " selected" : ""}>A–Z</option>
       <option value="za"${gridSort === "za" ? " selected" : ""}>Z–A</option>
     </select>
   `;
-  const search = bar.querySelector(".grid-search");
-  search.addEventListener("input", () => { gridQuery = search.value; paintGrid(); });
-  bar.querySelector(".grid-kbd").addEventListener("click", () => openSurfaceFinder());
   bar.querySelectorAll(".grid-chip").forEach((btn) => {
     btn.addEventListener("click", () => {
       gridFilter = btn.dataset.filter;
-      bar.querySelectorAll(".grid-chip").forEach((b) => b.classList.toggle("grid-chip--active", b === btn));
+      bar.querySelectorAll(".grid-chip").forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle("grid-chip--active", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
       paintGrid();
     });
   });
@@ -1409,39 +1283,108 @@ function paintGrid(target) {
     grid.appendChild(empty);
     return;
   }
-  visible.forEach((s, i) => grid.appendChild(createCard(s, i)));
+  // One fragment, one insertion: appending each card individually forces the
+  // grid to re-layout per card.
+  const frag = document.createDocumentFragment();
+  visible.forEach((s, i) => frag.appendChild(createCard(s, i)));
+  grid.appendChild(frag);
   updateGridMeta();
 }
 
-function createCard(s, index) {
+// Thumbnails load only as cards approach the viewport. `rootMargin` gives the
+// decode a head start so an image is ready by the time the card is on screen,
+// without paying for every card in a hundred-surface grid up front.
+const thumbObserver = "IntersectionObserver" in window
+  ? new IntersectionObserver((entries, obs) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        obs.unobserve(entry.target);
+        loadCardThumb(entry.target);
+      }
+    }, { rootMargin: "400px 0px", threshold: 0 })
+  : null;
+
+function loadCardThumb(img) {
+  if (!img || img.dataset.loaded === "1") return;
+  const src = img.dataset.src;
+  if (!src) return;
+  img.dataset.loaded = "1";
+  img.src = src;
+}
+
+// Deterministic hue per surface so a card's cover is stable across reloads and
+// two neighbours rarely collide.
+function hueForId(id) {
+  let h = 0;
+  const str = String(id || "");
+  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+function buildFallbackCover(s, mime) {
   const meta = parseMetadata(s.metadata);
-  const card = document.createElement("div");
+  const cover = document.createElement("div");
+  cover.className = "card-fallback";
+  cover.style.setProperty("--seed-h", String(hueForId(s.id)));
+  const kind = document.createElement("div");
+  kind.className = "card-fallback-kind";
+  kind.textContent = meta.icon || labelForMime(mime);
+  const title = document.createElement("div");
+  title.className = "card-fallback-title";
+  title.textContent = s.title || "Untitled";
+  cover.append(kind, title);
+  return cover;
+}
+
+function cardThumbUrl(s) {
+  const version = encodeURIComponent(s.updated_at || s.created_at || "");
+  return `/artifacts/${encodeURIComponent(s.id)}/thumb${version ? `?v=${version}` : ""}`;
+}
+
+function createCard(s, index) {
+  const card = document.createElement("article");
   card.className = "surface-card";
   card.dataset.id = s.id;
-  card.style.setProperty("--card-delay", ((index || 0) * 0.08) + "s");
-  card.style.setProperty("--bob-delay", (-(Math.random() * 7)).toFixed(2) + "s");
+  card.tabIndex = 0;
+  card.setAttribute("role", "link");
+  // Only the first screenful is worth staggering; beyond that the delay just
+  // makes a fast grid feel slow.
+  if ((index || 0) < 12) card.style.setProperty("--card-delay", ((index || 0) * 0.035) + "s");
   card.onclick = () => navigate("/surface/" + s.id);
+  card.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      if (e.target !== card) return;
+      e.preventDefault();
+      navigate("/surface/" + s.id);
+    }
+  });
 
-  const disc = document.createElement("div");
-  disc.className = "card-disc";
+  const preview = document.createElement("div");
+  preview.className = "card-preview";
 
   const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
-  const thumbVersion = encodeURIComponent(s.updated_at || s.created_at || "");
-  const thumbUrl = `/artifacts/${s.id}/thumb${thumbVersion ? `?v=${thumbVersion}` : ""}`;
-  const img = document.createElement("img");
-  img.className = "card-thumb";
-  img.loading = "lazy";
-  img.decoding = "async";
-  img.alt = "";
-  img.src = thumbUrl;
-  img.onerror = () => {
-    img.remove();
-    const iconEl = document.createElement("div");
-    iconEl.className = "card-disc-icon";
-    iconEl.textContent = meta.icon || iconForMime(mime);
-    disc.prepend(iconEl);
-  };
-  disc.appendChild(img);
+  // `has_thumb` tells us a real capture (or a passthrough image) is on disk.
+  // Without it the card paints its own cover instead of fetching a placeholder
+  // it would only throw away when the capture lands.
+  if (s.has_thumb === false) {
+    preview.classList.add("is-capturing");
+    preview.appendChild(buildFallbackCover(s, mime));
+  } else {
+    const img = document.createElement("img");
+    img.className = "card-thumb";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.alt = `Preview of ${s.title || "surface"}`;
+    img.dataset.src = cardThumbUrl(s);
+    img.onerror = () => {
+      img.remove();
+      preview.classList.add("is-capturing");
+      preview.prepend(buildFallbackCover(s, mime));
+    };
+    preview.appendChild(img);
+    if (thumbObserver) thumbObserver.observe(img);
+    else loadCardThumb(img);
+  }
 
   if (s.updated_at) {
     const updatedAt = parseServerDate(s.updated_at);
@@ -1450,11 +1393,11 @@ function createCard(s, index) {
       const live = document.createElement("div");
       live.className = "card-live";
       live.textContent = "live";
-      disc.appendChild(live);
+      preview.appendChild(live);
     }
   }
 
-  card.appendChild(disc);
+  card.appendChild(preview);
   updateCardBadges(card, s);
 
   const actions = document.createElement("div");
@@ -1487,30 +1430,49 @@ function createCard(s, index) {
   });
   card.appendChild(actions);
 
+  // Touch handle for the tray. CSS shows it only where hover doesn't exist, so
+  // pointer devices keep the clean card and never see it.
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "card-more";
+  more.setAttribute("aria-label", "Surface actions");
+  more.innerHTML = ICON_MORE;
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !card.classList.contains("is-menu-open");
+    document.querySelectorAll(".surface-card.is-menu-open").forEach((el) => el.classList.remove("is-menu-open"));
+    card.classList.toggle("is-menu-open", open);
+  });
+  card.appendChild(more);
+
   const body = document.createElement("div");
   body.className = "card-body";
-  const subParts = [];
-  if (mime) subParts.push(labelForMime(mime));
-  // Attribution: who made it / which project owns it.
-  if (s.agent) subParts.push(s.agent);
-  else if (s.project_root) subParts.push(s.project_root.split("/").pop());
-  const t = timeAgo(s.updated_at);
-  if (t) subParts.push(t);
   body.innerHTML = `
-    <div class="card-title">${escapeHtml(s.title)}</div>
-    <div class="card-sub">${subParts.map(escapeHtml).join(" · ")}</div>
+    <div class="card-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
+    <div class="card-sub">${escapeHtml(cardSubtitle(s))}</div>
   `;
   card.appendChild(body);
 
-  bindCardTilt(card);
-
   return card;
+}
+
+// "HTML · claude · 5m ago" — kind, who made it, when. Sentence case; the mono
+// screaming-caps version read as a build log, not a library.
+function cardSubtitle(s) {
+  const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
+  const parts = [];
+  if (mime) parts.push(labelForMime(mime));
+  if (s.agent) parts.push(s.agent);
+  else if (s.project_root) parts.push(s.project_root.split("/").pop());
+  const t = timeAgo(s.updated_at);
+  if (t) parts.push(t);
+  return parts.join(" · ");
 }
 
 // Delivery-ladder card states: pending-action badge, "agent listening" pill,
 // and the ⟳ handling pill while a binding runs.
 function updateCardBadges(card, s) {
-  const disc = card.querySelector(".card-disc");
+  const disc = card.querySelector(".card-preview");
   if (!disc) return;
   const n = s.pending_actions || 0;
   let badge = disc.querySelector(".card-badge");
@@ -1539,7 +1501,7 @@ function updateCardBadges(card, s) {
 }
 
 function setCardHandling(surfaceId, running) {
-  const disc = document.querySelector(`.surface-card[data-id="${surfaceId}"] .card-disc`);
+  const disc = document.querySelector(`.surface-card[data-id="${surfaceId}"] .card-preview`);
   if (!disc) return;
   let pill = disc.querySelector(".card-handling");
   if (running) {
@@ -1559,6 +1521,10 @@ function setCardHandling(surfaceId, running) {
 const ICON_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_PENCIL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
 const ICON_X = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const ICON_MORE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+const ICON_CHEVRON_LEFT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+const ICON_LINK = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1.1l2.9-2.9a5 5 0 0 0-7.1-7.1L11.3 4.7"/><path d="M14 11a5 5 0 0 0-7.1-.1L4 13.8a5 5 0 0 0 7.1 7.1l1.5-1.5"/></svg>';
+const ICON_EXTERNAL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V6.5A1.5 1.5 0 0 1 5 5h4.5"/></svg>';
 
 function startRename(card, id) {
   const titleEl = card.querySelector(".card-title");
@@ -1628,21 +1594,34 @@ async function renderSurface(id) {
   const mime = artifact.mime || "";
   const mimeLabel = mime ? labelForMime(mime) : "";
 
-  const nav = document.createElement("div");
+  // One 40px row: leave, identify, state. Everything else belongs to the
+  // surface. Meta collapses out of the way before the title ever truncates.
+  const nav = document.createElement("header");
   nav.className = "surface-nav";
   nav.innerHTML = `
-    <button class="back-btn" onclick="location.hash='/'" aria-label="Back">←</button>
+    <button type="button" class="back-btn" aria-label="Back to all surfaces" title="Back (esc)">${ICON_CHEVRON_LEFT}</button>
     <div class="surface-nav-titlewrap">
-      <div class="surface-nav-title">${escapeHtml(artifact.title)}</div>
+      <h1 class="surface-nav-title">${escapeHtml(artifact.title)}</h1>
       <div class="surface-nav-meta">
-        ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span>` : ""}
-        ${mimeLabel ? `<span class="surface-nav-meta-dot"></span>` : ""}
+        ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span><span class="surface-nav-meta-dot"></span>` : ""}
         <span data-surface-updated-at>${escapeHtml(timeAgo(artifact.updated_at))}</span>
         <span class="surface-nav-meta-dot"></span>
         <span class="surface-nav-live">live</span>
       </div>
     </div>
+    <div class="surface-nav-actions">
+      <button type="button" class="nav-action" data-action="copy" title="Copy link" aria-label="Copy link">${ICON_LINK}</button>
+      <button type="button" class="nav-action" data-action="open" title="Open raw surface" aria-label="Open raw surface">${ICON_EXTERNAL}</button>
+    </div>
   `;
+  nav.querySelector(".back-btn").addEventListener("click", () => { location.hash = "/"; });
+  nav.querySelector('[data-action="copy"]').addEventListener("click", async () => {
+    const ok = await copyToClipboard(location.origin + "/#/surface/" + id);
+    showToast(ok ? "Link copied" : "Copy failed", 2600, ok ? "success" : "error");
+  });
+  nav.querySelector('[data-action="open"]').addEventListener("click", () => {
+    window.open(`/artifacts/${encodeURIComponent(id)}/view`, "_blank", "noopener");
+  });
   view.appendChild(nav);
 
   const iframe = document.createElement("iframe");
@@ -1810,24 +1789,14 @@ function connectGlobalSSE() {
         const titleEl = card.querySelector(".card-title");
         if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
         const subEl = card.querySelector(".card-sub");
-        if (subEl) {
-          const merged = surfaces[idx];
-          const mime = merged.artifact_mime || (merged.artifact && merged.artifact.mime) || "";
-          const parts = [];
-          if (mime) parts.push(labelForMime(mime));
-          if (merged.agent) parts.push(merged.agent);
-          else if (merged.project_root) parts.push(merged.project_root.split("/").pop());
-          const t = timeAgo(merged.updated_at);
-          if (t) parts.push(t);
-          subEl.textContent = parts.join(" · ");
-        }
+        if (subEl) subEl.textContent = cardSubtitle(surfaces[idx]);
         let live = card.querySelector(".card-live");
         if (!live) {
           live = document.createElement("div");
           live.className = "card-live";
           live.textContent = "live";
-          const disc = card.querySelector(".card-disc");
-          if (disc) disc.appendChild(live);
+          const preview = card.querySelector(".card-preview");
+          if (preview) preview.appendChild(live);
         }
         setTimeout(() => {
           const stillThere = card.querySelector(".card-live");
@@ -1929,11 +1898,35 @@ function connectGlobalSSE() {
   globalSSE.addEventListener("thumb_ready", (e) => {
     const data = JSON.parse(e.data);
     if (!data || !data.id) return;
-    const img = document.querySelector(`.surface-card[data-id="${data.id}"] .card-thumb`);
-    if (!img) return;
-    const url = new URL(img.src, location.origin);
-    url.searchParams.set("v", String(Date.now()));
-    img.src = url.pathname + "?" + url.searchParams.toString();
+    const idx = surfaces.findIndex((s) => s.id === data.id);
+    if (idx !== -1) surfaces[idx].has_thumb = true;
+    const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+    if (!card) return;
+    const preview = card.querySelector(".card-preview");
+    if (!preview) return;
+    const src = `/artifacts/${encodeURIComponent(data.id)}/thumb?v=${Date.now()}`;
+    const existing = preview.querySelector(".card-thumb");
+    if (existing) {
+      existing.dataset.src = src;
+      existing.dataset.loaded = "1";
+      existing.src = src;
+      return;
+    }
+    // First capture for a card that has been showing its own cover: decode the
+    // PNG off-thread and only swap once it is paintable, so the card never
+    // flashes empty between the cover leaving and the image arriving.
+    const img = new Image();
+    img.className = "card-thumb";
+    img.decoding = "async";
+    img.alt = `Preview of ${(surfaces[idx] && surfaces[idx].title) || "surface"}`;
+    img.dataset.loaded = "1";
+    img.onload = () => {
+      const cover = preview.querySelector(".card-fallback");
+      if (cover) cover.remove();
+      preview.classList.remove("is-capturing");
+      preview.prepend(img);
+    };
+    img.src = src;
   });
 
   // ── Display commands from agent ──
@@ -1986,7 +1979,7 @@ function updateGridMeta() {
     // before the live dot, after the release notice — the header order is fixed
     metaEl.insertBefore(countEl, metaEl.querySelector(".grid-meta-live"));
   }
-  countEl.textContent = `${String(n).padStart(2, "0")} ${n === 1 ? "surface" : "surfaces"}`;
+  countEl.textContent = `${n} ${n === 1 ? "surface" : "surfaces"}`;
 }
 
 // ── Main Render ──
