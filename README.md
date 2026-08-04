@@ -84,8 +84,9 @@ For a multi-step interaction, keep the intermediate clicks local with
 not once per toggle. State persists across sessions; `surface state <id>` reads
 it back. ([docs](docs/state/stateful-surfaces.md))
 
-The whole loop also has a no-HTML version. This puts a question on every screen
-you own and blocks the agent until you answer it, from wherever you are:
+None of that markup is required. The shortest complete loop is one command: it
+puts a question on every screen you own and blocks the agent until you answer,
+from wherever you happen to be.
 
 ```bash
 surface ask "Ship release v2.4.0 to production?" --options ship,hold --wait
@@ -95,13 +96,14 @@ surface ask "Ship release v2.4.0 to production?" --options ship,hold --wait
 
 ## What you can build
 
-None of these ship as a command. They are a handful of commands each, written
-by your agent on the spot, because the loop underneath them is general.
+Surface ships none of these. Each one is a few commands your agent writes on
+the spot — which is exactly the point. A primitive you have to extend for every
+new idea isn't one.
 
 ### A whiteboard you and your agent share
 
-You're studying inside a project and say *"make a whiteboard."* The agent
-writes a canvas surface and puts it on your tablet. You draw. Strokes stage
+You're deep in a study session with your agent and say *"make a whiteboard."*
+It writes a canvas surface and puts it on your tablet. You draw. Strokes stage
 locally and commit as one action, so it wakes on the drawing, not on every
 pixel:
 
@@ -122,8 +124,8 @@ to the board the same way it changes any other value (`surface patch board …`)
 It can also *look* at it. Surface screenshots every surface through headless
 Chrome for the dashboard grid, so a real PNG of your board already exists at
 `/artifacts/<id>/thumb` ([docs](docs/core/thumbnails.md)). There is no
-`surface see <id>` verb wrapping that yet — today an agent points itself at
-the route.
+`surface see <id>` verb wrapping that yet — today the agent fetches that route
+itself.
 
 ### A Rubik's cube coach that watches every move
 
@@ -134,8 +136,8 @@ a wake per move, so each turn fires its own action instead of staging:
 Surface.action("move", { face: "R", dir: "cw" });
 ```
 
-The action terminal prints one line per turn, so the agent knows the exact
-state of your cube at the moment you turn it, and pushes the next instruction
+Its `surface wait --follow` terminal prints one line per turn, so the agent
+knows the state of your cube at the moment you turn it, and pushes the next hint
 back into the surface with `surface patch cube '{"hint":"now F2"}'`. Not "here
 are the twelve steps" — coaching, in step with you.
 
@@ -157,8 +159,8 @@ Surfaces are self-contained — inline CSS and JS, no CDNs — so they render
 offline and screenshot cleanly.
 
 **The possibilities are the point.** Surface ships no whiteboard, no cube, no
-map. It ships the loop that makes all three a short prompt. `surface
-seed-demos` puts a gallery of working ones on your display to poke at.
+map. It ships the loop that makes all three a short prompt. Run
+`surface seed-demos` for a gallery of working ones to poke at.
 
 ## Quick start
 
@@ -171,8 +173,9 @@ surface service install    # → http://127.0.0.1:3000, supervised + health-gate
 
 `surface service install` registers the native per-user supervisor — a systemd
 user unit, a launchd agent, or a Scheduled Task — starts the server, and
-succeeds only once it answers health checks. There is deliberately no
-foreground `serve` command.
+succeeds only once it answers health checks. (There is deliberately no
+foreground `serve` command: a supervised service is the only sanctioned way to
+run Surface, so nothing ends up squatting the port unnoticed.)
 
 ```bash
 surface service health     # liveness, version, content plane (exit 0/1)
