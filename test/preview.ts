@@ -72,6 +72,21 @@ test("block boundaries become line breaks so headings do not run into body copy"
   assert.deepEqual(p!.lines, ["Wave 1", "Shadow-write to both queues"]);
 });
 
+// `<b>Approve</b><span>Emit one action.</span>` is a label above a description
+// on screen and "Approve Emit one action." once flattened, which reads as a
+// typo. A bold run followed by another element is that pattern; bold followed
+// by text is a sentence.
+test("a bold label is split from the value beside it, but not mid-sentence", () => {
+  const labelled = extractPreview(
+    `<button><strong>Approve</strong><span>Emit a single approve action.</span></button>`,
+    "text/html",
+  );
+  assert.deepEqual(labelled!.lines, ["Approve", "Emit a single approve action."]);
+
+  const sentence = extractPreview(`<p>The <strong>staged</strong> rollout moves the workers.</p>`, "text/html");
+  assert.deepEqual(sentence!.lines, ["The staged rollout moves the workers."]);
+});
+
 test("entities are decoded, and nbsp collapses like an ordinary space", () => {
   const p = extractPreview(`<p>a&nbsp;&nbsp;&nbsp;b &amp; c &#8212; d</p>`, "text/html");
   assert.deepEqual(p!.lines, ["a b & c — d"]);

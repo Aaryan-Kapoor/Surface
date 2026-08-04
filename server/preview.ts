@@ -150,6 +150,11 @@ function fromHtml(text: string): CardPreview | null {
     // has no closing block tag between the two — run together it becomes
     // "Approve Emit one action."
     .replace(/<\/?(p|div|section|article|h[1-6]|li|tr|td|th|dt|dd|blockquote|pre|button|label|option|summary|figcaption|legend|nav|header|footer|main|aside|figure)\b[^>]*>/gi, "\n")
+    // A bold run followed immediately by another element is the label/value
+    // pattern — `<b>Approve</b><span>Emit one action.</span>`, which flattens
+    // into "Approve Emit one action." Bold *inside* a sentence is followed by
+    // text rather than a tag, so it is left alone.
+    .replace(/<\/(strong|b)\s*>(?=\s*<)/gi, "\n")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<[^>]*>/g, " ");
   const decoded = stripControls(decodeEntities(stripped));
