@@ -1879,6 +1879,9 @@ function startRename(card, id) {
 
 // ── Surface View ──
 
+// How long to wait for a surface frame's `load` before revealing it anyway.
+const FRAME_REVEAL_TIMEOUT_MS = 4000;
+
 async function renderSurface(id) {
   currentSurfaceId = id;
   resumeTheme();
@@ -1956,6 +1959,13 @@ async function renderSurface(id) {
     warn.textContent = "This surface needs the isolated content plane, which is unavailable.";
     view.appendChild(warn);
   } else {
+    // Reveal on load, so the frame's white backstop is never on screen empty.
+    // The timer is the backstop's backstop: a frame that never fires `load` —
+    // a stalled fetch, a content plane that went away — must still become
+    // visible rather than leave the user staring at the shell background.
+    const reveal = () => iframe.classList.add("is-loaded");
+    iframe.addEventListener("load", reveal, { once: true });
+    setTimeout(reveal, FRAME_REVEAL_TIMEOUT_MS);
     iframe.src = frameSrc;
     view.appendChild(iframe);
   }

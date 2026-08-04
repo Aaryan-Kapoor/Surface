@@ -687,6 +687,28 @@ try {
     assert.deepEqual(offenders, [], `flexible track(s) floored at min-content: ${offenders.join(" | ")}`);
   });
 
+  // The frame is white so a surface that declares no background of its own gets
+  // the page the browser would have given it. That white is also what the empty
+  // element paints while the content loads, so it is revealed rather than shown
+  // — and the reveal must be driven by something that always happens. An
+  // `is-loaded` class with only a `load` listener behind it leaves a stalled
+  // frame invisible forever.
+  check("a surface frame that never fires load is still revealed", () => {
+    const js = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
+    const reveal = js.slice(js.indexOf("const reveal = "), js.indexOf("iframe.src = frameSrc;"));
+    assert.ok(reveal.length > 0, "the reveal path moved; this guard needs updating");
+    assert.match(reveal, /addEventListener\("load"/, "the fast path is the load event");
+    assert.match(reveal, /setTimeout\(reveal/, "a frame that never loads must still be revealed");
+    // And the unavailable notice is a div, not an iframe: scoping the rule to
+    // `iframe.surface-frame` is what keeps it from being hidden forever.
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    assert.match(css, /iframe\.surface-frame\s*\{[^}]*opacity:\s*0/, "the hidden-until-loaded rule must be scoped to the iframe");
+    assert.ok(
+      !/\n\.surface-frame\s*\{[^}]*opacity:\s*0/.test(css),
+      "an unscoped rule would also hide .surface-frame-unavailable, which never loads",
+    );
+  });
+
   check("the stylesheet uses no deprecated declaration keywords", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
     // `word-break: break-word` is deprecated (and was never in any spec as

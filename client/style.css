@@ -1552,9 +1552,22 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   width: 100%;
   height: 100%;
   min-height: 0;
+  /* White, because a surface that declares no background of its own is an HTML
+     document expecting the browser's default page. But an empty white rectangle
+     is also what this element paints *before* the content arrives — a
+     full-screen strobe every time a dark shell opens a dark surface, for as
+     long as the load takes. So the frame is transparent until it has something
+     to show, and the shell's own background sits behind it in the meantime. */
   background: #ffffff;
   display: block;
 }
+
+iframe.surface-frame {
+  opacity: 0;
+  transition: opacity 0.12s var(--ease-swift);
+}
+
+iframe.surface-frame.is-loaded { opacity: 1; }
 
 .surface-frame-unavailable {
   display: flex;
