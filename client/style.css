@@ -150,6 +150,66 @@ button { -webkit-tap-highlight-color: transparent; }
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Release notice ──
+   Lives in the grid header meta row: noticeable because it is the only
+   bordered thing up there, unobtrusive because it borrows the row's own
+   mono/uppercase treatment instead of shouting in a banner. */
+
+.update-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px 5px 11px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--fg-muted);
+  max-width: min(46vw, 520px);
+}
+
+.update-notice[hidden] { display: none; }
+
+.update-notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-notice--available .update-notice-text { color: #ffffff; }
+.update-notice--error { border-color: var(--danger); }
+.update-notice--busy .update-notice-text { animation: update-pulse 1.6s ease-in-out infinite; }
+
+@keyframes update-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.update-notice-btn,
+.update-notice-x {
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  background: transparent;
+  color: #ffffff;
+  border: 1px solid var(--hairline-strong);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: background 0.15s linear, color 0.15s linear, border-color 0.15s linear;
+}
+
+.update-notice-btn:hover,
+.update-notice-x:hover {
+  background: #ffffff;
+  color: #000000;
+  border-color: #ffffff;
+}
+
+.update-notice-x {
+  border: none;
+  padding: 3px 6px;
+  color: var(--fg-faint);
+  line-height: 1;
+}
+
 .grid-meta-live {
   display: inline-flex;
   align-items: center;
@@ -1492,6 +1552,8 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   .grid { grid-template-columns: repeat(2, 1fr); gap: 32px 20px; }
   .grid-header { flex-direction: column; align-items: flex-start; gap: 12px; }
   .grid-title { font-size: 30px; }
+  .grid-meta { flex-wrap: wrap; gap: 12px; }
+  .update-notice { max-width: 100%; }
   .grid-toolbar { margin-bottom: 32px; }
   .grid-search { width: 100%; }
   .grid-search-wrap { width: 100%; margin-right: 0; }

@@ -201,6 +201,166 @@ function showToast(text, duration = 4000, style = "info") {
   }, duration);
 }
 
+// ── Release notice + one-click update ──
+//
+// The server answers GET /api/update/status from a cache only (it never blocks
+// on the npm registry), pushes `update_status` over SSE, and applies an update
+// by running the ordinary `surface upgrade` converger. The service restarts
+// mid-flight, so this side is written around losing its own connection: every
+// phase transition is idempotent, the "restarting" phase starts a bounded
+// reconnect watch, and the result is read back from the server after it
+// returns rather than guessed here.
+
+let updateState = null;        // last /api/update/status payload
+let updateWatchTimer = null;   // bounded poll while a run is in flight
+let updateWatchDeadline = 0;
+let updateVersionAtStart = null; // version when Update was clicked → reload once it changes
+const UPDATE_WATCH_MS = 120000;
+const UPDATE_SEEN_KEY = "surface:update-seen";
+
+function updateSeen(run) {
+  if (!run || !run.started_at) return false;
+  try { return localStorage.getItem(UPDATE_SEEN_KEY) === run.started_at; } catch { return false; }
+}
+
+function markUpdateSeen(run) {
+  if (!run || !run.started_at) return;
+  try { localStorage.setItem(UPDATE_SEEN_KEY, run.started_at); } catch {}
+  paintUpdateNotice();
+}
+
+// One place decides what the pill says, so the DOM code stays dumb.
+// Returns null when there is nothing worth saying.
+function updateNoticeModel(s) {
+  if (!s) return null;
+  const run = s.run;
+  const running = run && run.phase !== "done" && run.phase !== "failed";
+  if (running) {
+    const label = run.phase === "restarting"
+      ? "Restarting Surface…"
+      : run.phase === "installing"
+        ? `Installing ${run.to || ""}…`.replace("  ", " ")
+        : "Checking for updates…";
+    return { tone: "busy", text: label };
+  }
+  if (run && run.phase === "failed" && !updateSeen(run)) {
+    return { tone: "error", text: `Update failed — ${run.error || "see the host log"}`, dismiss: run };
+  }
+  if (run && run.phase === "done" && !updateSeen(run)) {
+    return { tone: "done", text: `Updated to ${run.installed || s.current}`, dismiss: run, autoDismiss: true };
+  }
+  if (!s.update_available || !s.latest) return null;
+  if (s.can_apply) return { tone: "available", text: `Surface ${s.latest} available`, action: "Update" };
+  // Honest read-only state: a repo clone, a project-local install, or a paired
+  // display, none of which may trigger an npm install here.
+  return { tone: "available", text: `Surface ${s.latest} available`, hint: s.apply_blocked_reason || s.advice };
+}
+
+function paintUpdateNotice() {
+  const host = document.getElementById("update-notice");
+  if (!host) return;
+  const model = updateNoticeModel(updateState);
+  if (!model) { host.hidden = true; host.innerHTML = ""; return; }
+  host.hidden = false;
+  host.className = `update-notice update-notice--${model.tone}`;
+  host.innerHTML = `
+    <span class="update-notice-text">${escapeHtml(model.text)}</span>
+    ${model.action ? `<button type="button" class="update-notice-btn" data-update-apply>${escapeHtml(model.action)}</button>` : ""}
+    ${model.dismiss ? `<button type="button" class="update-notice-x" data-update-dismiss aria-label="Dismiss">×</button>` : ""}
+  `;
+  if (model.hint) host.title = model.hint;
+  else host.removeAttribute("title");
+  const btn = host.querySelector("[data-update-apply]");
+  if (btn) btn.addEventListener("click", applyUpdate);
+  const x = host.querySelector("[data-update-dismiss]");
+  if (x) x.addEventListener("click", () => markUpdateSeen(model.dismiss));
+  if (model.autoDismiss) setTimeout(() => markUpdateSeen(model.dismiss), 10000);
+}
+
+async function refreshUpdateStatus() {
+  try {
+    const res = await fetch("/api/update/status", { cache: "no-store" });
+    if (!res.ok) return null;
+    applyUpdateStatus(await res.json());
+    return updateState;
+  } catch {
+    // Offline or mid-restart — the watcher retries; nothing to report.
+    return null;
+  }
+}
+
+function applyUpdateStatus(next) {
+  if (!next) return;
+  // SSE payloads carry no per-plane fields; keep what the last GET told us.
+  if (next.can_apply === undefined && updateState) {
+    next.can_apply = updateState.can_apply;
+    next.apply_blocked_reason = updateState.apply_blocked_reason;
+  }
+  updateState = next;
+  const run = next.run;
+  const running = run && run.phase !== "done" && run.phase !== "failed";
+  if (running) watchUpdateThroughRestart();
+  if (!running && updateWatchTimer) stopUpdateWatch();
+  // The bundle that is running right now was replaced on disk — reload once so
+  // the PWA shell matches the server that is answering it.
+  if (updateVersionAtStart && run && run.phase === "done" && next.current !== updateVersionAtStart) {
+    updateVersionAtStart = null;
+    location.reload();
+    return;
+  }
+  paintUpdateNotice();
+}
+
+function stopUpdateWatch() {
+  if (updateWatchTimer) clearInterval(updateWatchTimer);
+  updateWatchTimer = null;
+}
+
+// The process serving this page is the one being replaced, so SSE is not a
+// reliable channel across the restart. Poll — but only while a run is live,
+// and only for as long as a restart could plausibly take.
+function watchUpdateThroughRestart() {
+  updateWatchDeadline = Date.now() + UPDATE_WATCH_MS;
+  if (updateWatchTimer) return;
+  updateWatchTimer = setInterval(async () => {
+    if (Date.now() > updateWatchDeadline) {
+      stopUpdateWatch();
+      updateState = {
+        ...(updateState || {}),
+        run: {
+          phase: "failed",
+          started_at: (updateState && updateState.run && updateState.run.started_at) || String(Date.now()),
+          error: "Surface did not come back — check `surface service health` on the host",
+        },
+      };
+      paintUpdateNotice();
+      return;
+    }
+    await refreshUpdateStatus();
+  }, 1500);
+}
+
+async function applyUpdate() {
+  const host = document.getElementById("update-notice");
+  if (host) host.className = "update-notice update-notice--busy";
+  updateVersionAtStart = (updateState && updateState.current) || null;
+  try {
+    const res = await fetch("/api/update/apply", { method: "POST", headers: { "Content-Type": "application/json" } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      updateVersionAtStart = null;
+      showToast((body && body.error) || `Update refused (${res.status})`, 6000, "error");
+      await refreshUpdateStatus();
+      return;
+    }
+    applyUpdateStatus(body);
+    watchUpdateThroughRestart();
+  } catch {
+    updateVersionAtStart = null;
+    showToast("Could not start the update — is Surface still running?", 6000, "error");
+  }
+}
+
 // ── Clipboard helper ──
 // async Clipboard API first; falls back to a hidden-textarea +
 // document.execCommand("copy") so non-secure contexts still get a real
@@ -1079,6 +1239,7 @@ function renderGrid() {
       <div class="grid-subtitle">a universal display for your agents</div>
     </div>
     <div class="grid-meta" id="grid-meta">
+      <span class="update-notice" id="update-notice" hidden></span>
       ${count > 0 ? `<span class="grid-meta-count">${escapeHtml(countLabel)}</span>` : ""}
       <span class="grid-meta-live"><span class="live-dot"></span></span>
     </div>
@@ -1153,6 +1314,10 @@ function renderGrid() {
   container.appendChild(gridView);
   app.innerHTML = "";
   app.appendChild(container);
+
+  // The header is rebuilt on every grid render; re-apply the last known
+  // release status instead of re-fetching it.
+  paintUpdateNotice();
 
   // Re-apply theme to newly created elements
   applyTheme(displayConfig);
@@ -1546,6 +1711,9 @@ function connectGlobalSSE() {
     }
     if (hadError) {
       hadError = false;
+      // A reconnect is also how the PWA finds out an update finished: the
+      // server that went away was the one being replaced.
+      refreshUpdateStatus();
       await reconcileAfterReconnect();
     }
   });
@@ -1790,6 +1958,10 @@ function connectGlobalSSE() {
     applyTheme(data);
     pulseSpace();
   });
+
+  globalSSE.addEventListener("update_status", (e) => {
+    applyUpdateStatus(JSON.parse(e.data));
+  });
 }
 
 // Update the surface-count badge in the grid header without
@@ -1811,7 +1983,8 @@ function updateGridMeta() {
   if (!countEl) {
     countEl = document.createElement("span");
     countEl.className = "grid-meta-count";
-    metaEl.prepend(countEl);
+    // before the live dot, after the release notice — the header order is fixed
+    metaEl.insertBefore(countEl, metaEl.querySelector(".grid-meta-live"));
   }
   countEl.textContent = `${String(n).padStart(2, "0")} ${n === 1 ? "surface" : "surfaces"}`;
 }
@@ -1854,6 +2027,9 @@ function startApp() {
         contentOrigin = location.protocol + "//" + location.hostname + ":" + config.content_port;
       }
       applyTheme(config);
+      // Fire-and-forget: the status endpoint is cache-only, but the first
+      // paint must not wait on it either.
+      refreshUpdateStatus();
       return render();
     })
     .catch(() => render());
