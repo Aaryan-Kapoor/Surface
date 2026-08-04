@@ -35,6 +35,17 @@
   --danger: #ff4d4a;
   --ok: #34d399;
 
+  /* Chrome that floats *on* a preview — the hover tray, the state pills. It
+     cannot use --panel, because it sits over a picture the app did not choose:
+     a screenshot, or an excerpt on the card's own paper. So it is a scrim in
+     the scheme's own direction, opaque enough to sit on text, with a shadow in
+     light mode where a pale chip on a pale screenshot would otherwise vanish. */
+  --chip-bg: rgba(10, 11, 13, 0.82);
+  --chip-fg: #ffffff;
+  --chip-line: rgba(255, 255, 255, 0.16);
+  --chip-hover: rgba(255, 255, 255, 0.18);
+  --chip-shadow: 0 2px 8px rgba(0, 0, 0, 0.34);
+
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 10px 30px -14px rgba(0, 0, 0, 0.75);
   --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.28), 0 22px 48px -20px rgba(0, 0, 0, 0.85);
   --shadow-pop: 0 40px 90px -30px rgba(0, 0, 0, 0.85);
@@ -73,6 +84,12 @@
     --shadow-card: 0 1px 2px rgba(16, 18, 22, 0.06), 0 8px 24px -12px rgba(16, 18, 22, 0.16);
     --shadow-lift: 0 2px 6px rgba(16, 18, 22, 0.08), 0 18px 40px -16px rgba(16, 18, 22, 0.22);
     --shadow-pop: 0 40px 90px -30px rgba(16, 18, 22, 0.28);
+
+    --chip-bg: rgba(255, 255, 255, 0.88);
+    --chip-fg: #0b0c0e;
+    --chip-line: rgba(0, 0, 0, 0.12);
+    --chip-hover: rgba(0, 0, 0, 0.08);
+    --chip-shadow: 0 1px 2px rgba(16, 18, 22, 0.10), 0 6px 18px -8px rgba(16, 18, 22, 0.34);
   }
 }
 
@@ -739,12 +756,13 @@ button { -webkit-tap-highlight-color: transparent; }
   font-weight: 550;
   letter-spacing: -0.002em;
   white-space: nowrap;
-  color: #fff;
+  color: var(--chip-fg);
   /* Opaque enough to sit on text. These pills used to land only on
      screenshots, where a 0.62 scrim reads as frosted glass; over an excerpt's
      own lines it read as two paragraphs printed on top of each other. */
-  background: rgba(10, 11, 13, 0.84);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-line);
+  box-shadow: var(--chip-shadow);
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);
   padding: 3px 9px;
@@ -776,8 +794,8 @@ button { -webkit-tap-highlight-color: transparent; }
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 1.4px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  border: 1.4px solid color-mix(in oklab, var(--chip-fg) 30%, transparent);
+  border-top-color: var(--chip-fg);
   animation: spin 0.85s linear infinite;
 }
 
@@ -827,8 +845,9 @@ button { -webkit-tap-highlight-color: transparent; }
   gap: 4px;
   padding: 3px;
   border-radius: var(--r-md);
-  background: rgba(10, 11, 13, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-line);
+  box-shadow: var(--chip-shadow);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
   opacity: 0;
@@ -850,7 +869,7 @@ button { -webkit-tap-highlight-color: transparent; }
   height: 26px;
   border-radius: 7px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.82);
+  color: color-mix(in oklab, var(--chip-fg) 82%, transparent);
   border: 0;
   padding: 0;
   display: flex;
@@ -860,7 +879,7 @@ button { -webkit-tap-highlight-color: transparent; }
   transition: background 0.13s var(--ease-swift), color 0.13s var(--ease-swift);
 }
 
-.card-action:hover { background: rgba(255, 255, 255, 0.16); color: #fff; }
+.card-action:hover { background: var(--chip-hover); color: var(--chip-fg); }
 .card-action:active { transform: scale(0.92); }
 .card-action svg { display: block; }
 .card-action--danger:hover { background: var(--danger); color: #fff; }
