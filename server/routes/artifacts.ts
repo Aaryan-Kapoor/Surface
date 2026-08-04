@@ -101,7 +101,17 @@ function captureAgentLink(req: Request, surfaceId: string): void {
   recordAgentLink(getDb(), surfaceId, session);
 }
 
-function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string): void {
+// `onError` is for callers that have a fallback. `res.sendFile` reports
+// failures asynchronously — to its callback, or to `next()` when there isn't
+// one — so a caller's try/catch only ever sees a synchronous throw, and a
+// missing or unreadable file becomes a 500 from the error handler instead of
+// whatever the caller would rather have sent.
+function sendArtifactFile(
+  res: Response,
+  file: ArtifactFile,
+  artifactId: string,
+  onError?: (err: unknown) => void,
+): void {
   const contentType = file.mime || inferMime(file.path);
   const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
   res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
@@ -110,6 +120,10 @@ function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string)
     res.setHeader("Cache-Control", "no-cache");
     const bytes = injectSurfaceRuntime(readArtifactFileContent(file), artifactId);
     res.send(bytes);
+    return;
+  }
+  if (onError) {
+    res.sendFile(file.storage_path, (err) => { if (err) onError(err); });
     return;
   }
   res.sendFile(file.storage_path);
@@ -662,10 +676,23 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
 
   // An image surface is served as itself, ahead of any capture — a screenshot
   // of the viewer is a crop of the picture, and the card crops it again.
+  //
+  // The file has to be there. `res.sendFile` reports a missing or unreadable
+  // file asynchronously — the try/catch below only ever caught a synchronous
+  // throw — so an image whose bytes have gone (a linked file deleted under us,
+  // a half-restored workspace) answered with a 500 from Express's error handler
+  // instead of falling through to the cached capture or the cover. Stat first,
+  // which is the case that actually happens, and pass a callback for the rest:
+  // once the stream has started there is nothing to fall back to, so the most
+  // honest thing left is to end the response rather than hand Express an error
+  // for a request that is already half-answered.
   const passthrough = imageThumbPassthrough(getDb(), req.params.id);
-  if (passthrough) {
+  if (passthrough && fs.existsSync(passthrough.storage_path)) {
     try {
-      sendArtifactFile(res, passthrough, req.params.id);
+      sendArtifactFile(res, passthrough, req.params.id, () => {
+        if (!res.headersSent) res.status(500).end();
+        else if (!res.writableEnded) res.end();
+      });
       return;
     } catch {}
   }

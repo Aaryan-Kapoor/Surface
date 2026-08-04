@@ -450,6 +450,38 @@ async function main() {
   assert(imgType.includes("image/svg+xml"), `image thumb should pass the bytes through, got ${imgType}`);
   assert(String(imgThumb.body).includes("<svg"), "image thumb must be the artifact's own file");
 
+  // …and an image whose bytes have gone (a workspace half-restored, a linked
+  // file deleted under us) must fall through to the cover. `res.sendFile`
+  // reports a missing file asynchronously, so the route's try/catch never saw
+  // it and Express's error handler answered 500 for a request that had a
+  // perfectly good fallback waiting two lines below.
+  const goneId = `artifact-test-thumb-gone-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: goneId,
+    title: "Vanished Image",
+    mime: "image/png",
+    files: [{ path: "image.png", mime: "image/png", content_base64: "iVBORw0KGgo=" }],
+  });
+  const goneOk = await req()("GET", `/artifacts/${goneId}/thumb`);
+  assert(goneOk.status === 200, `passthrough should work before the file goes, got ${goneOk.status}`);
+  assert(
+    (goneOk.headers.get("content-type") || "").includes("image/png"),
+    "the image's own bytes are what a present passthrough serves",
+  );
+
+  const goneFiles = path.join(dataDir, "artifacts", goneId, "versions", "1", "files");
+  fs.rmSync(path.join(goneFiles, "image.png"), { force: true });
+  assert(!fs.existsSync(path.join(goneFiles, "image.png")), "the fixture must really remove the file");
+
+  const goneThumb = await req()("GET", `/artifacts/${goneId}/thumb`);
+  assert(goneThumb.status === 200, `a missing passthrough file must fall through, not 500 (got ${goneThumb.status})`);
+  assert(
+    (goneThumb.headers.get("content-type") || "").includes("image/svg+xml"),
+    `expected the cover, got ${goneThumb.headers.get("content-type")}`,
+  );
+  assert(String(goneThumb.body).includes("Vanished Image"), "the cover must carry the surface title");
+  await optionalDelete(`/artifacts/${goneId}`);
+
   // ── The immutable cache key must mean exactly one picture ──
   //
   // `?v=<updated_at>` buys a one-year `immutable` response, and every revision
