@@ -661,6 +661,15 @@ try {
     );
   });
 
+  check("the stylesheet uses no deprecated declaration keywords", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    // `word-break: break-word` is deprecated (and was never in any spec as
+    // anything but an alias); `overflow-wrap: break-word` is the property that
+    // expresses this, and is what browsers map it onto anyway.
+    const deprecated = [...css.matchAll(/word-break\s*:\s*break-word/g)].map((m) => m[0]);
+    assert.deepEqual(deprecated, [], `deprecated declaration(s): ${deprecated.join(", ")}`);
+  });
+
   // ══ 4. theme reset restores the PWA chrome ══════════════════════════════
   const themed = loadApp();
   const metaState = () =>

@@ -380,4 +380,3 @@ adapter is preserved in [`archived/`](archived/); the CLI plus
 ## License
 
 MIT — see [LICENSE](LICENSE).
-</content>

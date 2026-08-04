@@ -1220,7 +1220,7 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   line-height: 1.6;
   color: var(--fg);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
   margin: 0 0 20px;
   user-select: all;
 }
