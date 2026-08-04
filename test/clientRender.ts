@@ -669,6 +669,30 @@ try {
     assert.equal(chip!.hidden, true, "an unknown version must not render as a chip");
   });
 
+  // The stacking fix below keeps the header *painted* over the empty state.
+  // That is not the same as the empty state being readable: it is `inset: 0`,
+  // so it spans the strip the header occupies, and once the narrow layout
+  // centres it on the full height its first line lands underneath. Measured in
+  // a real browser before this guard existed: 22px of the "Surface is
+  // listening" pill hidden at 390px, 4px at 820px.
+  check("the narrow empty state clears the header instead of centring through it", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const blockFor = (query: string) => {
+      const at = css.indexOf(`@media (max-width: ${query})`);
+      assert.ok(at > -1, `no ${query} breakpoint`);
+      return css.slice(at, css.indexOf("@media", at + 10));
+    };
+    for (const width of ["1100px", "760px"]) {
+      const rule = /\.empty-state\s*\{([^}]*)\}/.exec(blockFor(width));
+      assert.ok(rule, `no .empty-state rule at ${width}`);
+      assert.match(
+        rule![1],
+        /padding(-top)?:\s*calc\(var\(--header-h\)/,
+        `.empty-state at ${width} must reserve the header's height`,
+      );
+    }
+  });
+
   check("the empty state shares the header's stacking context instead of covering it", () => {
     // .grid-view is `position: relative; z-index: 1`, i.e. a stacking context.
     // While the empty state lived outside it, the header's z-index:20 could not

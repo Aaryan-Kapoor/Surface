@@ -1844,7 +1844,17 @@ iframe.surface-frame.is-loaded { opacity: 1; }
 
 @media (max-width: 1100px) {
   :root { --gutter: 28px; --card-min: 215px; }
-  .empty-state { flex-direction: column; align-items: flex-start; justify-content: center; }
+  /* The empty state is `inset: 0` inside .grid-view, so it spans the full
+     height *including* the strip the sticky header occupies. Centred on the
+     full height, its first element — the "Surface is listening" pill — was
+     printed under the header: 4px lost at this width and 22px on a phone.
+     Reserve the header's height instead of centring through it. */
+  .empty-state {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: calc(var(--header-h) + 32px);
+  }
   .empty-portal, .portal-scrollbar { display: none; }
 }
 
@@ -1878,7 +1888,7 @@ iframe.surface-frame.is-loaded { opacity: 1; }
   .grid-toolbar { padding: 14px var(--gutter) 14px; }
   .card-title { font-size: 13px; }
   .card-sub { font-size: 11.5px; }
-  .empty-state { padding: 32px 22px; gap: 22px; }
+  .empty-state { padding: calc(var(--header-h) + 24px) 22px 32px; gap: 22px; }
   .modal-panel { padding: 26px 22px 22px; border-radius: 16px; }
   .toast { left: 12px; right: 12px; max-width: none; }
 
