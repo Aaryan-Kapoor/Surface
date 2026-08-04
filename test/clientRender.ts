@@ -727,6 +727,30 @@ try {
     }
   });
 
+  // An iframe with no height is 150px tall. The home widget measures its own
+  // content and sets a height — but only ever did so from `onload`, and a frame
+  // that is slow to fire `load` (about one run in six, measured) was left at
+  // that 150px default with 74px of content in it.
+  check("the home widget is sized without waiting for its frame to load", () => {
+    const js = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
+    const start = js.indexOf("const sizeWidget = ");
+    assert.ok(start !== -1, "the widget sizer moved; this guard needs updating");
+    const block = js.slice(start, js.indexOf("widget.onload", start));
+    assert.match(block, /setTimeout\(/, "sizing must not depend solely on the load event");
+    // And measuring documentElement first would read the frame's own viewport,
+    // which is how a 74px widget locked itself at 150px and then measured that
+    // as correct forever.
+    const bodyAt = block.indexOf("doc.body.scrollHeight");
+    const docElAt = block.indexOf("doc.documentElement.scrollHeight");
+    assert.ok(bodyAt !== -1, "the body's own box must be measured");
+    assert.ok(docElAt === -1 || bodyAt < docElAt, "documentElement is a fallback, not the first choice");
+
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const rule = /\n\.home-widget\s*\{([^}]*)\}/.exec(css);
+    assert.ok(rule, "no .home-widget rule");
+    assert.match(rule![1], /height:\s*\d+px/, "the widget must reserve its own height, not the iframe default");
+  });
+
   check("the stylesheet uses no deprecated declaration keywords", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
     // `word-break: break-word` is deprecated (and was never in any spec as

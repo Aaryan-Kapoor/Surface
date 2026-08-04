@@ -1740,6 +1740,10 @@ iframe.surface-frame.is-loaded { opacity: 1; }
 .home-widget {
   display: block;
   width: calc(100% - 2 * var(--gutter));
+  /* An iframe with no height is 150px tall. That default is what the dashboard
+     shows while the widget loads, and what it keeps if the frame never fires
+     `load` — so the reserved height is the sizer's own floor instead. */
+  height: 60px;
   margin: 4px var(--gutter) 8px;
   border: none;
   border-radius: var(--card-radius);

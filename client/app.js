@@ -1157,6 +1157,12 @@ function labelForMime(mime) {
 // off `window` — see the home-widget block in renderGrid().
 let homeWidgetResize = null;
 
+// When to re-measure the home widget, in ms after its frame is created.
+const HOME_WIDGET_REMEASURE_MS = [120, 500, 1500];
+// Floor for the widget's height, and the space it reserves before it has been
+// measured — an iframe's own default is 150px, which is a lot of empty box.
+const HOME_WIDGET_MIN_PX = 60;
+
 function renderGrid() {
   currentSurfaceId = null;
   resumeTheme();
@@ -1238,15 +1244,26 @@ function renderGrid() {
     // .scrollHeight just reports back whatever height the frame already had.
     const sizeWidget = () => {
       try {
-        widget.style.height = "0px";
         const doc = widget.contentDocument;
-        const h = Math.max(
-          doc.body ? doc.body.scrollHeight : 0,
-          doc.documentElement ? doc.documentElement.scrollHeight : 0,
-        );
-        widget.style.height = Math.max(h, 60) + "px";
+        // Nothing to measure yet. Leaving the reserved height alone beats
+        // collapsing the frame and reading back its own viewport.
+        if (!doc || !doc.body) return;
+        widget.style.height = "0px";
+        // `body.scrollHeight` is the content's own box. `documentElement
+        // .scrollHeight` is the content OR the viewport, whichever is taller,
+        // so it is only a fallback for a document with no body to ask.
+        const h = doc.body.scrollHeight
+          || (doc.documentElement ? doc.documentElement.scrollHeight : 0);
+        widget.style.height = Math.max(h, HOME_WIDGET_MIN_PX) + "px";
       } catch { widget.style.height = "200px"; }
     };
+    // Measure on a short decaying schedule from creation, not from `load`.
+    // A widget whose frame is slow to fire `load` — measured here at roughly
+    // one run in six — was left at the iframe's own 150px default with 74px of
+    // content in it, a half-empty box at the top of the dashboard.
+    for (const delay of HOME_WIDGET_REMEASURE_MS) {
+      setTimeout(() => { if (widget.isConnected) sizeWidget(); }, delay);
+    }
     // Re-measure on resize: a widget that reflows at a different width would
     // otherwise keep the old height. Registered once per iframe, not once per
     // load — widget.onload can fire more than once, and renderGrid() builds a
@@ -1265,7 +1282,7 @@ function renderGrid() {
     homeWidgetResize = onResize;
     widget.onload = () => {
       sizeWidget();
-      // Re-measure once fonts have settled.
+      // Once more after a frame, for fonts and late-decoding images.
       requestAnimationFrame(sizeWidget);
     };
   }
