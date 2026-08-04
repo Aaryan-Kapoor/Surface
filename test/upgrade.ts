@@ -536,7 +536,12 @@ try {
   // could start a real update on the same host. The comment above the probe
   // asserted the invariant the code had already broken, which is how it drifted;
   // this is the assertion that keeps it true.
-  const updatesSrc = fs.readFileSync(path.join(REPO_ROOT, "server", "updates.ts"), "utf8");
+  // Normalise line endings before parsing. git checks this repo out with CRLF
+  // on Windows, and the `\n}\n` boundary search below can never match there —
+  // the byte after the closing brace is `\r`. It cost a red Windows CI run.
+  const updatesSrc = fs
+    .readFileSync(path.join(REPO_ROOT, "server", "updates.ts"), "utf8")
+    .replace(/\r\n/g, "\n");
   const updatesCode = updatesSrc
     .split("\n")
     .filter((line) => {

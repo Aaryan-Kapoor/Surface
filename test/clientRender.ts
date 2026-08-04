@@ -340,7 +340,9 @@ try {
   });
 
   check("no attribute in app.js interpolates anything but escapeAttr/encodeURIComponent", () => {
-    const src = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
+    // CRLF-normalised: git checks out with CRLF on Windows, and this guard must
+    // never pass merely because the scanner tripped over a line ending.
+    const src = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8").replace(/\r\n/g, "\n");
     const bad = unsafeAttrInterpolations(src);
     assert.deepEqual(bad, [], `unsafe attribute interpolation(s): ${bad.join(", ")}`);
   });
