@@ -76,6 +76,14 @@ function codexHome(): string {
   return process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 }
 
+// A waiter's eligibility is (scope x action), and scope can be a project, so the
+// surface's project_root has to come along. Without it a bare `surface wait` —
+// project-scoped by default — would look like no waiter at all to this layer.
+function surfaceHasWaiter(surfaceId: string): boolean {
+  const artifact = getArtifact(getDb(), surfaceId);
+  return hasWaiter(surfaceId, undefined, artifact?.project_root ?? null);
+}
+
 export function codexSocketPath(): string {
   return process.env.SURFACE_CODEX_SOCKET
     || path.join(codexHome(), "app-server-control", "app-server-control.sock");
@@ -672,7 +680,7 @@ export function maybeDispatchCodex(surfaceId: string, consent: boolean): void {
       if (rerunRequested.delete(surfaceId)) {
         const rdb = getDb();
         const stillPending = getPendingActions(rdb, surfaceId);
-        if (stillPending.length && !hasWaiter(surfaceId)) {
+        if (stillPending.length && !surfaceHasWaiter(surfaceId)) {
           // Recompute consent — .surface/config.json may have changed while
           // the previous delivery was in flight.
           const artifact = getArtifact(rdb, surfaceId);
@@ -734,7 +742,7 @@ async function deliver(db: Database.Database, surfaceId: string, threadId: strin
   // Snapshot the batch only after every await that could take seconds: a
   // waiter connecting during connect/resume may have drained these actions
   // already, and layer 1 owns anything it consumed.
-  if (hasWaiter(surfaceId)) return;
+  if (surfaceHasWaiter(surfaceId)) return;
   const allPending = getPendingActions(db, surfaceId);
   if (!allPending.length) return;
   const pending = allPending.slice(0, MAX_BATCH_ACTIONS);

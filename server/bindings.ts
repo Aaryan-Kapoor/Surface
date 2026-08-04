@@ -6,9 +6,18 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 import { getDataDir } from "./paths.js";
 import { getDb } from "./db.js";
-import { getPendingActions, ackAction } from "./actionsStore.js";
+import type { BindingClaim, SurfaceAction } from "./actionsStore.js";
+import {
+  claimActionsForBinding,
+  getPendingActions,
+  completeBindingClaims,
+  getUnresolvedActionCount,
+  releaseBindingClaims,
+  releaseClaimsByOwner,
+  releaseExpiredWaiterClaims,
+} from "./actionsStore.js";
 import { getArtifact } from "./artifacts.js";
-import { broadcastGlobal, broadcastToSurface, hasWaiter } from "./sse.js";
+import { broadcastGlobal, broadcastToSurface, hasEligibleWaiter } from "./sse.js";
 import { OutboundBlockedError, safeHttpRequest } from "./outbound.js";
 import { maybeDispatchCodex, codexInFlight } from "./codexBridge.js";
 
@@ -95,11 +104,23 @@ export function tokenizeCommand(command: string): string[] {
   const argv: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
-  let escaped = false;
   let started = false;
-  for (const ch of command) {
-    if (escaped) { current += ch; escaped = false; continue; }
-    if (ch === "\\" && quote !== "'") { escaped = true; continue; }
+  const chars = [...command];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i];
+    // A backslash escapes only a quote or another backslash. Treating every
+    // backslash as an escape silently ate Windows paths — `node "C:\a\b.js"`
+    // tokenized to `C:ab.js` — which broke every binding registered with an
+    // absolute path on Windows, while still leaving `\"` and `\\` working.
+    if (ch === "\\" && quote !== "'") {
+      const next = chars[i + 1];
+      if (next === '"' || next === "'" || next === "\\") {
+        current += next;
+        started = true;
+        i++;
+        continue;
+      }
+    }
     if (quote) {
       if (ch === quote) quote = null;
       else current += ch;
@@ -169,10 +190,29 @@ export function requestBindingFollowup(surfaceId: string): boolean {
   return true;
 }
 
-export function dispatchAction(surfaceId: string, action: string): void {
-  // Layer 1 suppression: someone is live-waiting; they'll handle it.
-  if (hasWaiter(surfaceId)) return;
+// How long an eligible live waiter gets to claim an action before layer 2 is
+// allowed to try. Waiter presence used to suppress bindings *indefinitely*,
+// which meant a waiter whose harness had wedged — socket open, nobody reading —
+// silently disabled wake bindings forever. A bounded first refusal keeps layer 1
+// preferred without letting a dead-but-connected waiter black-hole the ladder.
+const WAITER_GRACE_MS = 5_000;
 
+// Deliver an action: give an eligible waiter first refusal, then fall back to
+// bindings. The timer only decides who gets to *try* — SQLite decides who wins,
+// so a waiter claiming at grace+1ms and a binding starting at grace both resolve
+// against the same CAS rather than against timer ordering.
+export function scheduleDelivery(surfaceId: string, action: string): void {
+  const artifact = getArtifact(getDb(), surfaceId);
+  if (!artifact) return;
+  const target = { surfaceId, projectRoot: artifact.project_root, action };
+  if (hasEligibleWaiter(target)) {
+    setTimeout(() => dispatchAction(surfaceId, action), WAITER_GRACE_MS).unref();
+    return;
+  }
+  dispatchAction(surfaceId, action);
+}
+
+export function dispatchAction(surfaceId: string, action: string): void {
   const db = getDb();
   const artifact = getArtifact(db, surfaceId);
   if (!artifact) return;
@@ -206,15 +246,110 @@ export function dispatchAction(surfaceId: string, action: string): void {
   maybeDispatchCodex(surfaceId, consent);
 }
 
+// Expand a binding's pattern into the action names it may claim. `undefined`
+// means "*" — every pending action on the surface.
+function claimableNames(bindings: BindingRow[]): string[] | undefined {
+  if (bindings.some((b) => b.action_pattern === "*" || b.action_pattern === "")) return undefined;
+  const names = new Set<string>();
+  for (const b of bindings) {
+    for (const name of b.action_pattern.split("|").map((p) => p.trim()).filter(Boolean)) names.add(name);
+  }
+  return [...names];
+}
+
+// A released row is deliverable again. Tell live waiters so they can re-poll
+// without waiting for a reconnect, and restart the ladder for it.
+function announceAvailable(rows: Array<{ id: string; surface_id: string; action: string }>): void {
+  for (const row of rows) {
+    broadcastGlobal("actions_available", { surface_id: row.surface_id, action_id: row.id });
+    broadcastGlobal("actions_acked", {
+      surface_id: row.surface_id,
+      pending_actions: getUnresolvedActionCount(getDb(), row.surface_id),
+    });
+  }
+}
+
+// A waiter's connection dropped: release whatever it claimed but never handed
+// over, and put those actions back through the ladder.
+export function releaseWaiterClaims(clientId: string): void {
+  try {
+    const released = releaseClaimsByOwner(getDb(), { ownerKind: "waiter", ownerId: clientId });
+    if (!released.length) return;
+    announceAvailable(released);
+    for (const row of released) scheduleDelivery(row.surface_id, row.action);
+  } catch (err: any) {
+    console.error(`[actions] releasing claims for client ${clientId} failed:`, err?.message || err);
+  }
+}
+
+// Backstop for a waiter that claimed and then wedged with its socket still open,
+// where no close event will ever arrive. Connection close normally gets there
+// first; this runs every 5s and only touches claims past their handoff deadline.
+const CLAIM_REAPER_MS = 5_000;
+let reaper: NodeJS.Timeout | null = null;
+
+export function startClaimReaper(): void {
+  if (reaper) return;
+  reaper = setInterval(() => {
+    try {
+      const released = releaseExpiredWaiterClaims(getDb());
+      if (!released.length) return;
+      console.log(`[actions] released ${released.length} expired delivery claim(s)`);
+      announceAvailable(released);
+      for (const row of released) scheduleDelivery(row.surface_id, row.action);
+    } catch (err: any) {
+      console.error("[actions] claim reaper failed:", err?.message || err);
+    }
+  }, CLAIM_REAPER_MS);
+  reaper.unref();
+}
+
+// Grace is per action, not per batch. One action's timer firing must not drag a
+// newer sibling into the batch: with two clicks four seconds apart, the first
+// timer would otherwise hand the binding an action that had only had one second
+// of its own five. An action is claimable when no waiter is eligible for it at
+// all, or when its own grace window has passed.
+function graceElapsed(
+  db: ReturnType<typeof getDb>,
+  surfaceId: string,
+  projectRoot: string | null,
+  names: string[] | undefined,
+): string[] {
+  const cutoff = Date.now() - WAITER_GRACE_MS;
+  return getPendingActions(db, surfaceId)
+    .filter((a) => !names || names.includes(a.action))
+    .filter((a) => {
+      if (!hasEligibleWaiter({ surfaceId, projectRoot, action: a.action })) return true;
+      // SQLite stamps `datetime('now')` as UTC without a zone marker.
+      const createdMs = Date.parse(`${a.created_at.replace(" ", "T")}Z`);
+      return !Number.isFinite(createdMs) || createdMs <= cutoff;
+    })
+    .map((a) => a.id);
+}
+
 async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<void> {
   inFlight.add(surfaceId);
+  // Identifies this run as the claimant, so a failed run releases exactly the
+  // actions it took and nothing else.
+  const bindingRunId = `binding:${uuidv4()}`;
+  let claims: BindingClaim[] = [];
   try {
     const db = getDb();
     const artifact = getArtifact(db, surfaceId);
     if (!artifact) return;
-    // The batch: every pending action for this surface, not just the trigger.
-    const pending = getPendingActions(db, surfaceId);
-    if (!pending.length) return;
+    // Claim the batch BEFORE spawning. A command binding may run for its full
+    // 600s timeout, and until this claim existed those rows stayed `pending` for
+    // the whole run — so a waiter connecting mid-run drained them too and the
+    // work happened twice. Only actions matching these bindings' own patterns
+    // are claimed; a click belonging to a different binding stays pending.
+    claims = claimActionsForBinding(db, {
+      surfaceId,
+      actionNames: claimableNames(bindings),
+      actionIds: graceElapsed(db, surfaceId, artifact.project_root, claimableNames(bindings)),
+      bindingRunId,
+    });
+    if (!claims.length) return;
+    const pending = claims.map((c) => c.action);
     const payload = {
       type: "surface_action_batch",
       surface_id: surfaceId,
@@ -233,10 +368,11 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
         ? await runCommandBinding(binding, artifact.project_root, payload)
         : await runWebhookBinding(binding, payload);
       if (ok) {
-        for (const a of pending) ackAction(db, a.id);
+        completeBindingClaims(db, claims);
+        claims = [];
         broadcastGlobal("actions_acked", {
           surface_id: surfaceId,
-          pending_actions: getPendingActions(db, surfaceId).length,
+          pending_actions: getUnresolvedActionCount(db, surfaceId),
         });
         break; // first successful binding handles the batch
       }
@@ -244,12 +380,19 @@ async function runBindings(surfaceId: string, bindings: BindingRow[]): Promise<v
   } catch (err: any) {
     console.error(`[bindings] dispatch failed for ${surfaceId}:`, err?.message || err);
   } finally {
+    // Every binding failed (or threw): the work did not happen, so the batch
+    // goes back on the queue for a waiter or the inbox rather than being
+    // silently consumed. Fenced on our own tokens — never release someone else's.
+    if (claims.length) {
+      const released = releaseBindingClaims(getDb(), claims);
+      announceAvailable(released);
+    }
     inFlight.delete(surfaceId);
     if (rerunRequested.delete(surfaceId)) {
       // Coalesced clicks from during the run: one follow-up pass.
       const db = getDb();
-      const stillPending = getPendingActions(db, surfaceId);
-      if (stillPending.length && !hasWaiter(surfaceId)) {
+      const stillPending: SurfaceAction[] = getPendingActions(db, surfaceId);
+      if (stillPending.length) {
         const again = listBindings(db, surfaceId).filter(
           (b) => b.enabled && stillPending.some((a) => patternMatches(b.action_pattern, a.action)),
         );

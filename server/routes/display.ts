@@ -5,11 +5,26 @@ import { getDisplayConfig, resetDisplayConfig, setDisplayConfig } from "../displ
 import { getArtifact, getArtifactFiles, getCurrentArtifactVersion, listArtifactCards, readArtifactFileContent } from "../artifacts.js";
 import { injectSurfaceRuntime, safeJsonForScript } from "../render.js";
 import type { Artifact } from "../artifacts.js";
-import { addGlobalClient, broadcastGlobal, hasWaiter } from "../sse.js";
+import type { WaiterRegistration, WaiterScope } from "../sse.js";
+import { addGlobalClient, broadcastGlobal, hasWaiter, sendToClient } from "../sse.js";
+import { releaseWaiterClaims } from "../bindings.js";
 import { listPresence, reportPresence } from "../presence.js";
 import { deviceNameOf, requireSystem, resolveDeviceTarget, targetOf } from "./helpers.js";
 
 export const displayRouter = Router();
+
+// Throttled so a reconnecting stale waiter cannot flood the log.
+let lastLegacyWaiterWarnAt = 0;
+function warnLegacyWaiter(): void {
+  const now = Date.now();
+  if (now - lastLegacyWaiterWarnAt < 60_000) return;
+  lastLegacyWaiterWarnAt = now;
+  console.warn(
+    "[delivery] a `surface wait` from before single-claimant delivery connected " +
+    "(legacy ?wait_for). It will consume actions without claiming them, so other " +
+    "waiters may see nothing. Upgrade that CLI (npm run build / reinstall surface-display).",
+  );
+}
 
 // ── Display slots (decided 2026-06: slots are artifacts) ──
 // The custom renderer, home widget, and overlay are ordinary artifacts whose
@@ -52,23 +67,117 @@ displayRouter.get("/display/slots", (_req, res) => {
 // Global SSE stream — connections are tagged with their delivery target so
 // directed events (--on <device>) reach only the intended screen.
 //
-// ?wait_for=<surface-id|*> registers the connection as a layer-1 waiter
-// (system plane only): while it lives, bindings for that surface are
-// suppressed and the card shows "agent listening".
+// ?wait_for=<surface-id|project:<root>|*> registers the connection as a layer-1
+// waiter (system plane only): while it lives, bindings it is eligible to claim
+// are suppressed and the card shows "agent listening". ?wait_action=<pattern>
+// narrows that eligibility to specific action names, so a waiter armed for one
+// action does not mute a binding registered for another.
+//
+// Only claiming consumers pass wait_for. Observers — the PWA, `surface stream`,
+// `wait --no-ack`, `wait --event <non-action>` — connect without it and are
+// invisible to the ladder, because a connection that will never take the work
+// must not stop something else from taking it.
 displayRouter.get("/stream", (req: Request, res: Response) => {
-  const waitFor = typeof req.query.wait_for === "string" && req.query.wait_for && req.auth?.role === "system"
-    ? req.query.wait_for
+  const q = req.query;
+  const asString = (v: unknown) => (typeof v === "string" && v ? v : null);
+  const forSurface = asString(q.wait_for_surface);
+  const forProject = asString(q.wait_for_project);
+  const forAll = q.wait_for_all === "1" || q.wait_for_all === "true";
+
+  // Legacy `?wait_for=<id|*>` still registers. It is a shipped contract — every
+  // deployed CLI and the codex layer's waiter-precedence check depend on it —
+  // and making it a silent no-op meant a waiter that looked connected was
+  // invisible to the ladder, so nothing suppressed anything. Such a client acks
+  // without a claim token, which the server cannot tell apart from a legitimate
+  // `surface ack`, so it registers but also warns.
+  const legacy = asString(q.wait_for);
+  if (legacy) warnLegacyWaiter();
+  const legacyScope: WaiterScope | null = !legacy
+    ? null
+    : legacy === "*"
+      ? { kind: "all", value: null }
+      : legacy.startsWith("project:")
+        ? { kind: "project", value: legacy.slice("project:".length) }
+        : { kind: "surface", value: legacy };
+
+  const supplied = [forSurface, forProject, forAll ? "all" : null].filter(Boolean);
+  if (supplied.length > 1) {
+    res.status(400).json({ error: "invalid_request", message: "supply exactly one wait_for_* scope" });
+    return;
+  }
+  if ((supplied.length === 1 || legacyScope) && req.auth?.role !== "system") {
+    // A paired display may click, but it may never register as a handler —
+    // taking work is an agent-plane capability (docs/auth/trust-model.md).
+    res.status(403).json({ error: "waiter_registration_requires_system" });
+    return;
+  }
+
+  const scope: WaiterScope | null = forSurface
+    ? { kind: "surface", value: forSurface }
+    : forProject
+      ? { kind: "project", value: forProject }
+      : forAll
+        ? { kind: "all", value: null }
+        : legacyScope;
+  const waiter: WaiterRegistration | null = scope
+    ? { scope, action: asString(q.wait_action) }
     : null;
-  addGlobalClient(res, targetOf(req), {
-    waiterFor: waitFor,
-    onClose: waitFor
-      ? () => broadcastGlobal("waiter_status", { surface_id: waitFor, listening: hasWaiter(waitFor) })
+
+  const clientId = addGlobalClient(res, targetOf(req), {
+    waiter,
+    onClose: waiter
+      ? (id) => {
+        // Anything this waiter claimed but never handed over goes straight back
+        // on the queue, rather than waiting out its delivery deadline.
+        releaseWaiterClaims(id);
+        announceWaiterScope(waiter.scope);
+      }
       : undefined,
   });
-  if (waitFor) {
-    broadcastGlobal("waiter_status", { surface_id: waitFor, listening: true });
+
+  if (waiter) {
+    // The waiter learns its server-assigned identity here and quotes it on every
+    // claim, which is how the server can verify that a claimant is a live
+    // registered waiter whose scope actually covers the action.
+    sendToClient(clientId, "waiter_registered", {
+      client_id: clientId,
+      scope: { kind: waiter.scope.kind, value: waiter.scope.value },
+      action: waiter.action,
+    });
+    announceWaiterScope(waiter.scope);
   }
 });
+
+// One waiter can now cover many cards (project scope) or all of them ("*"), but
+// the PWA's "● listening" pill is per card. Resolve the scope to the surfaces it
+// actually covers and report each one's current state, so the pill is driven by
+// the same predicate the ladder uses rather than by a scope string the client
+// would have to interpret.
+function announceWaiterScope(scope: WaiterScope): void {
+  const db = getDb();
+  type Row = { id: string; project_root: string | null };
+  let rows: Row[];
+  if (scope.kind === "project") {
+    rows = db
+      .prepare(`SELECT id, project_root FROM artifacts WHERE deleted_at IS NULL AND project_root = ?`)
+      .all(scope.value) as Row[];
+  } else if (scope.kind === "all") {
+    rows = db
+      .prepare(`SELECT id, project_root FROM artifacts WHERE deleted_at IS NULL`)
+      .all() as Row[];
+  } else {
+    const row = db
+      .prepare(`SELECT id, project_root FROM artifacts WHERE id = ? AND deleted_at IS NULL`)
+      .get(scope.value) as Row | undefined;
+    rows = row ? [row] : [{ id: scope.value, project_root: null }];
+  }
+  for (const row of rows) {
+    broadcastGlobal("waiter_status", {
+      surface_id: row.id,
+      listening: hasWaiter(row.id, undefined, row.project_root),
+    });
+  }
+}
 
 // Get display theme config
 displayRouter.get("/display/config", (_req, res) => {

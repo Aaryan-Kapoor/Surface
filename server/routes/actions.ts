@@ -1,11 +1,19 @@
 import { Router } from "express";
 import type { Request } from "express";
 import { getDb } from "../db.js";
-import { ackAction, createAction, getAction, getPendingActions } from "../actionsStore.js";
+import {
+  ackAction,
+  claimActionForWaiter,
+  completeClaim,
+  createAction,
+  getAction,
+  getPendingActions,
+  getUnresolvedActionCount,
+} from "../actionsStore.js";
 import { getArtifact } from "../artifacts.js";
 import { patchState } from "../state.js";
-import { broadcastGlobal, broadcastToSurface } from "../sse.js";
-import { createBinding, deleteBinding, dispatchAction, listBindings, projectAllowsBindings, setBindingEnabled } from "../bindings.js";
+import { broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
+import { createBinding, deleteBinding, listBindings, projectAllowsBindings, scheduleDelivery, setBindingEnabled } from "../bindings.js";
 import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
 
 export const actionsRouter = Router();
@@ -125,14 +133,18 @@ actionsRouter.post("/artifacts/:id/actions", (req, res) => {
     id: act.id,
     surface_id: req.params.id,
     surface_title: artifact.title,
+    // Project ownership rides on the event so a project-scoped waiter can filter
+    // live actions the same way it filters its inbox drain.
+    project_root: artifact.project_root,
     action: act.action,
     data: act.data,
+    status: act.status,
     created_at: act.created_at,
   });
 
-  // Delivery ladder layer 2: when no live waiter is connected, fire the
-  // surface's bindings (single-flight, coalesced; see server/bindings.ts).
-  dispatchAction(req.params.id, act.action);
+  // Run the ladder: an eligible live waiter gets a bounded first refusal, then
+  // bindings fire, then the action simply waits in the inbox (server/bindings.ts).
+  scheduleDelivery(req.params.id, act.action);
 
   res.status(201).json(act);
 });
@@ -202,9 +214,13 @@ actionsRouter.patch("/bindings/:id", (req, res) => {
 
 // Agent reads pending actions — the inbox belongs to the agent plane; a device
 // must never drain it.
+// ?project=<root> narrows the drain to one repo, so a waiter armed in project B
+// never claims project A's backlog. Actions on surfaces with no project_root are
+// excluded from a project-scoped read by design (see getPendingActions).
 actionsRouter.get("/actions", (req, res) => {
   if (!requireSystem(req, res)) return;
-  res.json(getPendingActions(getDb()));
+  const projectRoot = typeof req.query.project === "string" && req.query.project ? req.query.project : undefined;
+  res.json(getPendingActions(getDb(), undefined, { projectRoot }));
 });
 
 actionsRouter.get("/artifacts/:id/actions", (req, res) => {
@@ -212,22 +228,141 @@ actionsRouter.get("/artifacts/:id/actions", (req, res) => {
   res.json(getPendingActions(getDb(), req.params.id));
 });
 
-// Agent acknowledges an action
-actionsRouter.post("/actions/:id/ack", (req, res) => {
+// Take or settle an action.
+//
+// With a `claimant`, this is a CLAIM: an atomic take of a still-pending action,
+// which is how `surface wait` decides that it — and not one of the other waiters
+// that received the same broadcast — owns the work. Re-claiming with the same
+// claimant succeeds (`replay: true`), so a lost response can be retried without
+// stranding the action: without that, the retry would read as "someone else has
+// it", the true winner would stay silent, and the click would vanish.
+//
+// Without a `claimant`, this is the original ACK: "I handled this", which also
+// settles an action parked in `claimed` by a binding.
+//
+// 409 (not 404) when another handler already has it — an action that exists but
+// is taken is a different thing from an id that was never real, and the waiter
+// has to tell them apart to know whether to stay silent.
+// Phase 1 of the delivery handshake: one waiter takes exclusive permission to
+// hand this action to its consumer. Every waiter on the machine received the
+// same broadcast; this is where the database decides which one owns it.
+//
+// The claim is a short delivery lease (30s), not a work lease — it covers the
+// claim response, the stdout flush, and the completing ack, nothing more. If the
+// CLI wedges or its connection dies, the action returns to the queue instead of
+// being silently consumed.
+actionsRouter.post("/actions/:id/claim", (req, res) => {
   if (!requireSystem(req, res)) return;
-  const row = getAction(getDb(), req.params.id);
-  const acked = ackAction(getDb(), req.params.id);
-  if (!acked) {
-    res.status(404).json({ error: "Action not found" });
+  const db = getDb();
+  const token = typeof req.body?.token === "string" ? req.body.token.slice(0, 200) : "";
+  const clientId = typeof req.body?.client_id === "string" ? req.body.client_id.slice(0, 200) : "";
+  if (!token || !clientId) {
+    res.status(400).json({ error: "invalid_request", message: "token and client_id are required" });
     return;
   }
-  if (row) {
-    broadcastGlobal("actions_acked", {
-      surface_id: row.surface_id,
-      pending_actions: getPendingActions(getDb(), row.surface_id).length,
-    });
+
+  const action = getAction(db, req.params.id);
+  if (!action) {
+    res.status(404).json({ error: "action_not_found" });
+    return;
   }
-  res.json({ acknowledged: true });
+  if (!getLiveWaiter(clientId)) {
+    res.status(409).json({ error: "waiter_not_live" });
+    return;
+  }
+  const artifact = getArtifact(db, action.surface_id);
+  // Scope is enforced here, not in the CLI: a waiter must not be able to take
+  // work outside the scope it registered just by asking for it by id.
+  if (!isWaiterEligible(clientId, {
+    surfaceId: action.surface_id,
+    projectRoot: artifact?.project_root ?? null,
+    action: action.action,
+  })) {
+    res.status(403).json({ error: "waiter_not_eligible" });
+    return;
+  }
+
+  const result = claimActionForWaiter(db, { actionId: req.params.id, token, clientId });
+  if (!result.ok) {
+    const status = result.reason === "action_not_found" ? 404 : 409;
+    res.status(status).json({
+      error: result.reason,
+      status: result.action?.status,
+      claimed_at: result.action?.claimed_at,
+      deadline_at: result.action?.claim_deadline_at,
+      handled_at: result.action?.handled_at,
+    });
+    return;
+  }
+
+  broadcastGlobal("actions_acked", {
+    surface_id: result.action.surface_id,
+    pending_actions: getUnresolvedActionCount(db, result.action.surface_id),
+  });
+  res.json({
+    claimed: true,
+    replayed: result.replayed,
+    claim: {
+      token,
+      owner_kind: "waiter",
+      owner_id: clientId,
+      claimed_at: result.action.claimed_at,
+      deadline_at: result.action.claim_deadline_at,
+    },
+    action: {
+      id: result.action.id,
+      surface_id: result.action.surface_id,
+      surface_title: artifact?.title ?? null,
+      project_root: artifact?.project_root ?? null,
+      action: result.action.action,
+      data: result.action.data,
+      status: result.action.status,
+      created_at: result.action.created_at,
+    },
+  });
+});
+
+// Phase 2: the handoff completed. With a `token` this closes a specific delivery
+// claim (idempotent for that token, so a retry after a lost response is safe).
+// Without one it is the original manual `surface ack <id>` — an agent declaring a
+// click done, including one a binding parked in `claimed`.
+//
+// 409 rather than 404 when the action exists but is no longer the caller's: an
+// action that is taken is a different thing from an id that was never real, and
+// the waiter must tell them apart to know whether to stay silent.
+actionsRouter.post("/actions/:id/ack", (req, res) => {
+  if (!requireSystem(req, res)) return;
+  const db = getDb();
+  const token = typeof req.body?.token === "string" && req.body.token ? req.body.token : null;
+
+  const row = getAction(db, req.params.id);
+  if (!row) {
+    res.status(404).json({ error: "action_not_found" });
+    return;
+  }
+
+  let replayed = false;
+  if (token) {
+    const result = completeClaim(db, { actionId: req.params.id, token });
+    if (!result.ok) {
+      res.status(409).json({
+        error: "claim_lost",
+        status: result.action?.status,
+        handled_at: result.action?.handled_at,
+      });
+      return;
+    }
+    replayed = result.replayed;
+  } else if (!ackAction(db, req.params.id)) {
+    res.status(409).json({ error: "already_handled", handled_at: row.handled_at });
+    return;
+  }
+
+  broadcastGlobal("actions_acked", {
+    surface_id: row.surface_id,
+    pending_actions: getUnresolvedActionCount(db, row.surface_id),
+  });
+  res.json({ acknowledged: true, replayed });
 });
 
 // Agent replies to a surface (shown as toast in the PWA)

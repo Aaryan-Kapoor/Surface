@@ -114,11 +114,19 @@ See [../interaction/actions-inbox.md](../interaction/actions-inbox.md).
 
 ```bash
 surface stream [--id <surface-id>] [--timeout <seconds>]  # tail SSE as JSONL until interrupted
-surface wait [--id <id>] [--action <name>] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow] [--heartbeat <seconds>]
+surface wait [--id <id>] [--action <name>] [--project <root> | --all] [--event <name>] [--timeout <seconds>] [--no-ack] [--follow] [--heartbeat <seconds>]
 ```
 
-- `stream` connects to `/stream` (or `/artifacts/:id/stream`) and writes one `{event,data}` JSON line per SSE event. `--timeout` is a lifetime cap; orphaned followers exit when their parent process is gone.
-- `wait` blocks until a matching event, prints the action, and exits `0`. Defaults to `--event surface_action`; filters by `--id`/`--action`; first drains the pending-actions endpoint (oldest first), then listens on the **global** stream (per-surface streams don't carry `surface_action`), re-polling after connect and reconnect. The connection registers as a layer-1 **waiter** (`/stream?wait_for=<id|*>`), which suppresses bindings while it lives. Matching actions are auto-acked unless `--no-ack`. `--follow` prints one compact JSON line per action until interrupted or `--timeout`; `--heartbeat` writes waiting pings to stderr for harnesses with silence timers. See [../interaction/delivery-ladder.md](../interaction/delivery-ladder.md).
+- `stream` connects to `/stream` (or `/artifacts/:id/stream`) and writes one `{event,data}` JSON line per SSE event. `--timeout` is a lifetime cap; orphaned followers exit when their parent process is gone. `stream` is a pure observer: it never registers as a waiter and never claims.
+- `wait` blocks until a matching event, prints the action, and exits `0`. Defaults to `--event surface_action`; filters by `--id`/`--action`; drains the pending-actions endpoint (oldest first) once registered, then listens on the **global** stream (per-surface streams don't carry `surface_action`), re-polling after connect and reconnect.
+
+**Scope (changed).** A bare `wait` now consumes only the **current project's** actions — the git root it was run in. It previously consumed every action on the machine, so one click woke every agent session on the box. Use `--all` for the old behaviour, `--project <root>` for another repo, `--id <surface>` for one card. Actions on surfaces with no project (e.g. the global `board`) reach only `--id` or `--all` waiters.
+
+**Exclusivity.** The `surface_action` event still reaches every listener, but a claiming waiter must take the action before printing it, and exactly one claim wins ([../interaction/delivery-ladder.md](../interaction/delivery-ladder.md)). Two terminals watching the same surface therefore split the work instead of duplicating it.
+
+**Observers.** `--no-ack`, or `--event <anything-but-surface_action>`, makes `wait` an observer: it prints everything, claims nothing, and does not register as a waiter — so it never delays a binding for work it will not do.
+
+`--follow` prints one compact JSON line per action until interrupted or `--timeout`; `--heartbeat` writes waiting pings to stderr for harnesses with silence timers.
 
 ## Bindings (delivery-ladder layer 2)
 

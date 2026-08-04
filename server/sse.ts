@@ -6,14 +6,30 @@ import type { Response } from "express";
 // untargeted broadcasts reach everyone.
 export const LOCAL_TARGET = "local";
 
-type SSEClient = {
+// Layer-1 waiter presence (docs/interaction/delivery-ladder.md). A `surface wait`
+// connection registers what it is eligible to claim, and only a claiming consumer
+// registers at all — observers (`surface stream`, the PWA, `wait --no-ack`,
+// `wait --event <non-action>`) must never suppress a binding they will not handle.
+//
+// Eligibility is (scope × action pattern). Registering the pattern matters: a
+// waiter armed as `--id deploy --action approve` used to suppress the `reject`
+// binding on the same surface even though it would never consume a reject.
+export type WaiterScope =
+  | { kind: "surface"; value: string }
+  | { kind: "project"; value: string }
+  | { kind: "all"; value: null };
+
+export interface WaiterRegistration {
+  scope: WaiterScope;
+  // A single action name the waiter will take, or null for any action.
+  action: string | null;
+}
+
+export type SSEClient = {
   id: string;
   res: Response;
   target: string;
-  // Layer-1 waiter presence (docs/interaction/delivery-ladder.md): a `surface
-  // wait` connection registers which surface it is waiting on ("*" = any).
-  // While one is connected, bindings for that surface are suppressed.
-  waiterFor?: string | null;
+  waiter?: WaiterRegistration | null;
 };
 
 const globalClients: SSEClient[] = [];
@@ -68,7 +84,7 @@ setInterval(() => {
 export function addGlobalClient(
   res: Response,
   target: string = LOCAL_TARGET,
-  opts: { waiterFor?: string | null; onClose?: () => void } = {},
+  opts: { waiter?: WaiterRegistration | null; onClose?: (clientId: string) => void } = {},
 ): string {
   const id = String(++clientCounter);
   res.writeHead(200, {
@@ -77,18 +93,68 @@ export function addGlobalClient(
     Connection: "keep-alive",
   });
   res.on("error", () => removeGlobalClient(id));
-  globalClients.push({ id, res, target, waiterFor: opts.waiterFor ?? null });
+  globalClients.push({ id, res, target, waiter: opts.waiter ?? null });
   safeWrite(globalClients[globalClients.length - 1], ":\n\n", () => removeGlobalClient(id)); // heartbeat
   res.on("close", () => {
     removeGlobalClient(id);
-    opts.onClose?.();
+    opts.onClose?.(id);
   });
   return id;
 }
 
-// A live waiter for this surface (or a catch-all waiter) suppresses bindings.
-export function hasWaiter(surfaceId: string): boolean {
-  return globalClients.some((c) => c.waiterFor === surfaceId || c.waiterFor === "*");
+function waiterCovers(
+  waiter: WaiterRegistration,
+  target: { surfaceId: string; projectRoot: string | null; action?: string },
+): boolean {
+  const { scope } = waiter;
+  const scopeMatches =
+    scope.kind === "all" ||
+    (scope.kind === "surface" && scope.value === target.surfaceId) ||
+    // Exact project match only, and never for an unowned surface: a
+    // project-scoped waiter must not absorb actions that belong to no repo.
+    (scope.kind === "project" && target.projectRoot != null && scope.value === target.projectRoot);
+  if (!scopeMatches) return false;
+  // A waiter that registered an action predicate is only eligible for that
+  // action — otherwise `wait --id deploy --action approve` would go on muting
+  // the `reject` binding it is never going to handle.
+  if (waiter.action && target.action !== undefined && waiter.action !== target.action) return false;
+  return true;
+}
+
+export function getLiveWaiter(clientId: string): SSEClient | undefined {
+  const client = globalClients.find((c) => c.id === clientId);
+  return client && client.waiter ? client : undefined;
+}
+
+// May this specific waiter claim this specific action? Checked server-side on
+// every claim so a waiter cannot take work outside the scope it registered.
+export function isWaiterEligible(
+  clientId: string,
+  target: { surfaceId: string; projectRoot: string | null; action: string },
+): boolean {
+  const client = getLiveWaiter(clientId);
+  return !!client && waiterCovers(client.waiter!, target);
+}
+
+// Is ANY live waiter eligible to claim this action? Decides whether layer 2
+// waits out the waiter-first grace period before firing.
+export function hasEligibleWaiter(target: {
+  surfaceId: string;
+  projectRoot: string | null;
+  action?: string;
+}): boolean {
+  return globalClients.some((c) => c.waiter && waiterCovers(c.waiter, target));
+}
+
+// Back-compat shape for the card's "listening" pill: could any waiter take
+// anything on this surface.
+export function hasWaiter(surfaceId: string, action?: string, projectRoot?: string | null): boolean {
+  return hasEligibleWaiter({ surfaceId, projectRoot: projectRoot ?? null, action });
+}
+
+export function sendToClient(clientId: string, event: string, data: unknown): void {
+  const client = globalClients.find((c) => c.id === clientId);
+  if (client) sendEvent(client, event, data, () => removeGlobalClient(client.id));
 }
 
 export function addSurfaceClient(surfaceId: string, res: Response, target: string = LOCAL_TARGET): string {

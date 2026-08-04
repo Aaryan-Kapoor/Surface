@@ -82,9 +82,10 @@ See [../auth/device-pairing.md](../auth/device-pairing.md) and [../auth/trust-mo
 | Method | Path | Body | Response | Notes |
 | --- | --- | --- | --- | --- |
 | POST | `/artifacts/:id/actions` | `{action, data?}` | action row (201) | user→agent; broadcasts `surface_action`, fans out webhook, runs the [delivery ladder](../interaction/delivery-ladder.md); `ask` answers flip state server-side |
-| GET | `/actions` | — | pending actions (all) | **system** — the inbox belongs to the agent plane |
-| GET | `/artifacts/:id/actions` | — | pending actions (one surface) | **system** |
-| POST | `/actions/:id/ack` | — | `{acknowledged:true}` | **system**; broadcasts `actions_acked` with the new pending count |
+| GET | `/actions` | `?project=<root>` | pending actions | **system** — the inbox belongs to the agent plane. `?project` narrows to one repo; actions on surfaces with no `project_root` are excluded from a project-scoped read |
+| GET | `/artifacts/:id/actions` | — | pending actions (one surface) | **system**. Only `pending` rows: a `claimed` action belongs to a handler that is mid-handoff or mid-run |
+| POST | `/actions/:id/claim` | `{token, client_id}` | `{claimed, replayed, claim, action}` | **system**; atomic take for one waiter. `400` invalid, `403` `waiter_not_eligible`, `404` `action_not_found`, `409` `waiter_not_live` / `already_claimed` / `already_handled` / `claim_expired` / `token_in_use` (a token is one action's attempt; reusing one is refused, not retried). Re-claiming with the same `token` replays (`replayed:true`) rather than conflicting, so a lost response cannot strand the action |
+| POST | `/actions/:id/ack` | `{token?}` | `{acknowledged:true, replayed}` | **system**; with `token` completes that delivery claim, without one it is the manual "I handled this" (and settles a binding's `claimed` row). `409` when the action exists but is no longer the caller's. Broadcasts `actions_acked` |
 | POST | `/artifacts/:id/bindings` | `{action_pattern?, run?\|webhook_url?, cwd?, timeout_seconds?}` | binding (201) | **system** |
 | GET | `/artifacts/:id/bindings` | — | bindings for one surface | **system** |
 | GET | `/bindings` | — | all bindings | **system** |
@@ -115,7 +116,7 @@ See [../display/theming.md](../display/theming.md) and [../display/devices.md](.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/stream` | global event stream; connections are tagged with their device target; `?wait_for=<surface-id\|*>` registers a layer-1 waiter (system only) |
+| GET | `/stream` | global event stream; connections are tagged with their device target. `?wait_for_surface=<id>` / `?wait_for_project=<root>` / `?wait_for_all=1` (exactly one, **system** only) registers a layer-1 waiter and replies with a private `waiter_registered` event carrying the `client_id` needed to claim; `?wait_action=<name>` narrows eligibility. `?wait_for=<surface-id\|project:<root>\|*>` is the deprecated pre-claim form: it still registers (deployed CLIs depend on it) but such a client acks without a claim token, so the server logs a one-per-minute upgrade warning. Omit `wait_for_*` entirely to connect as an observer |
 | GET | `/artifacts/:id/stream` | per-surface stream (404 if the artifact doesn't exist) |
 
 Full event catalog: [events.md](events.md).
