@@ -4,7 +4,7 @@ import { spawn, spawnSync, ChildProcess } from "child_process";
 import { getDataDir } from "./paths.js";
 import { broadcastGlobal } from "./sse.js";
 import { getDb } from "./db.js";
-import { artifactAuthorPlane, assertSafeArtifactId, getArtifact } from "./artifacts.js";
+import { artifactAuthorPlane, assertSafeArtifactId, getArtifact, imageThumbPassthrough } from "./artifacts.js";
 
 const THUMB_WIDTH = 600;
 const THUMB_HEIGHT = 600;
@@ -114,6 +114,12 @@ let launchBlockedUntil = 0;
 export function enqueueThumb(id: string) {
   if (!serverPort) return;
   if (queue.some((j) => j.id === id)) return;
+  // An image surface serves itself as its own thumbnail (the thumb route
+  // prefers the bytes over a capture), so screenshotting it is wasted browser
+  // time — and a worse picture besides.
+  try {
+    if (imageThumbPassthrough(getDb(), id)) return;
+  } catch {}
   queue.push({ id });
   setImmediate(drain);
 }

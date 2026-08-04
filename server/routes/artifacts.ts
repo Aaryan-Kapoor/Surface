@@ -13,6 +13,7 @@ import {
   getArtifactFile,
   getCurrentArtifactVersion,
   artifactAuthorPlane,
+  imageThumbPassthrough,
   inferMime,
   isLinkedArtifact,
   linkArtifact,
@@ -55,7 +56,7 @@ export const artifactsRouter = Router();
 // capture, or an image artifact it can pass through. False means the route
 // would fall back to the generated placeholder.
 export function hasRealThumb(id: string, mime: string | null | undefined): boolean {
-  if (mime && mime.startsWith("image/")) return true;
+  if (mime && mime.startsWith("image/") && imageThumbPassthrough(getDb(), id)) return true;
   try { return hasThumb(id); } catch { return false; }
 }
 
@@ -645,6 +646,16 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
     return;
   }
 
+  // An image surface is served as itself, ahead of any capture — a screenshot
+  // of the viewer is a crop of the picture, and the card crops it again.
+  const passthrough = imageThumbPassthrough(getDb(), req.params.id);
+  if (passthrough) {
+    try {
+      sendArtifactFile(res, passthrough, req.params.id);
+      return;
+    } catch {}
+  }
+
   if (hasThumb(req.params.id)) {
     try {
       if (versioned) res.setHeader("Cache-Control", immutableCache);
@@ -652,19 +663,6 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
       res.sendFile(getThumbPath(req.params.id));
       return;
     } catch {}
-  }
-
-  if (mime.startsWith("image/")) {
-    const preferred =
-      result.files.find((f) => f.path === "index.html") ||
-      result.files.find((f) => f.mime === mime) ||
-      result.files[0];
-    if (preferred) {
-      try {
-        sendArtifactFile(res, preferred, req.params.id);
-        return;
-      } catch {}
-    }
   }
 
   enqueueThumb(req.params.id);

@@ -439,6 +439,10 @@ async function main() {
   });
   const imgCard = (await api("GET", "/artifacts")).find((c: any) => c.id === imgId);
   assert(imgCard && imgCard.has_thumb === true, "image artifacts must report has_thumb");
+  const imgThumb = await req()("GET", `/artifacts/${imgId}/thumb`);
+  const imgType = imgThumb.headers.get("content-type") || "";
+  assert(imgType.includes("image/svg+xml"), `image thumb should pass the bytes through, got ${imgType}`);
+  assert(String(imgThumb.body).includes("<svg"), "image thumb must be the artifact's own file");
 
   await optionalDelete(`/artifacts/${thumbId}`);
   await optionalDelete(`/artifacts/${imgId}`);

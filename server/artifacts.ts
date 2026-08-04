@@ -346,6 +346,32 @@ export function readArtifact(db: Database.Database, id: string) {
   return { artifact, version, files };
 }
 
+// An image surface is its own best thumbnail. Screenshotting the viewer instead
+// centre-crops the picture into a 600x600 square, which the card then crops
+// again to 16:10 — two crops deep, a chart comes out as a zoomed fragment.
+// Above this size the bytes are too heavy for a grid, so those fall back to a
+// capture.
+export const IMAGE_PASSTHROUGH_MAX_BYTES = 4 * 1024 * 1024;
+
+// The file to serve as-is for an image artifact's thumbnail, or undefined when
+// there isn't one (not an image, or too big to put in a grid).
+export function imageThumbPassthrough(
+  db: Database.Database,
+  id: string,
+): ArtifactFile | undefined {
+  const result = readArtifact(db, id);
+  if (!result || !result.version) return undefined;
+  const mime = result.artifact.mime || "";
+  if (!mime.startsWith("image/")) return undefined;
+  const file =
+    result.files.find((f) => f.mime === mime) ||
+    result.files.find((f) => (f.mime || "").startsWith("image/")) ||
+    result.files[0];
+  if (!file) return undefined;
+  if (file.size_bytes > IMAGE_PASSTHROUGH_MAX_BYTES) return undefined;
+  return file;
+}
+
 export function createArtifact(
   db: Database.Database,
   params: {
