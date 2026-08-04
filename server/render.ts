@@ -315,8 +315,15 @@ function hueForSeed(seed: string): number {
 // chip: a tinted field keyed to the surface, the title set large enough to read
 // at card size, and the kind as a quiet caption.
 export function renderThumbPlaceholder(params: { id?: string; title: string; mime: string }): string {
+  // This SVG is served as `image/svg+xml`, which a browser renders as a
+  // *document* — so escaping the title is a trust boundary, not cosmetics
+  // (escapeHtml covers & < > " ', i.e. both text nodes and quoted attributes).
+  // Control characters are stripped rather than escaped: XML 1.0 forbids most
+  // of C0 outright, and one in a title would turn the whole cover into a parse
+  // error — a blank card instead of a picture.
+  const title = xmlSafeText(params.title);
   const label = escapeHtml(thumbLabelForMime(params.mime));
-  const lines = wrapForThumb(params.title, 16).map(escapeHtml);
+  const lines = wrapForThumb(title, 16).map(escapeHtml);
   const hue = hueForSeed(params.id || params.title || "surface");
   const top = `hsl(${hue}, 52%, 33%)`;
   const bottom = `hsl(${(hue + 40) % 360}, 44%, 14%)`;
@@ -332,7 +339,7 @@ export function renderThumbPlaceholder(params: { id?: string; title: string; mim
   // document would otherwise share the first one's `id="field"`, and every card
   // after the first would wear the first card's colour.
   const ns = `t${hue}`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600" role="img" aria-label="${escapeHtml(params.title)}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600" role="img" aria-label="${escapeHtml(title)}">
     <defs>
       <linearGradient id="${ns}-field" x1="0" y1="0" x2="0.5" y2="1">
         <stop offset="0%" stop-color="${top}"/>
@@ -369,6 +376,14 @@ export function injectSurfaceRuntime(html: Buffer, artifactId: string): Buffer {
     ? `${text}\n${tag}\n`
     : `${text.slice(0, idx)}${tag}\n${text.slice(idx)}`;
   return Buffer.from(out, "utf8");
+}
+
+// XML 1.0 permits only tab, newline and carriage return out of the C0 range,
+// and no C1 controls at all. Anything else in a title makes an SVG the browser
+// refuses to parse, so drop it before escaping.
+function xmlSafeText(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return String(value ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "");
 }
 
 export function escapeHtml(value: string): string {

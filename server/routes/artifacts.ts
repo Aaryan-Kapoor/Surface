@@ -28,7 +28,7 @@ import {
   updateArtifact,
 } from "../artifacts.js";
 import { addSurfaceClient, broadcastGlobal, broadcastToSurface, hasWaiter } from "../sse.js";
-import { enqueueThumb, hasThumb, getThumbPath } from "../thumbs.js";
+import { enqueueThumb, hasAnyThumb, removeThumbs, resolveThumbFile, thumbGenerationFor } from "../thumbs.js";
 import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
 import { getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
@@ -52,12 +52,27 @@ function canMutateArtifact(req: Request, res: Response, existing: { metadata: st
 
 export const artifactsRouter = Router();
 
+// `updated_at` is SQLite `datetime('now')`: UTC, one-second resolution. A key
+// is only safe to cache forever once its second has closed — a second update
+// inside the same second would reuse the string.
+const VERSION_KEY_SETTLE_MS = 2000;
+function versionKeySettled(updatedAt: string | null | undefined): boolean {
+  if (!updatedAt) return false;
+  const ms = Date.parse(`${updatedAt.replace(" ", "T")}Z`);
+  if (!Number.isFinite(ms)) return false;
+  return Date.now() - ms >= VERSION_KEY_SETTLE_MS;
+}
+
 // True when GET /artifacts/:id/thumb has a real picture to serve — a cached
 // capture, or an image artifact it can pass through. False means the route
 // would fall back to the generated placeholder.
 export function hasRealThumb(id: string, mime: string | null | undefined): boolean {
   if (mime && mime.startsWith("image/") && imageThumbPassthrough(getDb(), id)) return true;
-  try { return hasThumb(id); } catch { return false; }
+  // Any generation counts: an older capture is still a real picture, and the
+  // route serves it (short-cached) while the fresh one is taken. Saying `false`
+  // here would make the card paint its own cover and never call the route at
+  // all — see the `has_thumb` note in docs/core/thumbnails.md.
+  try { return hasAnyThumb(id); } catch { return false; }
 }
 
 // Full card payload for SSE listeners. Includes hidden rows so clients can see
@@ -473,7 +488,7 @@ artifactsRouter.delete("/artifacts/:id", (req, res) => {
     res.status(404).json({ error: "Artifact not found" });
     return;
   }
-  try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+  removeThumbs(req.params.id);
   broadcastGlobal("surface_deleted", { id: req.params.id });
   res.json({ deleted: true });
 });
@@ -623,18 +638,13 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
     return;
   }
   const mime = result.artifact.mime || "";
-  // The dashboard requests ?v=<updated_at>, so a cached capture for a given
-  // version can never go stale: cache it hard and let the version key do the
-  // invalidating. Unversioned requests (and placeholders, which are replaced
-  // the moment a capture lands) stay on a short revalidating window.
-  const versioned = typeof req.query.v === "string" && req.query.v.length > 0;
   const immutableCache = "public, max-age=31536000, immutable";
   const shortCache = "public, max-age=30, stale-while-revalidate=300";
   res.setHeader("Cache-Control", shortCache);
 
   if (req.query.regenerate === "1") {
     if (!requireSystem(req, res)) return; // re-renders artifact content in headless Chrome
-    try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+    removeThumbs(req.params.id);
     enqueueThumb(req.params.id);
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
@@ -656,13 +666,41 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
     } catch {}
   }
 
-  if (hasThumb(req.params.id)) {
-    try {
-      if (versioned) res.setHeader("Cache-Control", immutableCache);
-      res.setHeader("Content-Type", "image/png");
-      res.sendFile(getThumbPath(req.params.id));
-      return;
-    } catch {}
+  // `immutable` is a promise that this exact URL will always mean these exact
+  // bytes, for a year. Three things must hold before we are allowed to make it:
+  //
+  //  1. the request's `v` is the artifact's current revision key. The PWA sends
+  //     `?v=<updated_at>`; anything else (e.g. the `?v=<epoch>` one-shot after a
+  //     `thumb_ready`) is a cache-buster, not a revision.
+  //  2. the capture on disk is of *that* revision — the generation baked into
+  //     the filename, not merely "some file for this id exists". Right after an
+  //     update the previous revision's PNG is still there, and pinning it under
+  //     the new key was the year-long staleness bug.
+  //  3. the revision key can no longer be reused. `updated_at` has one-second
+  //     resolution, so two updates inside the same second share a key; until
+  //     that second has closed we could pin revision A's picture under a key
+  //     revision B is about to claim.
+  //
+  // Anything short of all three gets the short revalidating window — which is
+  // also how an older capture keeps the card looking alive while the fresh one
+  // is being taken.
+  const requestedVersion = typeof req.query.v === "string" ? req.query.v : "";
+  const generation = thumbGenerationFor(result.artifact);
+  const cached = resolveThumbFile(req.params.id, generation);
+  if (cached) {
+    if (
+      cached.exact &&
+      requestedVersion &&
+      requestedVersion === result.artifact.updated_at &&
+      versionKeySettled(result.artifact.updated_at)
+    ) {
+      res.setHeader("Cache-Control", immutableCache);
+    }
+    res.setHeader("Content-Type", "image/png");
+    res.sendFile(cached.path);
+    // A capture of an older revision is a stand-in: ask for the current one.
+    if (!cached.exact) enqueueThumb(req.params.id);
+    return;
   }
 
   enqueueThumb(req.params.id);

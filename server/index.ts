@@ -15,7 +15,7 @@ import {
   resolveConnectionString,
   resolveListeningPort,
 } from "./startupAccess.js";
-import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
+import { setThumbServerPort, enqueueThumb, needsThumbCapture, findChromeBin, shutdownThumbnails } from "./thumbs.js";
 import { closeSSEClients } from "./sse.js";
 import { closeCodexBridge } from "./codexBridge.js";
 import { setupFileLogging } from "./logging.js";
@@ -344,7 +344,7 @@ const httpServer = app.listen(PORT, BIND, () => {
     const cards = listArtifactCards(getDb(), { includeHidden: true });
     let queued = 0;
     for (const card of cards) {
-      if (!hasThumb(card.id)) {
+      if (needsThumbCapture(card.id)) {
         enqueueThumb(card.id);
         queued++;
       }
@@ -376,6 +376,14 @@ contentServer.on("error", (err: any) => {
   process.exit(1);
 });
 
+// This process owns SIGINT and SIGTERM, and nothing else may. The thumbnailer
+// used to install its own handlers the moment Chrome launched; both listeners
+// fired, and the thumbs one called process.exit(130/143) while this sequence
+// was still mid-flight — before the async HTTP close callback and closeDb()
+// had run. Every ordinary restart with a warm Chrome became an abrupt,
+// failure-coded shutdown with a possibly unclean database close. Chrome is now
+// reaped from inside this sequence instead (shutdownThumbnails, which is
+// idempotent and self-bounding).
 let shuttingDown = false;
 function shutdown(signal: string) {
   if (shuttingDown) return;
@@ -385,8 +393,9 @@ function shutdown(signal: string) {
   closeCodexBridge();
   stopUpdateWatchers();
   contentServer.close(() => {});
-  httpServer.close(() => {
-    closeDb();
+  const httpClosed = new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  Promise.allSettled([httpClosed, shutdownThumbnails()]).then(() => {
+    try { closeDb(); } catch {}
     process.exit(0);
   });
   setTimeout(() => {
