@@ -1842,6 +1842,13 @@ iframe.surface-frame.is-loaded { opacity: 1; }
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    /* Delays too, not just durations. The grid's entrance is staggered with
+       `animation-delay`, and a `both` fill holds each card at opacity 0 until
+       its turn — so zeroing only the duration left a reduced-motion user
+       watching twelve cards pop in one at a time over half a second, which is
+       the part of the effect that reads as motion in the first place. */
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
     scroll-behavior: auto !important;
   }
   .surface-card:hover .card-preview { transform: none; }

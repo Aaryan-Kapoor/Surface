@@ -709,6 +709,24 @@ try {
     );
   });
 
+  // Zeroing durations is not enough. The grid staggers its entrance with
+  // `animation-delay` and a `both` fill, so a card sits at opacity 0 until its
+  // delay elapses no matter how short the animation is — twelve cards popping
+  // in over half a second, for a user who asked for no motion.
+  check("reduced motion zeroes delays, not just durations", () => {
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const at = css.indexOf("@media (prefers-reduced-motion: reduce)");
+    assert.ok(at !== -1, "no reduced-motion block");
+    const block = css.slice(at, css.indexOf("\n}", css.indexOf("*, *::before, *::after", at)));
+    for (const prop of ["animation-duration", "animation-delay", "transition-duration", "transition-delay"]) {
+      assert.match(
+        block,
+        new RegExp(`${prop}:\\s*[^;]+!important`),
+        `reduced motion must override ${prop}`,
+      );
+    }
+  });
+
   check("the stylesheet uses no deprecated declaration keywords", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
     // `word-break: break-word` is deprecated (and was never in any spec as
