@@ -91,11 +91,18 @@ decision, not an oversight — see
 
 **The apply.** `POST /api/update/apply` (system plane only) starts exactly one
 thing: `surface upgrade --json --name <this service> --progress-file
-<data-dir>/update-state.json`, detached, with a fixed argv and no shell. There
-is no second upgrade path — the converger updates the package, refreshes the
-skill copies and links, and restarts the service through the supervisor,
-health-gated, exactly as it does from a terminal. No daemon is introduced and
-nothing runs unsupervised.
+<data-dir>/update-state.json --run-id <id>`, detached, with a fixed argv and no
+shell. There is no second upgrade path — the converger updates the package,
+refreshes the skill copies and links, and restarts the service through the
+supervisor, health-gated, exactly as it does from a terminal. No daemon is
+introduced and nothing runs unsupervised.
+
+**Exactly one run.** The progress file is *claimed* before the child is
+spawned — an exclusive create carrying a freshly minted `run_id` — because a
+detached node process needs a moment to write its own first record, and a
+second POST arriving inside that window used to see no run at all and start a
+second global npm install. While a run this process started is live, a
+momentarily absent (or foreign) progress file can no longer clear it.
 
 Because the converger restarts the service, it kills its own process on
 systemd (the child lives in the unit's cgroup). That is expected and designed
@@ -106,7 +113,16 @@ now running — landing on `done` if the new version is live, or `failed`
 stops reporting for ten minutes is reported failed rather than spinning
 forever. Failures are never reported optimistically: a broken npm install
 (a dependency with no prebuilds, a registry 500) ends the run as `failed` with
-npm's exit status, and the package on disk is untouched.
+npm's exit status, and the package on disk is untouched. Nor is a zero exit
+taken at face value — the installed version is re-read from disk afterwards,
+and an npm that "succeeded" while leaving the old package in place is a
+`failed` run, not a `done` one.
+
+**Registry credentials.** `SURFACE_NPM_REGISTRY` may carry a token. Every URL
+is stripped of userinfo, query and fragment before it can reach an error
+string, because those strings are stored in `check_error` / the progress file
+and served by a device-readable endpoint; on top of that, devices are given a
+projected status whose failure text names nothing about the host.
 
 In the PWA the flow reads: **Update** → "Installing 0.2.4…" → "Restarting
 Surface…" (the connection drops here — the process serving the page is the one

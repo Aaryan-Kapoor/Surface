@@ -206,7 +206,12 @@ button { -webkit-tap-highlight-color: transparent; }
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 6px 5px 11px;
+  /* One fixed height for every state. The Update button (24px) is taller than
+     the text line box (18px), so a padding-driven pill grew 6px the moment the
+     button appeared — a visible jump in the meta row exactly when the user
+     clicks Update. align-items: center parks both inside the same 30px box. */
+  height: 30px;
+  padding: 0 6px 0 11px;
   border: 1px solid var(--line-strong);
   border-radius: var(--r-pill);
   color: var(--fg-muted);

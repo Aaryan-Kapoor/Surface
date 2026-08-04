@@ -125,8 +125,8 @@ Full event catalog: [events.md](events.md).
 
 | Method | Path | Body | Response | Effect |
 | --- | --- | --- | --- | --- |
-| GET | `/api/update/status` | — | `{current, latest, update_available, checked_at, check_error, context, advice, run, can_apply, apply_blocked_reason}` | **cache-only** — never contacts the npm registry, so it cannot delay a response. `can_apply`/`apply_blocked_reason` are computed for the calling plane. Readable by `device`. |
-| POST | `/api/update/apply` | — | `202` + status | **system only** (403 on the device/content plane). Starts `surface upgrade --json --name <service> --progress-file <data-dir>/update-state.json` detached. `409` when a run is already in flight or the install is a repo clone / project-local (with the same advice `surface upgrade` prints). |
+| GET | `/api/update/status` | — | `{current, latest, update_available, checked_at, check_error, context, advice, run, can_apply, apply_blocked_reason}` | **cache-only** — never contacts the npm registry, so it cannot delay a response. `can_apply`/`apply_blocked_reason` are computed for the calling plane. Readable by `device`, which sees a projected view: `check_error` and `run.error` collapse to a generic sentence, because a host-side diagnostic can name the configured npm registry. The SSE broadcast carries that same device-safe view. |
+| POST | `/api/update/apply` | — | `202` + status | **system only** (403 on the device/content plane). Claims `<data-dir>/update-state.json` by exclusive create (with a `run_id`) and then starts `surface upgrade --json --name <service> --progress-file <…> --run-id <…>` detached — the claim exists before the child does, so a second POST arriving before the child's first write is still refused. `409` when a run is already in flight or the install is a repo clone / project-local (with the same advice `surface upgrade` prints). |
 
 The background check that fills the cache is described in
 [../operations/install.md](../operations/install.md#update-notification-and-one-click-update);

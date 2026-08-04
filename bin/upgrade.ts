@@ -347,21 +347,56 @@ function registryUrl(): string {
   return (process.env.SURFACE_NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
 }
 
+// SURFACE_NPM_REGISTRY may carry credentials (`https://token@registry.internal`
+// is how private registries are usually pointed at), and errors about it travel
+// a long way: into the progress file, into `check_error`, out of
+// GET /api/update/status — which is deliberately readable by a paired DEVICE —
+// and over SSE. Node itself is the worst offender: it rejects a credential-
+// bearing URL with a message containing the whole URL.
+//
+// So no URL reaches an error string unlaundered. Userinfo, query and fragment
+// are the parts that carry secrets; host and path are what makes the message
+// useful, and they stay.
+export function sanitizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "[redacted url]";
+  }
+}
+
+const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)\]}]+/gi;
+
+/** Launder every URL inside an arbitrary message (an error from Node, say). */
+export function redactUrls(text: unknown): string {
+  return String(text).replace(URL_IN_TEXT, (match) => {
+    const trailing = /[.,;:!?]+$/.exec(match);
+    const core = trailing ? match.slice(0, -trailing[0].length) : match;
+    return sanitizeUrl(core) + (trailing ? trailing[0] : "");
+  });
+}
+
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 async function latestVersion(): Promise<string> {
   const url = `${registryUrl()}/surface-display/latest`;
+  const shown = sanitizeUrl(url); // never put the raw (possibly credentialed) URL in an error
   let res: Response;
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   } catch (e: any) {
-    throw new Error(`could not reach the npm registry at ${url} (${e?.cause?.code || e?.code || e?.message || e})`);
+    throw new Error(`could not reach the npm registry at ${shown} (${redactUrls(e?.cause?.code || e?.code || e?.message || e)})`);
   }
-  if (!res.ok) throw new Error(`registry answered ${res.status} for ${url}`);
+  if (!res.ok) throw new Error(`registry answered ${res.status} for ${shown}`);
   const body: any = await res.json();
   // strict gate: this string reaches a shell-backed npm spawn on Windows
   if (typeof body?.version !== "string" || !SEMVER.test(body.version)) {
-    throw new Error(`registry returned an invalid version (${JSON.stringify(body?.version).slice(0, 60)}) from ${url}`);
+    throw new Error(`registry returned an invalid version (${JSON.stringify(body?.version).slice(0, 60)}) from ${shown}`);
   }
   return body.version;
 }
@@ -424,12 +459,16 @@ export interface UpgradeProgress {
   installed?: string | null;
   context?: InstallContext;
   error?: string | null;
+  // Identifies WHICH run wrote this record. The server mints it, claims the
+  // progress file with it before spawning, and passes it in via --run-id; it is
+  // how a record left by some other run is told apart from this one's.
+  run_id?: string | null;
 }
 
-function makeProgressWriter(file: string | null, from: string): (patch: Partial<UpgradeProgress>) => void {
+function makeProgressWriter(file: string | null, from: string, runId: string | null): (patch: Partial<UpgradeProgress>) => void {
   if (!file) return () => {};
   const started = new Date().toISOString();
-  let state: UpgradeProgress = { phase: "checking", started_at: started, updated_at: started, pid: process.pid, from };
+  let state: UpgradeProgress = { phase: "checking", started_at: started, updated_at: started, pid: process.pid, from, run_id: runId };
   return (patch) => {
     state = { ...state, ...patch, updated_at: new Date().toISOString() };
     try {
@@ -448,15 +487,18 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 30;
   const name = typeof flags.name === "string" ? flags.name : undefined;
   const progressFile = typeof flags["progress-file"] === "string" ? path.resolve(flags["progress-file"]) : null;
+  const runId = typeof flags["run-id"] === "string" ? flags["run-id"] : null;
   const current = localVersion();
-  const progress = makeProgressWriter(progressFile, current);
+  const progress = makeProgressWriter(progressFile, current, runId);
   progress({ phase: "checking" });
 
   let latest: string;
   try {
     latest = await latestVersion();
   } catch (err: any) {
-    progress({ phase: "failed", error: String(err?.message || err) });
+    // The progress file is read by a device-readable endpoint — launder it here
+    // too, in case the error came from somewhere other than latestVersion().
+    progress({ phase: "failed", error: redactUrls(err?.message || err) });
     throw err;
   }
   const available = newerThan(latest, current);
@@ -492,8 +534,19 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
       console.error(`npm install -g surface-display@${latest} failed (exit ${res.status ?? "?"})`);
       process.exit(1);
     }
-    // npm replaced the package in place; re-read the version from disk.
+    // npm replaced the package in place; re-read the version from disk — and
+    // check it. A zero exit is npm saying "I finished", not "the new version is
+    // on disk": a cached tarball, a different prefix than the one `npm root -g`
+    // reported, or a dist-tag that resolved elsewhere all exit 0 while leaving
+    // the old package in place. Reporting `done` from that state is precisely
+    // the dishonesty the progress file exists to prevent, so it is a failure.
     installed = localVersion();
+    if (newerThan(latest, installed)) {
+      const message = `npm install -g surface-display@${latest} exited 0 but ${installed} is still installed at ${packageRoot()}`;
+      progress({ phase: "failed", installed, error: message });
+      console.error(message);
+      process.exit(1);
+    }
     packageStep = `updated ${current} → ${installed}`;
   } else if (available) {
     packageStep = `skipped (${context} install)`;

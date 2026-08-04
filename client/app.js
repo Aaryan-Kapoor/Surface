@@ -250,7 +250,9 @@ function updateNoticeModel(s) {
     return { tone: "done", text: `Updated to ${run.installed || s.current}`, dismiss: run, autoDismiss: true };
   }
   if (!s.update_available || !s.latest) return null;
-  if (s.can_apply) return { tone: "available", text: `Surface ${s.latest} available`, action: "Update" };
+  // With the Update button beside it there is no room for "available" on a
+  // phone header — and the button already says what the pill is for.
+  if (s.can_apply) return { tone: "available", text: `Surface ${s.latest}`, action: "Update" };
   // Honest read-only state: a repo clone, a project-local install, or a paired
   // display, none of which may trigger an npm install here.
   return { tone: "available", text: `Surface ${s.latest} available`, hint: s.apply_blocked_reason || s.advice };
@@ -260,19 +262,38 @@ function paintUpdateNotice() {
   const host = document.getElementById("update-notice");
   if (!host) return;
   const model = updateNoticeModel(updateState);
-  if (!model) { host.hidden = true; host.innerHTML = ""; return; }
+  if (!model) { host.hidden = true; host.replaceChildren(); return; }
   host.hidden = false;
   host.className = `update-notice update-notice--${model.tone}`;
-  host.innerHTML = `
-    <span class="update-notice-text">${escapeHtml(model.text)}</span>
-    ${model.action ? `<button type="button" class="update-notice-btn" data-update-apply>${escapeHtml(model.action)}</button>` : ""}
-    ${model.dismiss ? `<button type="button" class="update-notice-x" data-update-dismiss aria-label="Dismiss">×</button>` : ""}
-  `;
+  // Built with DOM APIs, not a template: the text carries server-side error
+  // strings and the hint carries `apply_blocked_reason` — neither is markup.
+  host.replaceChildren();
+  const text = document.createElement("span");
+  text.className = "update-notice-text";
+  text.textContent = model.text;
+  host.appendChild(text);
+  let btn = null;
+  if (model.action) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "update-notice-btn";
+    btn.setAttribute("data-update-apply", "");
+    btn.textContent = model.action;
+    host.appendChild(btn);
+  }
+  let x = null;
+  if (model.dismiss) {
+    x = document.createElement("button");
+    x.type = "button";
+    x.className = "update-notice-x";
+    x.setAttribute("data-update-dismiss", "");
+    x.setAttribute("aria-label", "Dismiss");
+    x.textContent = "×";
+    host.appendChild(x);
+  }
   if (model.hint) host.title = model.hint;
   else host.removeAttribute("title");
-  const btn = host.querySelector("[data-update-apply]");
   if (btn) btn.addEventListener("click", applyUpdate);
-  const x = host.querySelector("[data-update-dismiss]");
   if (x) x.addEventListener("click", () => markUpdateSeen(model.dismiss));
   if (model.autoDismiss) setTimeout(() => markUpdateSeen(model.dismiss), 10000);
 }
@@ -411,7 +432,7 @@ function showTutorialModal() {
       <div class="modal-eyebrow">Tutorial</div>
       <h2 id="tutorial-title" class="modal-title">Hand this to your agent</h2>
       <p class="modal-lede">Surface doesn't run the tour itself — your agent does. Paste the prompt below into your agent's chat and it will walk you through the five-minute tour.</p>
-      <pre class="modal-prompt" id="tutorial-prompt-text">${escapeHtml(TUTORIAL_PROMPT)}</pre>
+      <pre class="modal-prompt" id="tutorial-prompt-text">${escapeText(TUTORIAL_PROMPT)}</pre>
       <div class="modal-actions">
         <button type="button" class="modal-copy-btn" id="tutorial-copy-btn">
           <span class="modal-copy-glyph" aria-hidden="true"></span>
@@ -436,7 +457,7 @@ function showTutorialModal() {
 
   const copyBtn = overlay.querySelector("#tutorial-copy-btn");
   const setBtnLabel = (label, done) => {
-    copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeHtml(label)}`;
+    copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeText(label)}`;
     copyBtn.classList.toggle("modal-copy-btn--done", !!done);
   };
   copyBtn.addEventListener("click", async () => {
@@ -448,7 +469,8 @@ function showTutorialModal() {
   requestAnimationFrame(() => overlay.classList.add("modal-overlay--visible"));
 }
 
-// Make available to inline onclick attributes
+// Kept on window for agent-authored themes/renderers that call it. The empty
+// state binds its own listener — no inline handler anywhere in this app.
 window.showTutorialModal = showTutorialModal;
 
 // ── Surface-idea portal ──
@@ -515,15 +537,15 @@ function mountGallery(root) {
   const cardHTML = (idea) => `
     <div class="portal-card">
       <div class="portal-disc">
-        <iframe class="portal-demo" tabindex="-1" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; clipboard-write" src="${escapeHtml(idea.src)}"></iframe>
+        <iframe class="portal-demo" tabindex="-1" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; clipboard-write" src="${escapeAttr(idea.src)}"></iframe>
       </div>
       <div class="portal-meta">
         <div class="portal-label">A surface you could make</div>
-        <div class="portal-title">${escapeHtml(idea.title)}</div>
-        <div class="portal-sub">${escapeHtml(idea.sub)}</div>
+        <div class="portal-title">${escapeText(idea.title)}</div>
+        <div class="portal-sub">${escapeText(idea.sub)}</div>
         <button type="button" class="portal-prompt" aria-label="Copy prompt">
           <span class="portal-prompt-arrow">›</span>
-          <span class="portal-prompt-text">${escapeHtml(idea.prompt)}</span>
+          <span class="portal-prompt-text">${escapeText(idea.prompt)}</span>
         </button>
       </div>
     </div>
@@ -701,9 +723,44 @@ function jsonParse(v) {
   return v;
 }
 
+// The document ships one <meta name="theme-color"> per colour scheme. An agent
+// theme is scheme-agnostic, so applying one overrides both and drops the media
+// query that would otherwise keep one inert — which means a reset has to put
+// the originals back, or the browser/PWA chrome stays on the old theme's colour
+// until a reload. Snapshot once, before anything has touched them.
+let themeColorDefaults = null;
+
+function themeColorMetas() {
+  return document.querySelectorAll('meta[name="theme-color"]');
+}
+
+function snapshotThemeColorMetas() {
+  if (themeColorDefaults) return;
+  // Array.from: querySelectorAll answers a NodeList, which has forEach but no map.
+  themeColorDefaults = Array.from(themeColorMetas(), (meta) => ({
+    content: meta.getAttribute("content"),
+    media: meta.getAttribute("media"),
+  }));
+}
+
+function restoreThemeColorMetas() {
+  if (!themeColorDefaults) return;
+  const metas = themeColorMetas();
+  metas.forEach((meta, i) => {
+    const saved = themeColorDefaults[i];
+    if (!saved) return;
+    if (saved.content === null) meta.removeAttribute("content");
+    else meta.setAttribute("content", saved.content);
+    if (saved.media === null) meta.removeAttribute("media");
+    else meta.setAttribute("media", saved.media);
+  });
+}
+
 function applyTheme(config) {
+  snapshotThemeColorMetas();
   if (!config || Object.keys(config).length === 0) {
     // Reset to defaults
+    restoreThemeColorMetas();
     document.documentElement.removeAttribute("style");
     document.body.removeAttribute("style");
     const themeCSS = document.getElementById("theme-css");
@@ -793,15 +850,18 @@ function applyTheme(config) {
     customStyle.remove();
   }
 
-  // Theme colour meta. The document ships one tag per colour scheme; an agent
-  // theme is scheme-agnostic, so it overrides both (and drops the media query
-  // that would otherwise keep one of them inert).
+  // Theme colour meta — see snapshotThemeColorMetas(). A theme that names no
+  // usable colour leaves the shipped tags alone (and puts them back if a
+  // previous theme had overridden them), so the chrome always matches whatever
+  // is actually on screen.
   const themeColor = (config.colors && config.colors.void) || config.background;
   if (themeColor && typeof themeColor === "string" && !themeColor.includes("(")) {
-    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+    themeColorMetas().forEach((meta) => {
       meta.removeAttribute("media");
-      meta.content = themeColor;
+      meta.setAttribute("content", themeColor);
     });
+  } else {
+    restoreThemeColorMetas();
   }
 
   // Persistent overlay (across all views) — driven by the overlay slot.
@@ -930,22 +990,33 @@ function openSurfaceFinder() {
       : surfaces.slice(0, 50);
     activeIdx = 0;
     if (filtered.length === 0) {
-      results.innerHTML = `<div class="finder-empty">No surfaces match "${escapeHtml(q)}"</div>`;
+      const none = document.createElement("div");
+      none.className = "finder-empty";
+      none.textContent = `No surfaces match "${q}"`;
+      results.replaceChildren(none);
       return;
     }
-    results.innerHTML = filtered.map((s, i) => {
+    // Surface titles are device-authorable; they are set as text, never parsed
+    // as markup.
+    results.replaceChildren(...filtered.map((s, i) => {
       const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
       const sub = [];
       if (mime) sub.push(labelForMime(mime));
       const t = timeAgo(s.updated_at);
       if (t) sub.push(t);
-      return `
-        <div class="finder-result${i === 0 ? ' finder-result--active' : ''}" data-idx="${i}" role="option">
-          <div class="finder-result-title">${escapeHtml(s.title)}</div>
-          <div class="finder-result-sub">${sub.map(escapeHtml).join(' · ')}</div>
-        </div>
-      `;
-    }).join("");
+      const row = document.createElement("div");
+      row.className = `finder-result${i === 0 ? " finder-result--active" : ""}`;
+      row.dataset.idx = String(i);
+      row.setAttribute("role", "option");
+      const title = document.createElement("div");
+      title.className = "finder-result-title";
+      title.textContent = s.title || "";
+      const subEl = document.createElement("div");
+      subEl.className = "finder-result-sub";
+      subEl.textContent = sub.join(" · ");
+      row.append(title, subEl);
+      return row;
+    }));
     results.querySelectorAll(".finder-result").forEach((el, i) => {
       el.addEventListener("mouseenter", () => setActive(i));
       el.addEventListener("click", () => select(i));
@@ -1024,10 +1095,39 @@ function parseMetadata(meta) {
   return meta || {};
 }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
+// ── HTML encoding ──
+//
+// Two encoders, named for the context they are safe in, because the difference
+// is a security boundary and not a style choice:
+//
+//   escapeText  — text-node context only. Escapes & < >.
+//   escapeAttr  — quoted-attribute context. Escapes & < > " ' as well.
+//
+// The old single escapeHtml() was `div.textContent = s; return div.innerHTML`,
+// which is the browser's *text* serializer: it leaves quotes untouched. Used in
+// an attribute it let a title of `" onmouseover="…` close the attribute and add
+// a handler. A paired device can set a surface title and the system-plane
+// dashboard renders it, so that was device content reaching system-plane script
+// (and from there POST /api/update/apply, which installs and runs new code on
+// the host). escapeText is deliberately NOT safe in an attribute — never reach
+// for it there; test/clientRender.ts fails the build if any attribute-value
+// interpolation in this file uses anything but escapeAttr/encodeURIComponent.
+//
+// Untrusted values should prefer DOM APIs (textContent / setAttribute) over a
+// template literal entirely; these exist for the markup that is genuinely
+// easier to read as a literal.
+
+const TEXT_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
+const ATTR_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+function escapeText(str) {
+  if (str === null || str === undefined) return "";
+  return String(str).replace(/[&<>]/g, (c) => TEXT_ESCAPES[c]);
+}
+
+function escapeAttr(str) {
+  if (str === null || str === undefined) return "";
+  return String(str).replace(/[&<>"']/g, (c) => ATTR_ESCAPES[c]);
 }
 
 function labelForMime(mime) {
@@ -1075,15 +1175,18 @@ function renderGrid() {
   const header = document.createElement("header");
   header.className = "grid-header";
   const count = surfaces.length;
+  // The skeleton is static markup; the two values that are not (the display
+  // title, which a theme sets, and whatever the user typed into the search box)
+  // are written afterwards as text/properties, never interpolated.
   header.innerHTML = `
     <div class="grid-brand">
-      <span class="grid-title">${escapeHtml(title)}</span>
+      <span class="grid-title"></span>
       <span class="grid-subtitle">state out, actions back</span>
     </div>
     <div class="grid-header-spacer"></div>
     ${count > 0 ? `
     <span class="grid-search-wrap">
-      <input type="text" class="grid-search" placeholder="Search surfaces" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off" aria-label="Search surfaces">
+      <input type="text" class="grid-search" placeholder="Search surfaces" spellcheck="false" autocomplete="off" aria-label="Search surfaces">
       <button type="button" class="grid-kbd" title="Find a surface (⌘K)" aria-label="Find a surface">⌘K</button>
     </span>` : ""}
     <div class="grid-meta" id="grid-meta">
@@ -1092,8 +1195,10 @@ function renderGrid() {
       <span class="grid-meta-live" role="status"><span class="live-dot"></span></span>
     </div>
   `;
+  header.querySelector(".grid-title").textContent = title;
   const headerSearch = header.querySelector(".grid-search");
   if (headerSearch) {
+    headerSearch.value = gridQuery;
     headerSearch.addEventListener("input", () => { gridQuery = headerSearch.value; paintGrid(); });
     header.querySelector(".grid-kbd").addEventListener("click", () => openSurfaceFinder());
   }
@@ -1153,7 +1258,7 @@ function renderGrid() {
           <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
         </div>
         <div class="empty-sub">Say it to your agent — it lands here.</div>
-        <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">Start the tutorial</button>
+        <button type="button" class="empty-tour-btn" data-tutorial-open>Start the tutorial</button>
       </div>
       <div class="empty-portal" id="empty-portal">
         <div class="portal-gallery">
@@ -1165,7 +1270,14 @@ function renderGrid() {
         <div class="portal-scrollbar-thumb"></div>
       </div>
     `;
-    container.appendChild(empty);
+    const tourBtn = empty.querySelector("[data-tutorial-open]");
+    if (tourBtn) tourBtn.addEventListener("click", showTutorialModal);
+    // Inside .grid-view, not beside it: .grid-view is `position: relative;
+    // z-index: 1`, so it is a stacking context and the header's z-index: 20
+    // cannot escape it. An opaque empty state parked outside that context
+    // painted straight over the header — hiding the release pill on exactly
+    // the dashboard (fresh or just-cleared) where it matters most.
+    gridView.appendChild(empty);
     cycleEmptySuggestions(empty);
     mountGallery(empty);
   } else {
@@ -1237,7 +1349,7 @@ function createGridToolbar() {
   bar.innerHTML = `
     <div class="grid-toolbar-left" role="group" aria-label="Filter by kind">
       ${groups.map((f) => `
-        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${f.id}" aria-pressed="${f.id === gridFilter}">${escapeHtml(f.label)}</button>
+        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${escapeAttr(f.id)}" aria-pressed="${escapeAttr(String(f.id === gridFilter))}">${escapeText(f.label)}</button>
       `).join("")}
     </div>
     <select class="grid-sort" aria-label="Sort surfaces">
@@ -1423,11 +1535,20 @@ function createCard(s, index) {
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
-  actions.innerHTML = `
-    <button type="button" class="card-action" data-action="copy" title="Copy link" aria-label="Copy link">${ICON_COPY}</button>
-    <button type="button" class="card-action" data-action="rename" title="Rename" aria-label="Rename">${ICON_PENCIL}</button>
-    <button type="button" class="card-action card-action--danger" data-action="delete" title="Delete" aria-label="Delete">${ICON_X}</button>
-  `;
+  for (const [action, label, icon, danger] of [
+    ["copy", "Copy link", ICON_COPY, false],
+    ["rename", "Rename", ICON_PENCIL, false],
+    ["delete", "Delete", ICON_X, true],
+  ]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = danger ? "card-action card-action--danger" : "card-action";
+    btn.dataset.action = action;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = icon; // a module constant, never artifact data
+    actions.appendChild(btn);
+  }
   actions.addEventListener("click", (e) => e.stopPropagation());
   actions.querySelector('[data-action="copy"]').addEventListener("click", async (e) => {
     e.preventDefault();
@@ -1451,14 +1572,23 @@ function createCard(s, index) {
   });
   card.appendChild(actions);
 
+  // A surface title is device-authorable and lands here on the SYSTEM plane —
+  // the dashboard that can POST /api/update/apply. It is written as text and as
+  // an attribute through DOM APIs, which cannot be escaped out of, rather than
+  // interpolated into markup.
   const body = document.createElement("div");
   body.className = "card-body";
-  body.innerHTML = `
-    <div class="card-text">
-      <div class="card-title" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
-      <div class="card-sub">${escapeHtml(cardSubtitle(s))}</div>
-    </div>
-  `;
+  const text = document.createElement("div");
+  text.className = "card-text";
+  const titleEl = document.createElement("div");
+  titleEl.className = "card-title";
+  titleEl.textContent = s.title || "";
+  titleEl.setAttribute("title", s.title || "");
+  const subEl = document.createElement("div");
+  subEl.className = "card-sub";
+  subEl.textContent = cardSubtitle(s);
+  text.append(titleEl, subEl);
+  body.appendChild(text);
 
   // Touch handle for the tray. CSS shows it only where hover doesn't exist, so
   // pointer devices keep the clean caption and never see it.
@@ -1530,8 +1660,31 @@ function updateCardBadges(card, s) {
   }
 }
 
+// Find a card by artifact id WITHOUT building a selector string out of the id.
+// Interpolating an id into `[data-id="…"]` is the selector-injection cousin of
+// the markup problem: a quote in the id throws (taking the SSE handler with it)
+// or, worse, matches a different card. dataset comparison cannot be escaped out
+// of, and the grid is small enough that the scan is free.
+function cardById(id) {
+  if (id === null || id === undefined) return null;
+  const wanted = String(id);
+  const cards = document.querySelectorAll(".surface-card");
+  for (const card of cards) {
+    if (card.dataset.id === wanted) return card;
+  }
+  return null;
+}
+
+function setCardTitle(card, title) {
+  const titleEl = card && card.querySelector(".card-title");
+  if (!titleEl) return;
+  titleEl.textContent = title || "";
+  if (titleEl.tagName !== "INPUT") titleEl.setAttribute("title", title || "");
+}
+
 function setCardHandling(surfaceId, running) {
-  const disc = document.querySelector(`.surface-card[data-id="${surfaceId}"] .card-preview`);
+  const card = cardById(surfaceId);
+  const disc = card && card.querySelector(".card-preview");
   if (!disc) return;
   let pill = disc.querySelector(".card-handling");
   if (running) {
@@ -1576,6 +1729,7 @@ function startRename(card, id) {
     const span = document.createElement("div");
     span.className = "card-title";
     span.textContent = newText;
+    span.setAttribute("title", newText);
     input.replaceWith(span);
   };
   const save = async () => {
@@ -1592,8 +1746,7 @@ function startRename(card, id) {
     });
     if (!res.ok) {
       showToast("Failed to rename", 3000, "error");
-      const span = card.querySelector(".card-title");
-      if (span) span.textContent = originalTitle;
+      setCardTitle(card, originalTitle);
     }
   };
   input.addEventListener("keydown", (e) => {
@@ -1628,13 +1781,15 @@ async function renderSurface(id) {
   // surface. Meta collapses out of the way before the title ever truncates.
   const nav = document.createElement("header");
   nav.className = "surface-nav";
+  // Static skeleton + textContent for the artifact-controlled parts (the title
+  // is device-authorable, and this view runs on the trusted app origin).
   nav.innerHTML = `
     <button type="button" class="back-btn" aria-label="Back to all surfaces" title="Back (esc)">${ICON_CHEVRON_LEFT}</button>
     <div class="surface-nav-titlewrap">
-      <h1 class="surface-nav-title">${escapeHtml(artifact.title)}</h1>
+      <h1 class="surface-nav-title"></h1>
       <div class="surface-nav-meta">
-        ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span><span class="surface-nav-meta-dot"></span>` : ""}
-        <span data-surface-updated-at>${escapeHtml(timeAgo(artifact.updated_at))}</span>
+        ${mimeLabel ? `<span data-surface-mime></span><span class="surface-nav-meta-dot"></span>` : ""}
+        <span data-surface-updated-at></span>
         <span class="surface-nav-meta-dot"></span>
         <span class="surface-nav-live">live</span>
       </div>
@@ -1644,6 +1799,10 @@ async function renderSurface(id) {
       <button type="button" class="nav-action" data-action="open" title="Open raw surface" aria-label="Open raw surface">${ICON_EXTERNAL}</button>
     </div>
   `;
+  nav.querySelector(".surface-nav-title").textContent = artifact.title || "";
+  const mimeEl = nav.querySelector("[data-surface-mime]");
+  if (mimeEl) mimeEl.textContent = mimeLabel;
+  nav.querySelector("[data-surface-updated-at]").textContent = timeAgo(artifact.updated_at);
   nav.querySelector(".back-btn").addEventListener("click", () => { location.hash = "/"; });
   nav.querySelector('[data-action="copy"]').addEventListener("click", async () => {
     const ok = await copyToClipboard(location.origin + "/#/surface/" + id);
@@ -1787,7 +1946,7 @@ function connectGlobalSSE() {
     const becameHidden = nextMeta && nextMeta.hidden === true;
     if (becameHidden) {
       if (idx !== -1) surfaces.splice(idx, 1);
-      const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+      const card = cardById(data.id);
       if (card) {
         card.classList.add("removing");
         card.addEventListener("animationend", () => {
@@ -1805,7 +1964,7 @@ function connectGlobalSSE() {
       surfaces.unshift(data);
       if (document.querySelector(".empty-state")) { render(); return; }
       const grid = document.getElementById("surface-grid");
-      if (grid && !grid.querySelector(`.surface-card[data-id="${data.id}"]`)) {
+      if (grid && !cardById(data.id)) {
         grid.prepend(createCard(data, 0));
         updateGridMeta();
       }
@@ -1813,11 +1972,10 @@ function connectGlobalSSE() {
     }
     if (idx !== -1) {
       surfaces[idx] = { ...surfaces[idx], ...data };
-      const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+      const card = cardById(data.id);
       if (card) {
         updateCardBadges(card, surfaces[idx]);
-        const titleEl = card.querySelector(".card-title");
-        if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
+        setCardTitle(card, data.title || surfaces[idx].title);
         const subEl = card.querySelector(".card-sub");
         if (subEl) subEl.textContent = cardSubtitle(surfaces[idx]);
         let live = card.querySelector(".card-live");
@@ -1868,7 +2026,7 @@ function connectGlobalSSE() {
     pulseSpace();
     maybeRefreshSlots(data.id);
     surfaces = surfaces.filter((s) => s.id !== data.id);
-    const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+    const card = cardById(data.id);
     if (card) {
       card.classList.add("removing");
       card.addEventListener("animationend", () => {
@@ -1889,7 +2047,7 @@ function connectGlobalSSE() {
     const idx = surfaces.findIndex((s) => s.id === d.surface_id);
     if (idx === -1) return;
     surfaces[idx].pending_actions = (surfaces[idx].pending_actions || 0) + 1;
-    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    const card = cardById(d.surface_id);
     if (card) updateCardBadges(card, surfaces[idx]);
   });
 
@@ -1898,7 +2056,7 @@ function connectGlobalSSE() {
     const idx = surfaces.findIndex((s) => s.id === d.surface_id);
     if (idx === -1) return;
     surfaces[idx].pending_actions = d.pending_actions || 0;
-    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    const card = cardById(d.surface_id);
     if (card) updateCardBadges(card, surfaces[idx]);
   });
 
@@ -1907,7 +2065,7 @@ function connectGlobalSSE() {
     if (!d.surface_id || d.surface_id === "*") return;
     const idx = surfaces.findIndex((s) => s.id === d.surface_id);
     if (idx !== -1) surfaces[idx].listening = d.listening;
-    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    const card = cardById(d.surface_id);
     if (card) updateCardBadges(card, surfaces[idx] || { listening: d.listening });
   });
 
@@ -1930,7 +2088,7 @@ function connectGlobalSSE() {
     if (!data || !data.id) return;
     const idx = surfaces.findIndex((s) => s.id === data.id);
     if (idx !== -1) surfaces[idx].has_thumb = true;
-    const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+    const card = cardById(data.id);
     if (!card) return;
     const preview = card.querySelector(".card-preview");
     if (!preview) return;
