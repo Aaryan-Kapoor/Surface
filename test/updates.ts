@@ -199,6 +199,37 @@ try {
     updates.chooseRunRecord(mine, null, null) === null,
   );
 
+  // ── the two halves of self-healing have to compose ──
+  // An update abandoned mid-flight (the machine slept, the child was killed)
+  // blocks the Update button until its claim resolves to `failed`. That
+  // recovery only reaches disk because reconcileRunFile persists on
+  // `raw === disk` — an IDENTITY check on whatever chooseRunRecord returned.
+  // So chooseRunRecord returning an equal-but-copied record, or reconcileRun
+  // failing to age the claim out, each turn a 10-minute block into a
+  // permanent one with no way back except deleting the file by hand. The two
+  // are unit-tested apart; this pins them together.
+  const abandonedId = "run-abandoned";
+  const onDisk = {
+    ...restarting,
+    phase: "installing" as const,
+    run_id: abandonedId,
+    updated_at: new Date(now - 11 * 60 * 1000).toISOString(),
+  };
+  const inMemory = { ...onDisk };
+  const chosen = updates.chooseRunRecord(inMemory, onDisk, abandonedId);
+  check(
+    "an abandoned claim resolves against the disk record itself, not a copy",
+    chosen === onDisk,
+  );
+  check(
+    "…and ages out to failed, which is what unblocks a retry",
+    updates.reconcileRun(chosen, { version: "0.2.3", now, booted: false })?.phase === "failed",
+  );
+  check(
+    "…and the same holds for a claim this process only adopted",
+    updates.chooseRunRecord({ ...onDisk, run_id: abandonedId }, onDisk, null) === onDisk,
+  );
+
   // ── registry URLs are laundered before they can reach an error string ──
   // SURFACE_NPM_REGISTRY is how a private registry is pointed at, and it
   // routinely carries a token. Node rejects a credential-bearing URL with an
