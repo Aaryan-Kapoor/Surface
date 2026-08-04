@@ -201,6 +201,206 @@ function showToast(text, duration = 4000, style = "info") {
   }, duration);
 }
 
+// ── Release notice + one-click update ──
+//
+// The server answers GET /api/update/status from a cache only (it never blocks
+// on the npm registry), pushes `update_status` over SSE, and applies an update
+// by running the ordinary `surface upgrade` converger. The service restarts
+// mid-flight, so this side is written around losing its own connection: every
+// phase transition is idempotent, the "restarting" phase starts a bounded
+// reconnect watch, and the result is read back from the server after it
+// returns rather than guessed here.
+
+let updateState = null;        // last /api/update/status payload
+let updateWatchTimer = null;   // bounded poll while a run is in flight
+let updateWatchDeadline = 0;
+let updateVersionAtStart = null; // version when Update was clicked → reload once it changes
+const UPDATE_WATCH_MS = 120000;
+const UPDATE_SEEN_KEY = "surface:update-seen";
+
+function updateSeen(run) {
+  if (!run || !run.started_at) return false;
+  try { return localStorage.getItem(UPDATE_SEEN_KEY) === run.started_at; } catch { return false; }
+}
+
+function markUpdateSeen(run) {
+  if (!run || !run.started_at) return;
+  try { localStorage.setItem(UPDATE_SEEN_KEY, run.started_at); } catch {}
+  paintUpdateNotice();
+}
+
+// One place decides what the pill says, so the DOM code stays dumb.
+// Returns null when there is nothing worth saying.
+function updateNoticeModel(s) {
+  if (!s) return null;
+  const run = s.run;
+  const running = run && run.phase !== "done" && run.phase !== "failed";
+  if (running) {
+    const label = run.phase === "restarting"
+      ? "Restarting Surface…"
+      : run.phase === "installing"
+        ? `Installing ${run.to || ""}…`.replace("  ", " ")
+        : "Checking for updates…";
+    return { tone: "busy", text: label };
+  }
+  if (run && run.phase === "failed" && !updateSeen(run)) {
+    return { tone: "error", text: `Update failed — ${run.error || "see the host log"}`, dismiss: run };
+  }
+  if (run && run.phase === "done" && !updateSeen(run)) {
+    return { tone: "done", text: `Updated to ${run.installed || s.current}`, dismiss: run, autoDismiss: true };
+  }
+  if (!s.update_available || !s.latest) return null;
+  // With the Update button beside it there is no room for "available" on a
+  // phone header — and the button already says what the pill is for.
+  if (s.can_apply) return { tone: "available", text: `Surface ${s.latest}`, action: "Update" };
+  // Honest read-only state: a repo clone, a project-local install, or a paired
+  // display, none of which may trigger an npm install here.
+  return { tone: "available", text: `Surface ${s.latest} available`, hint: s.apply_blocked_reason || s.advice };
+}
+
+function paintUpdateNotice() {
+  const host = document.getElementById("update-notice");
+  if (!host) return;
+  const model = updateNoticeModel(updateState);
+  if (!model) { host.hidden = true; host.replaceChildren(); return; }
+  host.hidden = false;
+  host.className = `update-notice update-notice--${model.tone}`;
+  // Built with DOM APIs, not a template: the text carries server-side error
+  // strings and the hint carries `apply_blocked_reason` — neither is markup.
+  host.replaceChildren();
+  const text = document.createElement("span");
+  text.className = "update-notice-text";
+  text.textContent = model.text;
+  host.appendChild(text);
+  let btn = null;
+  if (model.action) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "update-notice-btn";
+    btn.setAttribute("data-update-apply", "");
+    btn.textContent = model.action;
+    host.appendChild(btn);
+  }
+  let x = null;
+  if (model.dismiss) {
+    x = document.createElement("button");
+    x.type = "button";
+    x.className = "update-notice-x";
+    x.setAttribute("data-update-dismiss", "");
+    x.setAttribute("aria-label", "Dismiss");
+    x.textContent = "×";
+    host.appendChild(x);
+  }
+  if (model.hint) host.title = model.hint;
+  else host.removeAttribute("title");
+  if (btn) btn.addEventListener("click", applyUpdate);
+  if (x) x.addEventListener("click", () => markUpdateSeen(model.dismiss));
+  if (model.autoDismiss) setTimeout(() => markUpdateSeen(model.dismiss), 10000);
+}
+
+async function refreshUpdateStatus() {
+  try {
+    const res = await fetch("/api/update/status", { cache: "no-store" });
+    if (!res.ok) return null;
+    applyUpdateStatus(await res.json());
+    return updateState;
+  } catch {
+    // Offline or mid-restart — the watcher retries; nothing to report.
+    return null;
+  }
+}
+
+function applyUpdateStatus(next) {
+  if (!next) return;
+  // SSE payloads carry no per-plane fields; keep what the last GET told us.
+  if (next.can_apply === undefined && updateState) {
+    next.can_apply = updateState.can_apply;
+    next.apply_blocked_reason = updateState.apply_blocked_reason;
+  }
+  updateState = next;
+  const run = next.run;
+  const running = run && run.phase !== "done" && run.phase !== "failed";
+  if (running) watchUpdateThroughRestart();
+  if (!running && updateWatchTimer) stopUpdateWatch();
+  // The bundle that is running right now was replaced on disk — reload once so
+  // the PWA shell matches the server that is answering it.
+  if (updateVersionAtStart && run && run.phase === "done" && next.current !== updateVersionAtStart) {
+    updateVersionAtStart = null;
+    location.reload();
+    return;
+  }
+  paintUpdateNotice();
+  paintVersionChip();
+}
+
+/**
+ * The running version, in the header.
+ *
+ * It is the first thing anyone is asked for when something misbehaves, and
+ * until now the only way to read it was from the host shell — which is exactly
+ * the machine a paired display is not sitting at. Sourced from the update
+ * status the client already fetches, so it costs no extra request and stays
+ * hidden until that arrives rather than flashing a placeholder.
+ */
+function paintVersionChip(host) {
+  const el = host || document.getElementById("grid-version");
+  if (!el) return;
+  const current = updateState && updateState.current;
+  const known = !!current && current !== "unknown";
+  el.textContent = known ? `v${current}` : "";
+  el.hidden = !known;
+}
+
+function stopUpdateWatch() {
+  if (updateWatchTimer) clearInterval(updateWatchTimer);
+  updateWatchTimer = null;
+}
+
+// The process serving this page is the one being replaced, so SSE is not a
+// reliable channel across the restart. Poll — but only while a run is live,
+// and only for as long as a restart could plausibly take.
+function watchUpdateThroughRestart() {
+  updateWatchDeadline = Date.now() + UPDATE_WATCH_MS;
+  if (updateWatchTimer) return;
+  updateWatchTimer = setInterval(async () => {
+    if (Date.now() > updateWatchDeadline) {
+      stopUpdateWatch();
+      updateState = {
+        ...(updateState || {}),
+        run: {
+          phase: "failed",
+          started_at: (updateState && updateState.run && updateState.run.started_at) || String(Date.now()),
+          error: "Surface did not come back — check `surface service health` on the host",
+        },
+      };
+      paintUpdateNotice();
+      return;
+    }
+    await refreshUpdateStatus();
+  }, 1500);
+}
+
+async function applyUpdate() {
+  const host = document.getElementById("update-notice");
+  if (host) host.className = "update-notice update-notice--busy";
+  updateVersionAtStart = (updateState && updateState.current) || null;
+  try {
+    const res = await fetch("/api/update/apply", { method: "POST", headers: { "Content-Type": "application/json" } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      updateVersionAtStart = null;
+      showToast((body && body.error) || `Update refused (${res.status})`, 6000, "error");
+      await refreshUpdateStatus();
+      return;
+    }
+    applyUpdateStatus(body);
+    watchUpdateThroughRestart();
+  } catch {
+    updateVersionAtStart = null;
+    showToast("Could not start the update — is Surface still running?", 6000, "error");
+  }
+}
+
 // ── Clipboard helper ──
 // async Clipboard API first; falls back to a hidden-textarea +
 // document.execCommand("copy") so non-secure contexts still get a real
@@ -235,8 +435,23 @@ async function copyToClipboard(text) {
 // INSTALL_FOR_AGENTS.md). Surface itself does not run the tutorial —
 // the agent does — so the modal is intentionally just a prompt + copy.
 
+// The header's fixed furniture.
+const TAGLINE = "state out, actions back";
+const REPO_URL = "https://github.com/Aaryan-Kapoor/Surface";
+
+// Inline so a display renders them offline; the shell already refuses to fetch
+// fonts for the same reason. currentColor everywhere, so they inherit hover.
+const ICON_GITHUB = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>`;
+const ICON_GUIDE = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13Z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M6.2 6.1a1.9 1.9 0 1 1 2.6 1.77c-.5.19-.8.62-.8 1.13v.35"/><circle cx="8" cy="11.6" r="0.85" fill="currentColor"/></svg>`;
+
+// Two things this prompt must not do, both learned the hard way from watching a
+// real install: name a state file (the docs are explicit that tutorial state
+// lives in ~/.surface/install-state.json, so an agent's first act was correcting
+// the paste string), and route straight at the tour guide (which skips the
+// install routine's own setup). Ask for the tour by name and let the agent find
+// its way in.
 const TUTORIAL_PROMPT =
-  "Walk me through the Surface tutorial in docs/TUTORIAL.md. Update the tutorial state in INSTALL_FOR_AGENTS.md as you progress.";
+  "Give me the Surface tour — the guide is docs/TUTORIAL.md inside the installed surface-display package (`npm root -g`).";
 
 function showTutorialModal() {
   // Don't double-open
@@ -251,14 +466,14 @@ function showTutorialModal() {
       <div class="modal-eyebrow">Tutorial</div>
       <h2 id="tutorial-title" class="modal-title">Hand this to your agent</h2>
       <p class="modal-lede">Surface doesn't run the tour itself — your agent does. Paste the prompt below into your agent's chat and it will walk you through the five-minute tour.</p>
-      <pre class="modal-prompt" id="tutorial-prompt-text">${escapeHtml(TUTORIAL_PROMPT)}</pre>
+      <pre class="modal-prompt" id="tutorial-prompt-text">${escapeText(TUTORIAL_PROMPT)}</pre>
       <div class="modal-actions">
         <button type="button" class="modal-copy-btn" id="tutorial-copy-btn">
           <span class="modal-copy-glyph" aria-hidden="true"></span>
           Copy prompt
         </button>
       </div>
-      <div class="modal-sub">After running, your agent updates <span class="modal-mono">INSTALL_FOR_AGENTS.md</span> so re-runs skip the tour.</div>
+      <div class="modal-sub">Your agent records the tour in <span class="modal-mono">~/.surface/install-state.json</span> so re-runs skip it.</div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -276,19 +491,26 @@ function showTutorialModal() {
 
   const copyBtn = overlay.querySelector("#tutorial-copy-btn");
   const setBtnLabel = (label, done) => {
-    copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeHtml(label)}`;
+    copyBtn.innerHTML = `<span class="modal-copy-glyph" aria-hidden="true"></span>${escapeText(label)}`;
     copyBtn.classList.toggle("modal-copy-btn--done", !!done);
   };
   copyBtn.addEventListener("click", async () => {
     const ok = await copyToClipboard(TUTORIAL_PROMPT);
     setBtnLabel(ok ? "Copied" : "Copy failed", ok);
-    setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
+    // Copying the prompt is the only reason this dialog exists. Once it's on
+    // the clipboard the dialog has nothing left to say, so it leaves on its
+    // own after a beat long enough to read the confirmation — the next thing
+    // the user does is paste, and that happens somewhere else. A failure keeps
+    // it open: the prompt is still on screen to select by hand.
+    if (ok) setTimeout(close, 900);
+    else setTimeout(() => setBtnLabel("Copy prompt", false), 2200);
   });
 
   requestAnimationFrame(() => overlay.classList.add("modal-overlay--visible"));
 }
 
-// Make available to inline onclick attributes
+// Kept on window for agent-authored themes/renderers that call it. The empty
+// state binds its own listener — no inline handler anywhere in this app.
 window.showTutorialModal = showTutorialModal;
 
 // ── Surface-idea portal ──
@@ -304,7 +526,7 @@ window.showTutorialModal = showTutorialModal;
 const SURFACE_IDEAS = [
   {
     title: "Ask Approval",
-    sub: "Choice -> Surface.action",
+    sub: "Choice → Surface.action",
     src: "/demos/ask-approval.html",
     prompt: "Surface an approval question I can answer from any display",
   },
@@ -340,7 +562,7 @@ const SURFACE_IDEAS = [
   },
   {
     title: "Linked File",
-    sub: "Edit disk, touch display",
+    sub: "Edit on disk, touch the display",
     src: "/demos/live-link.html",
     prompt: "Surface a linked HTML file and hot-reload it after edits",
   },
@@ -355,15 +577,15 @@ function mountGallery(root) {
   const cardHTML = (idea) => `
     <div class="portal-card">
       <div class="portal-disc">
-        <iframe class="portal-demo" tabindex="-1" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; clipboard-write" src="${escapeHtml(idea.src)}"></iframe>
+        <iframe class="portal-demo" tabindex="-1" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture; clipboard-write" src="${escapeAttr(idea.src)}"></iframe>
       </div>
       <div class="portal-meta">
         <div class="portal-label">A surface you could make</div>
-        <div class="portal-title">${escapeHtml(idea.title)}</div>
-        <div class="portal-sub">${escapeHtml(idea.sub)}</div>
+        <div class="portal-title">${escapeText(idea.title)}</div>
+        <div class="portal-sub">${escapeText(idea.sub)}</div>
         <button type="button" class="portal-prompt" aria-label="Copy prompt">
           <span class="portal-prompt-arrow">›</span>
-          <span class="portal-prompt-text">${escapeHtml(idea.prompt)}</span>
+          <span class="portal-prompt-text">${escapeText(idea.prompt)}</span>
         </button>
       </div>
     </div>
@@ -541,17 +763,61 @@ function jsonParse(v) {
   return v;
 }
 
+// The document ships one <meta name="theme-color"> per colour scheme. An agent
+// theme is scheme-agnostic, so applying one overrides both and drops the media
+// query that would otherwise keep one inert — which means a reset has to put
+// the originals back, or the browser/PWA chrome stays on the old theme's colour
+// until a reload. Snapshot once, before anything has touched them.
+let themeColorDefaults = null;
+
+function themeColorMetas() {
+  return document.querySelectorAll('meta[name="theme-color"]');
+}
+
+function snapshotThemeColorMetas() {
+  if (themeColorDefaults) return;
+  // Array.from: querySelectorAll answers a NodeList, which has forEach but no map.
+  themeColorDefaults = Array.from(themeColorMetas(), (meta) => ({
+    content: meta.getAttribute("content"),
+    media: meta.getAttribute("media"),
+  }));
+}
+
+function restoreThemeColorMetas() {
+  if (!themeColorDefaults) return;
+  const metas = themeColorMetas();
+  metas.forEach((meta, i) => {
+    const saved = themeColorDefaults[i];
+    if (!saved) return;
+    if (saved.content === null) meta.removeAttribute("content");
+    else meta.setAttribute("content", saved.content);
+    if (saved.media === null) meta.removeAttribute("media");
+    else meta.setAttribute("media", saved.media);
+  });
+}
+
 function applyTheme(config) {
+  snapshotThemeColorMetas();
   if (!config || Object.keys(config).length === 0) {
     // Reset to defaults
+    restoreThemeColorMetas();
     document.documentElement.removeAttribute("style");
     document.body.removeAttribute("style");
     const themeCSS = document.getElementById("theme-css");
     if (themeCSS) themeCSS.remove();
-    const overlay = document.getElementById("display-overlay");
-    if (overlay) overlay.remove();
-    const hw = document.getElementById("home-widget");
-    if (hw) hw.remove();
+    // Slots are not theme state. `surface slot home|overlay` promotes an
+    // *artifact* (metadata.display_role); a theme is display config, and the
+    // two are set independently. Tearing the slot iframes out here meant that
+    // on a display with no theme — the default — an empty config took this
+    // branch and destroyed them: renderGrid() ends with
+    // applyTheme(displayConfig), so the home widget it had just built was
+    // removed on every single render, and the overlay never survived one.
+    // renderOverlay() is the overlay's authority and drops it only when the
+    // slot is genuinely empty (which is also what mounts it at boot, since
+    // startApp() reaches applyTheme() through this branch on such a display).
+    // The home widget belongs to renderGrid(), which rebuilds the view
+    // wholesale, so nothing here has to remove it.
+    renderOverlay();
     displayConfig = {};
     return;
   }
@@ -564,20 +830,23 @@ function applyTheme(config) {
   if (typeof config.starfield === "string") config.starfield = config.starfield === "true";
   if (typeof config.nebula === "string") config.nebula = config.nebula === "true";
 
-  // CSS custom properties
+  // CSS custom properties. `void` and `textPrimary` map onto the two tokens the
+  // shell actually derives everything else from (--bg / --fg); the legacy
+  // --void/--text-* names are kept so older theme CSS still resolves.
   if (config.colors && typeof config.colors === "object") {
     const map = {
-      void: "--void",
-      glass: "--glass",
-      glassBorder: "--glass-border",
-      glassGlow: "--glass-glow",
-      textPrimary: "--text-primary",
-      textSecondary: "--text-secondary",
-      textGhost: "--text-ghost",
-      accent: "--accent",
+      void: ["--void", "--bg"],
+      glass: ["--glass", "--panel-solid"],
+      glassBorder: ["--glass-border", "--line"],
+      glassGlow: ["--glass-glow"],
+      textPrimary: ["--text-primary", "--fg"],
+      textSecondary: ["--text-secondary", "--fg-muted"],
+      textGhost: ["--text-ghost", "--fg-faint"],
+      accent: ["--accent"],
     };
-    for (const [key, prop] of Object.entries(map)) {
-      if (config.colors[key]) root.style.setProperty(prop, config.colors[key]);
+    for (const [key, props] of Object.entries(map)) {
+      if (!config.colors[key]) continue;
+      for (const prop of props) root.style.setProperty(prop, config.colors[key]);
     }
   }
 
@@ -630,10 +899,18 @@ function applyTheme(config) {
     customStyle.remove();
   }
 
-  // Theme color meta tag
-  if (config.colors && config.colors.void) {
-    let meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.content = config.colors.void;
+  // Theme colour meta — see snapshotThemeColorMetas(). A theme that names no
+  // usable colour leaves the shipped tags alone (and puts them back if a
+  // previous theme had overridden them), so the chrome always matches whatever
+  // is actually on screen.
+  const themeColor = (config.colors && config.colors.void) || config.background;
+  if (themeColor && typeof themeColor === "string" && !themeColor.includes("(")) {
+    themeColorMetas().forEach((meta) => {
+      meta.removeAttribute("media");
+      meta.setAttribute("content", themeColor);
+    });
+  } else {
+    restoreThemeColorMetas();
   }
 
   // Persistent overlay (across all views) — driven by the overlay slot.
@@ -709,6 +986,18 @@ window.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
     e.preventDefault();
     openSurfaceFinder();
+    return;
+  }
+  if (e.key === "Escape") {
+    document.querySelectorAll(".surface-card.is-menu-open").forEach((el) => el.classList.remove("is-menu-open"));
+  }
+  // Escape leaves an open surface — but only when nothing layered (finder,
+  // modal) is on screen and focus isn't inside a field.
+  if (e.key === "Escape" && currentSurfaceId) {
+    if (document.getElementById("surface-finder") || document.querySelector(".modal-overlay")) return;
+    const tag = document.activeElement && document.activeElement.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    navigate("/");
   }
 });
 
@@ -750,22 +1039,33 @@ function openSurfaceFinder() {
       : surfaces.slice(0, 50);
     activeIdx = 0;
     if (filtered.length === 0) {
-      results.innerHTML = `<div class="finder-empty">No surfaces match "${escapeHtml(q)}"</div>`;
+      const none = document.createElement("div");
+      none.className = "finder-empty";
+      none.textContent = `No surfaces match "${q}"`;
+      results.replaceChildren(none);
       return;
     }
-    results.innerHTML = filtered.map((s, i) => {
+    // Surface titles are device-authorable; they are set as text, never parsed
+    // as markup.
+    results.replaceChildren(...filtered.map((s, i) => {
       const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
       const sub = [];
       if (mime) sub.push(labelForMime(mime));
       const t = timeAgo(s.updated_at);
       if (t) sub.push(t);
-      return `
-        <div class="finder-result${i === 0 ? ' finder-result--active' : ''}" data-idx="${i}" role="option">
-          <div class="finder-result-title">${escapeHtml(s.title)}</div>
-          <div class="finder-result-sub">${sub.map(escapeHtml).join(' · ')}</div>
-        </div>
-      `;
-    }).join("");
+      const row = document.createElement("div");
+      row.className = `finder-result${i === 0 ? " finder-result--active" : ""}`;
+      row.dataset.idx = String(i);
+      row.setAttribute("role", "option");
+      const title = document.createElement("div");
+      title.className = "finder-result-title";
+      title.textContent = s.title || "";
+      const subEl = document.createElement("div");
+      subEl.className = "finder-result-sub";
+      subEl.textContent = sub.join(" · ");
+      row.append(title, subEl);
+      return row;
+    }));
     results.querySelectorAll(".finder-result").forEach((el, i) => {
       el.addEventListener("mouseenter", () => setActive(i));
       el.addEventListener("click", () => select(i));
@@ -803,184 +1103,17 @@ function openSurfaceFinder() {
   input.focus();
 }
 
-// ── Cosmic substrate ──
-// One container holds: aurora ribbon, two/three nebulae, three star
-// layers (parallax via initParallax), and a positioning surface for
-// comets. The container is always inserted; an explicit theme
-// `starfield: false` hides everything cosmic via display:none.
+// ── Retired: cosmic substrate ──
+// The starfield / nebulae / aurora / comet layers are gone. They were hidden by
+// the shell CSS anyway, but building them cost ~180 DOM nodes on every grid
+// render plus a mousemove parallax listener. These stubs keep the SSE handlers
+// and older themes that call them working.
 
-function createAurora() {
-  const el = document.createElement("div");
-  el.className = "aurora";
-  el.id = "aurora";
-  return el;
-}
-
-function createGrain() {
-  const el = document.createElement("div");
-  el.className = "grain";
-  el.id = "grain";
-  return el;
-}
-
-// Fire one comet at a random angle from offscreen-left across the
-// upper third of the canvas. Throttled by `pulseSpace`.
-function fireComet() {
-  const starfield = document.getElementById("starfield");
-  if (!starfield || starfield.style.display === "none") return;
-  const c = document.createElement("div");
-  c.className = "comet";
-  const y = 8 + Math.random() * 38;
-  const angle = 12 + Math.random() * 14;
-  c.style.setProperty("--cy", y + "%");
-  c.style.setProperty("--cx", (-5 - Math.random() * 8) + "%");
-  c.style.setProperty("--angle", angle + "deg");
-  starfield.appendChild(c);
-  setTimeout(() => c.remove(), 1700);
-}
-
-// SSE event coupling: aurora pulses, occasionally a comet streaks.
-let spacePulseT = 0;
-function pulseSpace(opts) {
-  const starfield = document.getElementById("starfield");
-  if (!starfield) return;
-  if (Date.now() - spacePulseT < 450) return; // throttle
-  spacePulseT = Date.now();
-  starfield.classList.remove("aurora-burst");
-  void starfield.offsetWidth; // reflow to restart aurora animation
-  starfield.classList.add("aurora-burst");
-  setTimeout(() => starfield.classList.remove("aurora-burst"), 1500);
-  // Comet on bigger events (creates, theme changes) — not on every tick.
-  if (opts && opts.comet) fireComet();
-}
-
-// Background comet shower — one streak every 22-52s when the tab is
-// visible. The cosmos isn't static, just patient.
-let cometShowerT = null;
-function startCometShower() {
-  if (cometShowerT) clearTimeout(cometShowerT);
-  const tick = () => {
-    if (document.visibilityState === "visible") fireComet();
-    cometShowerT = setTimeout(tick, 22000 + Math.random() * 30000);
-  };
-  cometShowerT = setTimeout(tick, 6000 + Math.random() * 8000);
-}
-
-// ── Starfield (3 parallax layers) — always on, themes opt out ──
-
-function createStarfield() {
-  const el = document.createElement("div");
-  el.className = "starfield";
-  el.id = "starfield";
-
-  // Aurora goes inside so it benefits from the same z=0 stacking +
-  // can be color-pulsed by toggling .aurora-burst on the parent.
-  el.appendChild(createAurora());
-
-  const layers = [
-    { class: "star--far",  count: 110, parallax: 0.008 },
-    { class: "star--mid",  count: 55,  parallax: 0.022 },
-    { class: "star--near", count: 18,  parallax: 0.048 },
-  ];
-
-  layers.forEach((layer) => {
-    const layerEl = document.createElement("div");
-    layerEl.className = "star-layer";
-    layerEl.dataset.parallax = layer.parallax;
-    for (let i = 0; i < layer.count; i++) {
-      const star = document.createElement("div");
-      star.className = "star " + layer.class;
-      star.style.left = Math.random() * 100 + "%";
-      star.style.top = Math.random() * 100 + "%";
-      star.style.animationDelay = Math.random() * 8 + "s";
-      layerEl.appendChild(star);
-    }
-    el.appendChild(layerEl);
-  });
-
-  // Cosmic substrate is on by default. Themes that set
-  // `starfield: false` hide the whole stack (applyTheme handles it).
-  if (displayConfig.starfield === false) el.style.display = "none";
-
-  return el;
-}
-
-function createNebulae() {
-  const frag = document.createDocumentFragment();
-  const n1 = document.createElement("div");
-  n1.className = "nebula nebula--1";
-  const n2 = document.createElement("div");
-  n2.className = "nebula nebula--2";
-  const n3 = document.createElement("div");
-  n3.className = "nebula nebula--3";
-
-  if (displayConfig.nebulaColors && displayConfig.nebulaColors.length >= 2) {
-    n1.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[0]}, transparent 70%)`;
-    n2.style.background = `radial-gradient(circle, ${displayConfig.nebulaColors[1]}, transparent 70%)`;
-  }
-
-  if (displayConfig.starfield === false) {
-    n1.style.display = "none";
-    n2.style.display = "none";
-    n3.style.display = "none";
-  }
-
-  frag.appendChild(n1);
-  frag.appendChild(n2);
-  frag.appendChild(n3);
-  return frag;
-}
-
-// ── Parallax on pointer/gyro ──
-
-function initParallax() {
-  document.addEventListener("mousemove", (e) => {
-    const cx = (e.clientX / window.innerWidth - 0.5) * 2;
-    const cy = (e.clientY / window.innerHeight - 0.5) * 2;
-    applyParallax(cx, cy);
-  });
-
-  if (window.DeviceOrientationEvent) {
-    window.addEventListener("deviceorientation", (e) => {
-      if (e.gamma === null) return;
-      const cx = Math.max(-1, Math.min(1, e.gamma / 30));
-      const cy = Math.max(-1, Math.min(1, (e.beta - 45) / 30));
-      applyParallax(cx, cy);
-    });
-  }
-}
-
-function applyParallax(cx, cy) {
-  const layers = document.querySelectorAll(".star-layer");
-  layers.forEach((layer) => {
-    const p = parseFloat(layer.dataset.parallax) || 0;
-    const x = cx * p * 200;
-    const y = cy * p * 200;
-    layer.style.transform = `translate(${x}px, ${y}px)`;
-  });
-}
-
-initParallax();
-
-// Card tilt-to-pointer — 3D rotateX/Y based on pointer position within
-// the card bounds. Clamped to ±3.2deg. Resets on mouseleave.
-function bindCardTilt(card) {
-  card.addEventListener("mousemove", (e) => {
-    const r = card.getBoundingClientRect();
-    const px = (e.clientX - r.left) / r.width - 0.5;   // -0.5..0.5
-    const py = (e.clientY - r.top)  / r.height - 0.5;
-    const rx = +(px * 6.4).toFixed(2);  // rotateY
-    const ry = +(-py * 4.2).toFixed(2); // rotateX (inverted)
-    card.style.setProperty("--rx", rx + "deg");
-    card.style.setProperty("--ry", ry + "deg");
-    card.classList.add("tilt");
-  });
-  card.addEventListener("mouseleave", () => {
-    card.classList.remove("tilt");
-    card.style.setProperty("--rx", "0deg");
-    card.style.setProperty("--ry", "0deg");
-  });
-}
+function pulseSpace() {}
+function startCometShower() {}
+function createStarfield() { return document.createDocumentFragment(); }
+function createNebulae() { return document.createDocumentFragment(); }
+function createGrain() { return document.createDocumentFragment(); }
 
 // ── Helpers ──
 
@@ -1011,20 +1144,39 @@ function parseMetadata(meta) {
   return meta || {};
 }
 
-function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
+// ── HTML encoding ──
+//
+// Two encoders, named for the context they are safe in, because the difference
+// is a security boundary and not a style choice:
+//
+//   escapeText  — text-node context only. Escapes & < >.
+//   escapeAttr  — quoted-attribute context. Escapes & < > " ' as well.
+//
+// The old single escapeHtml() was `div.textContent = s; return div.innerHTML`,
+// which is the browser's *text* serializer: it leaves quotes untouched. Used in
+// an attribute it let a title of `" onmouseover="…` close the attribute and add
+// a handler. A paired device can set a surface title and the system-plane
+// dashboard renders it, so that was device content reaching system-plane script
+// (and from there POST /api/update/apply, which installs and runs new code on
+// the host). escapeText is deliberately NOT safe in an attribute — never reach
+// for it there; test/clientRender.ts fails the build if any attribute-value
+// interpolation in this file uses anything but escapeAttr/encodeURIComponent.
+//
+// Untrusted values should prefer DOM APIs (textContent / setAttribute) over a
+// template literal entirely; these exist for the markup that is genuinely
+// easier to read as a literal.
+
+const TEXT_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
+const ATTR_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+function escapeText(str) {
+  if (str === null || str === undefined) return "";
+  return String(str).replace(/[&<>]/g, (c) => TEXT_ESCAPES[c]);
 }
 
-function iconForMime(mime) {
-  if (mime === "application/pdf") return "PDF";
-  if (mime === "text/markdown") return "MD";
-  if (mime === "text/html") return "HTML";
-  if (mime && mime.startsWith("image/")) return "IMG";
-  if (mime && mime.startsWith("video/")) return "VID";
-  if (mime && mime.startsWith("audio/")) return "AUD";
-  return "\u25C9";
+function escapeAttr(str) {
+  if (str === null || str === undefined) return "";
+  return String(str).replace(/[&<>"']/g, (c) => ATTR_ESCAPES[c]);
 }
 
 function labelForMime(mime) {
@@ -1040,6 +1192,16 @@ function labelForMime(mime) {
 }
 
 // ── Grid View ──
+
+// The live home-widget's resize handler, held so the next render can take it
+// off `window` — see the home-widget block in renderGrid().
+let homeWidgetResize = null;
+
+// When to re-measure the home widget, in ms after its frame is created.
+const HOME_WIDGET_REMEASURE_MS = [120, 500, 1500];
+// Floor for the widget's height, and the space it reserves before it has been
+// measured — an iframe's own default is 150px, which is a lot of empty box.
+const HOME_WIDGET_MIN_PX = 60;
 
 function renderGrid() {
   currentSurfaceId = null;
@@ -1069,23 +1231,54 @@ function renderGrid() {
   if (surfaces.length > 0) gridView.classList.add("has-cards");
 
   const title = displayConfig.title || "Surface";
-  const header = document.createElement("div");
+  const header = document.createElement("header");
   header.className = "grid-header";
   const count = surfaces.length;
-  const countLabel = count === 0 ? "" : `${String(count).padStart(2, "0")} ${count === 1 ? "surface" : "surfaces"}`;
+  // The skeleton is static markup; the two values that are not (the display
+  // title, which a theme sets, and whatever the user typed into the search box)
+  // are written afterwards as text/properties, never interpolated.
   header.innerHTML = `
-    <div class="grid-title-block">
-      <div class="grid-title">${escapeHtml(title)}</div>
-      <div class="grid-subtitle">a universal display for your agents</div>
+    <div class="grid-brand">
+      <span class="grid-title"></span>
+      <span class="grid-subtitle">${escapeText(TAGLINE)}</span>
     </div>
+    <div class="grid-header-spacer"></div>
+    ${count > 0 ? `
+    <span class="grid-search-wrap">
+      <input type="text" class="grid-search" placeholder="Search surfaces" spellcheck="false" autocomplete="off" aria-label="Search surfaces">
+      <button type="button" class="grid-kbd" title="Find a surface (⌘K)" aria-label="Find a surface">⌘K</button>
+    </span>` : ""}
     <div class="grid-meta" id="grid-meta">
-      ${count > 0 ? `<span class="grid-meta-count">${escapeHtml(countLabel)}</span>` : ""}
-      <span class="grid-meta-live"><span class="live-dot"></span></span>
+      <span class="update-notice" id="update-notice" hidden></span>
+      ${count > 0 ? `<span class="grid-meta-count">${count} ${count === 1 ? "surface" : "surfaces"}</span>` : ""}
+      <span class="grid-meta-live" role="status"><span class="live-dot"></span></span>
+      <span class="grid-version" id="grid-version" hidden></span>
+    </div>
+    <div class="grid-actions">
+      <button type="button" class="grid-icon-btn" id="grid-guide" title="Hand the tutorial to your agent" aria-label="Hand the tutorial to your agent">${ICON_GUIDE}</button>
+      <a class="grid-icon-btn" href="${escapeAttr(REPO_URL)}" target="_blank" rel="noopener noreferrer" title="Surface on GitHub" aria-label="Surface on GitHub">${ICON_GITHUB}</a>
     </div>
   `;
+  header.querySelector(".grid-title").textContent = title;
+  header.querySelector("#grid-guide").addEventListener("click", () => showTutorialModal());
+  paintVersionChip(header.querySelector("#grid-version"));
+  const headerSearch = header.querySelector(".grid-search");
+  if (headerSearch) {
+    headerSearch.value = gridQuery;
+    headerSearch.addEventListener("input", () => { gridQuery = headerSearch.value; paintGrid(); });
+    header.querySelector(".grid-kbd").addEventListener("click", () => openSurfaceFinder());
+  }
   gridView.appendChild(header);
 
   // Home widget (full HTML/JS iframe on the homescreen)
+  //
+  // Whatever the previous render left listening measures an iframe that is now
+  // detached, so it goes first — unconditionally, because this render may not
+  // put a widget back.
+  if (homeWidgetResize) {
+    window.removeEventListener("resize", homeWidgetResize);
+    homeWidgetResize = null;
+  }
   if (displaySlots.home) {
     const widget = document.createElement("iframe");
     widget.id = "home-widget";
@@ -1093,12 +1286,51 @@ function renderGrid() {
     widget.src = "/display/home/html";
     widget.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
     gridView.appendChild(widget);
-    // Auto-size: listen for content height
-    widget.onload = () => {
+    // Auto-size to the widget's own content. The frame has to be collapsed
+    // first: an iframe gives its document a viewport, so documentElement
+    // .scrollHeight just reports back whatever height the frame already had.
+    const sizeWidget = () => {
       try {
-        const h = widget.contentDocument.documentElement.scrollHeight;
-        widget.style.height = Math.max(h, 60) + "px";
+        const doc = widget.contentDocument;
+        // Nothing to measure yet. Leaving the reserved height alone beats
+        // collapsing the frame and reading back its own viewport.
+        if (!doc || !doc.body) return;
+        widget.style.height = "0px";
+        // `body.scrollHeight` is the content's own box. `documentElement
+        // .scrollHeight` is the content OR the viewport, whichever is taller,
+        // so it is only a fallback for a document with no body to ask.
+        const h = doc.body.scrollHeight
+          || (doc.documentElement ? doc.documentElement.scrollHeight : 0);
+        widget.style.height = Math.max(h, HOME_WIDGET_MIN_PX) + "px";
       } catch { widget.style.height = "200px"; }
+    };
+    // Measure on a short decaying schedule from creation, not from `load`.
+    // A widget whose frame is slow to fire `load` — measured here at roughly
+    // one run in six — was left at the iframe's own 150px default with 74px of
+    // content in it, a half-empty box at the top of the dashboard.
+    for (const delay of HOME_WIDGET_REMEASURE_MS) {
+      setTimeout(() => { if (widget.isConnected) sizeWidget(); }, delay);
+    }
+    // Re-measure on resize: a widget that reflows at a different width would
+    // otherwise keep the old height. Registered once per iframe, not once per
+    // load — widget.onload can fire more than once, and renderGrid() builds a
+    // fresh iframe on every hash change, SSE reconnect and display_theme. Left
+    // unmanaged these pile up for the life of the page (worst on a kiosk, which
+    // never reloads), and each stale one measures a detached frame, where
+    // contentDocument is null and the catch writes 200px to a dead node.
+    const onResize = () => {
+      if (!widget.isConnected) {
+        window.removeEventListener("resize", onResize);
+        return;
+      }
+      sizeWidget();
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+    homeWidgetResize = onResize;
+    widget.onload = () => {
+      sizeWidget();
+      // Once more after a frame, for fonts and late-decoding images.
+      requestAnimationFrame(sizeWidget);
     };
   }
 
@@ -1119,12 +1351,13 @@ function renderGrid() {
     empty.className = "empty-state";
     empty.innerHTML = `
       <div class="empty-text">
+        <div class="empty-eyebrow">Surface is listening</div>
         <div class="empty-prompt">What should I make?</div>
         <div class="empty-suggestions">
           <span class="empty-suggestion-arrow">›</span><span class="empty-suggestion-text"></span>
         </div>
-        <div class="empty-sub">tell your agent</div>
-        <button type="button" class="empty-tour-btn" onclick="showTutorialModal()">Start Tutorial</button>
+        <div class="empty-sub">Say it to your agent — it lands here.</div>
+        <button type="button" class="empty-tour-btn" data-tutorial-open>Start the tutorial</button>
       </div>
       <div class="empty-portal" id="empty-portal">
         <div class="portal-gallery">
@@ -1136,7 +1369,14 @@ function renderGrid() {
         <div class="portal-scrollbar-thumb"></div>
       </div>
     `;
-    container.appendChild(empty);
+    const tourBtn = empty.querySelector("[data-tutorial-open]");
+    if (tourBtn) tourBtn.addEventListener("click", showTutorialModal);
+    // Inside .grid-view, not beside it: .grid-view is `position: relative;
+    // z-index: 1`, so it is a stacking context and the header's z-index: 20
+    // cannot escape it. An opaque empty state parked outside that context
+    // painted straight over the header — hiding the release pill on exactly
+    // the dashboard (fresh or just-cleared) where it matters most.
+    gridView.appendChild(empty);
     cycleEmptySuggestions(empty);
     mountGallery(empty);
   } else {
@@ -1150,9 +1390,26 @@ function renderGrid() {
     paintGrid(grid);
   }
 
+  // The sticky header only grows a rule once content passes under it. Read the
+  // scroll position inside rAF so the listener never forces a synchronous
+  // layout on the scroll thread.
+  let scrollQueued = false;
+  gridView.addEventListener("scroll", () => {
+    if (scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      scrollQueued = false;
+      gridView.classList.toggle("is-scrolled", gridView.scrollTop > 4);
+    });
+  }, { passive: true });
+
   container.appendChild(gridView);
   app.innerHTML = "";
   app.appendChild(container);
+
+  // The header is rebuilt on every grid render; re-apply the last known
+  // release status instead of re-fetching it.
+  paintUpdateNotice();
 
   // Re-apply theme to newly created elements
   applyTheme(displayConfig);
@@ -1175,33 +1432,44 @@ const FILTER_GROUPS = [
   { id: "other", label: "Other", match: (m) => !(m === "text/html" || m === "" || m.startsWith("video/") || m.startsWith("audio/") || m.startsWith("image/")) },
 ];
 
+// Only offer a filter that would actually return something. A wall of empty
+// chips ("Video", "Audio") is noise on a display that holds seven HTML surfaces.
+function activeFilterGroups(list) {
+  const mimes = list.map((s) => s.artifact_mime || (s.artifact && s.artifact.mime) || "");
+  const groups = FILTER_GROUPS.filter((f) => f.id === "all" || mimes.some((m) => f.match(m)));
+  // A lone "All" chip filters nothing — drop the row entirely.
+  return groups.length > 2 ? groups : [];
+}
+
 function createGridToolbar() {
   const bar = document.createElement("div");
   bar.className = "grid-toolbar";
+  const groups = activeFilterGroups(surfaces);
   bar.innerHTML = `
-    <div class="grid-toolbar-left">
-      <span class="grid-search-wrap">
-        <input type="text" class="grid-search" placeholder="Search…" value="${escapeHtml(gridQuery)}" spellcheck="false" autocomplete="off">
-        <button type="button" class="grid-kbd" title="Find a surface (⌘K)" aria-label="Find a surface">⌘K</button>
-      </span>
-      ${FILTER_GROUPS.map((f) => `
-        <button type="button" class="grid-chip${f.id === gridFilter ? " grid-chip--active" : ""}" data-filter="${f.id}">${escapeHtml(f.label)}</button>
+    <div class="grid-toolbar-left" role="group" aria-label="Filter by kind">
+      ${groups.map((f) => `
+        <button type="button" class="grid-chip" data-filter="${escapeAttr(f.id)}" aria-pressed="${escapeAttr(String(f.id === gridFilter))}">${escapeText(f.label)}</button>
       `).join("")}
     </div>
-    <select class="grid-sort" aria-label="Sort">
+    <select class="grid-sort" aria-label="Sort surfaces">
       <option value="newest"${gridSort === "newest" ? " selected" : ""}>Newest</option>
       <option value="oldest"${gridSort === "oldest" ? " selected" : ""}>Oldest</option>
       <option value="az"${gridSort === "az" ? " selected" : ""}>A–Z</option>
       <option value="za"${gridSort === "za" ? " selected" : ""}>Z–A</option>
     </select>
   `;
-  const search = bar.querySelector(".grid-search");
-  search.addEventListener("input", () => { gridQuery = search.value; paintGrid(); });
-  bar.querySelector(".grid-kbd").addEventListener("click", () => openSurfaceFinder());
   bar.querySelectorAll(".grid-chip").forEach((btn) => {
+    // The active chip is marked here rather than interpolated into `class`:
+    // every attribute-value interpolation in this file has to go through
+    // escapeAttr, and the build guard in test/clientRender.ts holds that line.
+    btn.classList.toggle("grid-chip--active", btn.dataset.filter === gridFilter);
     btn.addEventListener("click", () => {
       gridFilter = btn.dataset.filter;
-      bar.querySelectorAll(".grid-chip").forEach((b) => b.classList.toggle("grid-chip--active", b === btn));
+      bar.querySelectorAll(".grid-chip").forEach((b) => {
+        const on = b === btn;
+        b.classList.toggle("grid-chip--active", on);
+        b.setAttribute("aria-pressed", String(on));
+      });
       paintGrid();
     });
   });
@@ -1236,47 +1504,194 @@ function paintGrid(target) {
   const grid = target || document.getElementById("surface-grid");
   if (!grid) return;
   const visible = applyGridFilters(surfaces);
+  // Every card in the grid is about to be detached, and an IntersectionObserver
+  // holds its targets strongly: a thumb that never scrolled into view would
+  // stay observed forever, and its onerror closes over `preview`, so the whole
+  // dead card subtree is retained with it. paintGrid runs on every keystroke,
+  // every filter change, every hash change and every SSE reconnect — on a kiosk
+  // that never reloads, that is unbounded. Drop the old targets here; each card
+  // rebuilt below re-registers its own.
+  if (thumbObserver) thumbObserver.disconnect();
   grid.innerHTML = "";
   if (visible.length === 0) {
     const empty = document.createElement("div");
     empty.className = "grid-empty";
-    empty.textContent = gridQuery ? `No surfaces match “${gridQuery}”` : "No surfaces in this filter";
+    const line = document.createElement("p");
+    line.className = "grid-empty-line";
+    // The query is user text; it goes in as a text node.
+    line.textContent = gridQuery ? `No surfaces match “${gridQuery}”` : "Nothing in this filter";
+    empty.appendChild(line);
+    // A dead end needs a way out. The filter chips are still on screen, so the
+    // only state the user cannot see how to undo is the query.
+    if (gridQuery) {
+      const reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "grid-empty-reset";
+      reset.textContent = "Clear search";
+      reset.addEventListener("click", () => {
+        const input = document.querySelector(".grid-search");
+        if (input) {
+          input.value = "";
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.focus();
+        }
+      });
+      empty.appendChild(reset);
+    }
     grid.appendChild(empty);
     return;
   }
-  visible.forEach((s, i) => grid.appendChild(createCard(s, i)));
+  // One fragment, one insertion: appending each card individually forces the
+  // grid to re-layout per card.
+  const frag = document.createDocumentFragment();
+  visible.forEach((s, i) => frag.appendChild(createCard(s, i)));
+  grid.appendChild(frag);
   updateGridMeta();
 }
 
+// Thumbnails load only as cards approach the viewport. `rootMargin` gives the
+// decode a head start so an image is ready by the time the card is on screen,
+// without paying for every card in a hundred-surface grid up front.
+const thumbObserver = "IntersectionObserver" in window
+  ? new IntersectionObserver((entries, obs) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        obs.unobserve(entry.target);
+        loadCardThumb(entry.target);
+      }
+    }, { rootMargin: "400px 0px", threshold: 0 })
+  : null;
+
+function loadCardThumb(img) {
+  if (!img || img.dataset.loaded === "1") return;
+  const src = img.dataset.src;
+  if (!src) return;
+  img.dataset.loaded = "1";
+  img.src = src;
+}
+
+// Deterministic hue per surface so a card's cover is stable across reloads and
+// two neighbours rarely collide. FNV-1a, matching `hueForSeed` in
+// server/render.ts — the two covers must be the same picture.
+function hueForId(id) {
+  const str = String(id || "");
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % 360;
+}
+
+const FALLBACK_MAX_LINES = 12;
+// Prose lines wrap, so five of them can fill a card twice over; code lines are
+// one row each and a short log wants all of them.
+const FALLBACK_MAX_PROSE_LINES = 7;
+
+// The cover a card wears when there is no capture to show. It sets the opening
+// lines of the surface's own content — the same thing a screenshot would have
+// shown, minus the pixels. The title is deliberately absent: it is already the
+// first line of the caption directly underneath, and printing it twice was what
+// made the old cover read as a placeholder rather than a preview.
+function buildFallbackCover(s, mime) {
+  const cover = document.createElement("div");
+  cover.className = "card-fallback";
+  cover.style.setProperty("--seed-h", String(hueForId(s.id)));
+
+  const preview = s.preview && Array.isArray(s.preview.lines) && s.preview.lines.length
+    ? s.preview
+    : null;
+
+  if (!preview) {
+    // Nothing readable — an image mid-capture, a binary, an unreadable path.
+    // Say the kind quietly and stop; an empty frame beats a loud one.
+    const meta = parseMetadata(s.metadata);
+    cover.classList.add("card-fallback--bare");
+    const kind = document.createElement("div");
+    kind.className = "card-fallback-kind";
+    // Prefer the human label over metadata.icon: the CLI stamps terse codes
+    // like "FILE" on linked artifacts, which is exactly the file-extension chip
+    // this cover exists to replace. An agent's own icon still wins for unknown
+    // mimes.
+    kind.textContent = mime ? labelForMime(mime) : (meta.icon || "Surface");
+    cover.appendChild(kind);
+    return cover;
+  }
+
+  const code = preview.mode === "code";
+  cover.classList.add(code ? "card-fallback--code" : "card-fallback--prose");
+  const lines = preview.lines.slice(0, code ? FALLBACK_MAX_LINES : FALLBACK_MAX_PROSE_LINES);
+  // A one- or two-line excerpt top-aligned in a 16:10 frame reads as a card
+  // that failed to load the rest. Centred, it reads as the whole thing — which
+  // it is.
+  if (lines.length <= (code ? 2 : 3)) cover.classList.add("card-fallback--sparse");
+  const heads = new Set(Array.isArray(preview.heads) ? preview.heads : []);
+  const doc = document.createElement("div");
+  doc.className = "card-fallback-doc";
+  for (let i = 0; i < lines.length; i++) {
+    const el = document.createElement("div");
+    // Prose leads with a headline the way the surface itself does. Code is a
+    // transcript — every line carries the same weight, so none of them lead.
+    el.className = "card-fallback-line";
+    if (!code && i === 0) el.classList.add("card-fallback-line--lead");
+    else if (heads.has(i)) el.classList.add("card-fallback-line--head");
+    // Preview text is artifact content, which a paired device can author, and
+    // this cover renders on the SYSTEM plane. It goes in as a text node — never
+    // as markup, and never through an attribute.
+    el.textContent = lines[i];
+    doc.appendChild(el);
+  }
+  cover.appendChild(doc);
+  return cover;
+}
+
+function cardThumbUrl(s) {
+  const version = encodeURIComponent(s.updated_at || s.created_at || "");
+  return `/artifacts/${encodeURIComponent(s.id)}/thumb${version ? `?v=${version}` : ""}`;
+}
+
 function createCard(s, index) {
-  const meta = parseMetadata(s.metadata);
-  const card = document.createElement("div");
+  const card = document.createElement("article");
   card.className = "surface-card";
   card.dataset.id = s.id;
-  card.style.setProperty("--card-delay", ((index || 0) * 0.08) + "s");
-  card.style.setProperty("--bob-delay", (-(Math.random() * 7)).toFixed(2) + "s");
+  card.tabIndex = 0;
+  card.setAttribute("role", "link");
+  // Only the first screenful is worth staggering; beyond that the delay just
+  // makes a fast grid feel slow.
+  if ((index || 0) < 12) card.style.setProperty("--card-delay", ((index || 0) * 0.035) + "s");
   card.onclick = () => navigate("/surface/" + s.id);
+  card.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      if (e.target !== card) return;
+      e.preventDefault();
+      navigate("/surface/" + s.id);
+    }
+  });
 
-  const disc = document.createElement("div");
-  disc.className = "card-disc";
+  const preview = document.createElement("div");
+  preview.className = "card-preview";
 
   const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
-  const thumbVersion = encodeURIComponent(s.updated_at || s.created_at || "");
-  const thumbUrl = `/artifacts/${s.id}/thumb${thumbVersion ? `?v=${thumbVersion}` : ""}`;
-  const img = document.createElement("img");
-  img.className = "card-thumb";
-  img.loading = "lazy";
-  img.decoding = "async";
-  img.alt = "";
-  img.src = thumbUrl;
-  img.onerror = () => {
-    img.remove();
-    const iconEl = document.createElement("div");
-    iconEl.className = "card-disc-icon";
-    iconEl.textContent = meta.icon || iconForMime(mime);
-    disc.prepend(iconEl);
-  };
-  disc.appendChild(img);
+  // `has_thumb` tells us a real capture (or a passthrough image) is on disk.
+  // Without it the card paints its own cover instead of fetching a placeholder
+  // it would only throw away when the capture lands.
+  if (s.has_thumb === false) {
+    preview.appendChild(buildFallbackCover(s, mime));
+  } else {
+    const img = document.createElement("img");
+    img.className = "card-thumb";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.alt = `Preview of ${s.title || "surface"}`;
+    img.dataset.src = cardThumbUrl(s);
+    img.onerror = () => {
+      img.remove();
+      preview.prepend(buildFallbackCover(s, mime));
+    };
+    preview.appendChild(img);
+    if (thumbObserver) thumbObserver.observe(img);
+    else loadCardThumb(img);
+  }
 
   if (s.updated_at) {
     const updatedAt = parseServerDate(s.updated_at);
@@ -1285,20 +1700,29 @@ function createCard(s, index) {
       const live = document.createElement("div");
       live.className = "card-live";
       live.textContent = "live";
-      disc.appendChild(live);
+      preview.appendChild(live);
     }
   }
 
-  card.appendChild(disc);
+  card.appendChild(preview);
   updateCardBadges(card, s);
 
   const actions = document.createElement("div");
   actions.className = "card-actions";
-  actions.innerHTML = `
-    <button type="button" class="card-action" data-action="copy" title="Copy link" aria-label="Copy link">${ICON_COPY}</button>
-    <button type="button" class="card-action" data-action="rename" title="Rename" aria-label="Rename">${ICON_PENCIL}</button>
-    <button type="button" class="card-action card-action--danger" data-action="delete" title="Delete" aria-label="Delete">${ICON_X}</button>
-  `;
+  for (const [action, label, icon, danger] of [
+    ["copy", "Copy link", ICON_COPY, false],
+    ["rename", "Rename", ICON_PENCIL, false],
+    ["delete", "Delete", ICON_X, true],
+  ]) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = danger ? "card-action card-action--danger" : "card-action";
+    btn.dataset.action = action;
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = icon; // a module constant, never artifact data
+    actions.appendChild(btn);
+  }
   actions.addEventListener("click", (e) => e.stopPropagation());
   actions.querySelector('[data-action="copy"]').addEventListener("click", async (e) => {
     e.preventDefault();
@@ -1320,32 +1744,71 @@ function createCard(s, index) {
       showToast(body.error || "Failed to delete", 3000, "error");
     }
   });
-  card.appendChild(actions);
+  // Inside the preview, not the card: the tray is anchored to the bottom of the
+  // picture, and the card box also contains the caption underneath it.
+  preview.appendChild(actions);
 
+  // A surface title is device-authorable and lands here on the SYSTEM plane —
+  // the dashboard that can POST /api/update/apply. It is written as text and as
+  // an attribute through DOM APIs, which cannot be escaped out of, rather than
+  // interpolated into markup.
   const body = document.createElement("div");
   body.className = "card-body";
-  const subParts = [];
-  if (mime) subParts.push(labelForMime(mime));
-  // Attribution: who made it / which project owns it.
-  if (s.agent) subParts.push(s.agent);
-  else if (s.project_root) subParts.push(s.project_root.split("/").pop());
-  const t = timeAgo(s.updated_at);
-  if (t) subParts.push(t);
-  body.innerHTML = `
-    <div class="card-title">${escapeHtml(s.title)}</div>
-    <div class="card-sub">${subParts.map(escapeHtml).join(" · ")}</div>
-  `;
+  const text = document.createElement("div");
+  text.className = "card-text";
+  const titleEl = document.createElement("div");
+  titleEl.className = "card-title";
+  titleEl.textContent = s.title || "";
+  titleEl.setAttribute("title", s.title || "");
+  const subEl = document.createElement("div");
+  subEl.className = "card-sub";
+  subEl.textContent = cardSubtitle(s);
+  text.append(titleEl, subEl);
+  body.appendChild(text);
+
+  // Touch handle for the tray. CSS shows it only where hover doesn't exist, so
+  // pointer devices keep the clean caption and never see it.
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "card-more";
+  more.setAttribute("aria-label", `Actions for ${s.title || "surface"}`);
+  more.innerHTML = ICON_MORE;
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const open = !card.classList.contains("is-menu-open");
+    document.querySelectorAll(".surface-card.is-menu-open").forEach((el) => el.classList.remove("is-menu-open"));
+    card.classList.toggle("is-menu-open", open);
+  });
+  body.appendChild(more);
   card.appendChild(body);
 
-  bindCardTilt(card);
-
   return card;
+}
+
+// "HTML · claude · 5m ago" — kind, who made it, when. Sentence case; the mono
+// screaming-caps version read as a build log, not a library.
+//
+// A phone card is ~170px wide, which is not enough for three facts plus the
+// actions handle without the line ellipsising mid-word. Attribution is the one
+// that drops: kind and age are what you scan a grid by.
+function cardSubtitle(s) {
+  const mime = s.artifact_mime || (s.artifact && s.artifact.mime) || "";
+  const narrow = typeof window.matchMedia === "function" && window.matchMedia("(max-width: 760px)").matches;
+  const parts = [];
+  if (mime) parts.push(labelForMime(mime));
+  if (!narrow) {
+    if (s.agent) parts.push(s.agent);
+    else if (s.project_root) parts.push(s.project_root.split("/").pop());
+  }
+  const t = timeAgo(s.updated_at);
+  if (t) parts.push(t);
+  return parts.join(" · ");
 }
 
 // Delivery-ladder card states: pending-action badge, "agent listening" pill,
 // and the ⟳ handling pill while a binding runs.
 function updateCardBadges(card, s) {
-  const disc = card.querySelector(".card-disc");
+  const disc = card.querySelector(".card-preview");
   if (!disc) return;
   const n = s.pending_actions || 0;
   let badge = disc.querySelector(".card-badge");
@@ -1373,8 +1836,31 @@ function updateCardBadges(card, s) {
   }
 }
 
+// Find a card by artifact id WITHOUT building a selector string out of the id.
+// Interpolating an id into `[data-id="…"]` is the selector-injection cousin of
+// the markup problem: a quote in the id throws (taking the SSE handler with it)
+// or, worse, matches a different card. dataset comparison cannot be escaped out
+// of, and the grid is small enough that the scan is free.
+function cardById(id) {
+  if (id === null || id === undefined) return null;
+  const wanted = String(id);
+  const cards = document.querySelectorAll(".surface-card");
+  for (const card of cards) {
+    if (card.dataset.id === wanted) return card;
+  }
+  return null;
+}
+
+function setCardTitle(card, title) {
+  const titleEl = card && card.querySelector(".card-title");
+  if (!titleEl) return;
+  titleEl.textContent = title || "";
+  if (titleEl.tagName !== "INPUT") titleEl.setAttribute("title", title || "");
+}
+
 function setCardHandling(surfaceId, running) {
-  const disc = document.querySelector(`.surface-card[data-id="${surfaceId}"] .card-disc`);
+  const card = cardById(surfaceId);
+  const disc = card && card.querySelector(".card-preview");
   if (!disc) return;
   let pill = disc.querySelector(".card-handling");
   if (running) {
@@ -1394,6 +1880,10 @@ function setCardHandling(surfaceId, running) {
 const ICON_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 const ICON_PENCIL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
 const ICON_X = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+const ICON_MORE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+const ICON_CHEVRON_LEFT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+const ICON_LINK = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1.1l2.9-2.9a5 5 0 0 0-7.1-7.1L11.3 4.7"/><path d="M14 11a5 5 0 0 0-7.1-.1L4 13.8a5 5 0 0 0 7.1 7.1l1.5-1.5"/></svg>';
+const ICON_EXTERNAL = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"/><path d="M20 4l-8.5 8.5"/><path d="M19 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V6.5A1.5 1.5 0 0 1 5 5h4.5"/></svg>';
 
 function startRename(card, id) {
   const titleEl = card.querySelector(".card-title");
@@ -1404,9 +1894,17 @@ function startRename(card, id) {
   input.type = "text";
   input.value = originalTitle;
   input.maxLength = 200;
+  // A surface title is not prose: red squiggles under "api-blue" or a
+  // capitalised first letter are noise in a field the user is retyping.
+  input.spellcheck = false;
+  input.autocapitalize = "off";
+  input.autocomplete = "off";
   titleEl.replaceWith(input);
   input.focus();
   input.select();
+  // select() leaves a long title scrolled to its end, so the field opens on the
+  // last few words of a name the user is about to replace. Show the start.
+  input.scrollLeft = 0;
 
   let settled = false;
   const finalize = (newText) => {
@@ -1415,6 +1913,7 @@ function startRename(card, id) {
     const span = document.createElement("div");
     span.className = "card-title";
     span.textContent = newText;
+    span.setAttribute("title", newText);
     input.replaceWith(span);
   };
   const save = async () => {
@@ -1431,8 +1930,7 @@ function startRename(card, id) {
     });
     if (!res.ok) {
       showToast("Failed to rename", 3000, "error");
-      const span = card.querySelector(".card-title");
-      if (span) span.textContent = originalTitle;
+      setCardTitle(card, originalTitle);
     }
   };
   input.addEventListener("keydown", (e) => {
@@ -1444,6 +1942,9 @@ function startRename(card, id) {
 }
 
 // ── Surface View ──
+
+// How long to wait for a surface frame's `load` before revealing it anyway.
+const FRAME_REVEAL_TIMEOUT_MS = 4000;
 
 async function renderSurface(id) {
   currentSurfaceId = id;
@@ -1463,21 +1964,40 @@ async function renderSurface(id) {
   const mime = artifact.mime || "";
   const mimeLabel = mime ? labelForMime(mime) : "";
 
-  const nav = document.createElement("div");
+  // One 40px row: leave, identify, state. Everything else belongs to the
+  // surface. Meta collapses out of the way before the title ever truncates.
+  const nav = document.createElement("header");
   nav.className = "surface-nav";
+  // Static skeleton + textContent for the artifact-controlled parts (the title
+  // is device-authorable, and this view runs on the trusted app origin).
   nav.innerHTML = `
-    <button class="back-btn" onclick="location.hash='/'" aria-label="Back">←</button>
+    <button type="button" class="back-btn" aria-label="Back to all surfaces" title="Back (esc)">${ICON_CHEVRON_LEFT}</button>
     <div class="surface-nav-titlewrap">
-      <div class="surface-nav-title">${escapeHtml(artifact.title)}</div>
+      <h1 class="surface-nav-title"></h1>
       <div class="surface-nav-meta">
-        ${mimeLabel ? `<span>${escapeHtml(mimeLabel)}</span>` : ""}
-        ${mimeLabel ? `<span class="surface-nav-meta-dot"></span>` : ""}
-        <span data-surface-updated-at>${escapeHtml(timeAgo(artifact.updated_at))}</span>
+        ${mimeLabel ? `<span data-surface-mime></span><span class="surface-nav-meta-dot"></span>` : ""}
+        <span data-surface-updated-at></span>
         <span class="surface-nav-meta-dot"></span>
         <span class="surface-nav-live">live</span>
       </div>
     </div>
+    <div class="surface-nav-actions">
+      <button type="button" class="nav-action" data-action="copy" title="Copy link" aria-label="Copy link">${ICON_LINK}</button>
+      <button type="button" class="nav-action" data-action="open" title="Open raw surface" aria-label="Open raw surface">${ICON_EXTERNAL}</button>
+    </div>
   `;
+  nav.querySelector(".surface-nav-title").textContent = artifact.title || "";
+  const mimeEl = nav.querySelector("[data-surface-mime]");
+  if (mimeEl) mimeEl.textContent = mimeLabel;
+  nav.querySelector("[data-surface-updated-at]").textContent = timeAgo(artifact.updated_at);
+  nav.querySelector(".back-btn").addEventListener("click", () => { location.hash = "/"; });
+  nav.querySelector('[data-action="copy"]').addEventListener("click", async () => {
+    const ok = await copyToClipboard(location.origin + "/#/surface/" + id);
+    showToast(ok ? "Link copied" : "Copy failed", 2600, ok ? "success" : "error");
+  });
+  nav.querySelector('[data-action="open"]').addEventListener("click", () => {
+    window.open(`/artifacts/${encodeURIComponent(id)}/view`, "_blank", "noopener");
+  });
   view.appendChild(nav);
 
   const iframe = document.createElement("iframe");
@@ -1503,6 +2023,13 @@ async function renderSurface(id) {
     warn.textContent = "This surface needs the isolated content plane, which is unavailable.";
     view.appendChild(warn);
   } else {
+    // Reveal on load, so the frame's white backstop is never on screen empty.
+    // The timer is the backstop's backstop: a frame that never fires `load` —
+    // a stalled fetch, a content plane that went away — must still become
+    // visible rather than leave the user staring at the shell background.
+    const reveal = () => iframe.classList.add("is-loaded");
+    iframe.addEventListener("load", reveal, { once: true });
+    setTimeout(reveal, FRAME_REVEAL_TIMEOUT_MS);
     iframe.src = frameSrc;
     view.appendChild(iframe);
   }
@@ -1546,6 +2073,9 @@ function connectGlobalSSE() {
     }
     if (hadError) {
       hadError = false;
+      // A reconnect is also how the PWA finds out an update finished: the
+      // server that went away was the one being replaced.
+      refreshUpdateStatus();
       await reconcileAfterReconnect();
     }
   });
@@ -1610,7 +2140,7 @@ function connectGlobalSSE() {
     const becameHidden = nextMeta && nextMeta.hidden === true;
     if (becameHidden) {
       if (idx !== -1) surfaces.splice(idx, 1);
-      const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+      const card = cardById(data.id);
       if (card) {
         card.classList.add("removing");
         card.addEventListener("animationend", () => {
@@ -1628,7 +2158,7 @@ function connectGlobalSSE() {
       surfaces.unshift(data);
       if (document.querySelector(".empty-state")) { render(); return; }
       const grid = document.getElementById("surface-grid");
-      if (grid && !grid.querySelector(`.surface-card[data-id="${data.id}"]`)) {
+      if (grid && !cardById(data.id)) {
         grid.prepend(createCard(data, 0));
         updateGridMeta();
       }
@@ -1636,30 +2166,19 @@ function connectGlobalSSE() {
     }
     if (idx !== -1) {
       surfaces[idx] = { ...surfaces[idx], ...data };
-      const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+      const card = cardById(data.id);
       if (card) {
         updateCardBadges(card, surfaces[idx]);
-        const titleEl = card.querySelector(".card-title");
-        if (titleEl) titleEl.textContent = data.title || surfaces[idx].title;
+        setCardTitle(card, data.title || surfaces[idx].title);
         const subEl = card.querySelector(".card-sub");
-        if (subEl) {
-          const merged = surfaces[idx];
-          const mime = merged.artifact_mime || (merged.artifact && merged.artifact.mime) || "";
-          const parts = [];
-          if (mime) parts.push(labelForMime(mime));
-          if (merged.agent) parts.push(merged.agent);
-          else if (merged.project_root) parts.push(merged.project_root.split("/").pop());
-          const t = timeAgo(merged.updated_at);
-          if (t) parts.push(t);
-          subEl.textContent = parts.join(" · ");
-        }
+        if (subEl) subEl.textContent = cardSubtitle(surfaces[idx]);
         let live = card.querySelector(".card-live");
         if (!live) {
           live = document.createElement("div");
           live.className = "card-live";
           live.textContent = "live";
-          const disc = card.querySelector(".card-disc");
-          if (disc) disc.appendChild(live);
+          const preview = card.querySelector(".card-preview");
+          if (preview) preview.appendChild(live);
         }
         setTimeout(() => {
           const stillThere = card.querySelector(".card-live");
@@ -1701,7 +2220,7 @@ function connectGlobalSSE() {
     pulseSpace();
     maybeRefreshSlots(data.id);
     surfaces = surfaces.filter((s) => s.id !== data.id);
-    const card = document.querySelector(`.surface-card[data-id="${data.id}"]`);
+    const card = cardById(data.id);
     if (card) {
       card.classList.add("removing");
       card.addEventListener("animationend", () => {
@@ -1722,7 +2241,7 @@ function connectGlobalSSE() {
     const idx = surfaces.findIndex((s) => s.id === d.surface_id);
     if (idx === -1) return;
     surfaces[idx].pending_actions = (surfaces[idx].pending_actions || 0) + 1;
-    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    const card = cardById(d.surface_id);
     if (card) updateCardBadges(card, surfaces[idx]);
   });
 
@@ -1731,7 +2250,7 @@ function connectGlobalSSE() {
     const idx = surfaces.findIndex((s) => s.id === d.surface_id);
     if (idx === -1) return;
     surfaces[idx].pending_actions = d.pending_actions || 0;
-    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    const card = cardById(d.surface_id);
     if (card) updateCardBadges(card, surfaces[idx]);
   });
 
@@ -1740,7 +2259,7 @@ function connectGlobalSSE() {
     if (!d.surface_id || d.surface_id === "*") return;
     const idx = surfaces.findIndex((s) => s.id === d.surface_id);
     if (idx !== -1) surfaces[idx].listening = d.listening;
-    const card = document.querySelector(`.surface-card[data-id="${d.surface_id}"]`);
+    const card = cardById(d.surface_id);
     if (card) updateCardBadges(card, surfaces[idx] || { listening: d.listening });
   });
 
@@ -1761,11 +2280,34 @@ function connectGlobalSSE() {
   globalSSE.addEventListener("thumb_ready", (e) => {
     const data = JSON.parse(e.data);
     if (!data || !data.id) return;
-    const img = document.querySelector(`.surface-card[data-id="${data.id}"] .card-thumb`);
-    if (!img) return;
-    const url = new URL(img.src, location.origin);
-    url.searchParams.set("v", String(Date.now()));
-    img.src = url.pathname + "?" + url.searchParams.toString();
+    const idx = surfaces.findIndex((s) => s.id === data.id);
+    if (idx !== -1) surfaces[idx].has_thumb = true;
+    const card = cardById(data.id);
+    if (!card) return;
+    const preview = card.querySelector(".card-preview");
+    if (!preview) return;
+    const src = `/artifacts/${encodeURIComponent(data.id)}/thumb?v=${Date.now()}`;
+    const existing = preview.querySelector(".card-thumb");
+    if (existing) {
+      existing.dataset.src = src;
+      existing.dataset.loaded = "1";
+      existing.src = src;
+      return;
+    }
+    // First capture for a card that has been showing its own cover: decode the
+    // PNG off-thread and only swap once it is paintable, so the card never
+    // flashes empty between the cover leaving and the image arriving.
+    const img = new Image();
+    img.className = "card-thumb";
+    img.decoding = "async";
+    img.alt = `Preview of ${(surfaces[idx] && surfaces[idx].title) || "surface"}`;
+    img.dataset.loaded = "1";
+    img.onload = () => {
+      const cover = preview.querySelector(".card-fallback");
+      if (cover) cover.remove();
+      preview.prepend(img);
+    };
+    img.src = src;
   });
 
   // ── Display commands from agent ──
@@ -1790,6 +2332,10 @@ function connectGlobalSSE() {
     applyTheme(data);
     pulseSpace();
   });
+
+  globalSSE.addEventListener("update_status", (e) => {
+    applyUpdateStatus(JSON.parse(e.data));
+  });
 }
 
 // Update the surface-count badge in the grid header without
@@ -1811,9 +2357,10 @@ function updateGridMeta() {
   if (!countEl) {
     countEl = document.createElement("span");
     countEl.className = "grid-meta-count";
-    metaEl.prepend(countEl);
+    // before the live dot, after the release notice — the header order is fixed
+    metaEl.insertBefore(countEl, metaEl.querySelector(".grid-meta-live"));
   }
-  countEl.textContent = `${String(n).padStart(2, "0")} ${n === 1 ? "surface" : "surfaces"}`;
+  countEl.textContent = `${n} ${n === 1 ? "surface" : "surfaces"}`;
 }
 
 // ── Main Render ──
@@ -1854,6 +2401,9 @@ function startApp() {
         contentOrigin = location.protocol + "//" + location.hostname + ":" + config.content_port;
       }
       applyTheme(config);
+      // Fire-and-forget: the status endpoint is cache-only, but the first
+      // paint must not wait on it either.
+      refreshUpdateStatus();
       return render();
     })
     .catch(() => render());

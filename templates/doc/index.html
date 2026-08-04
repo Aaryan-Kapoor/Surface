@@ -472,9 +472,23 @@
     return out.join("\n");
   }
 
+  /* YAML front matter is metadata for a tool, not the opening of a document.
+     Rendered, a skill file led with "name: surface description: …" as its first
+     paragraph. Only a block that closes counts — a lone `---` on the first line
+     is a thematic rule in the body, and swallowing the file would be worse than
+     drawing a line. */
+  function stripFrontMatter(lines) {
+    if (!lines.length || lines[0].trim() !== "---") return lines;
+    for (var i = 1; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (t === "---" || t === "...") return lines.slice(i + 1);
+    }
+    return lines;
+  }
+
   function renderDoc(srcRaw) {
     slugCounts = {};
-    content.innerHTML = parseBlocks(esc(srcRaw).split(/\r?\n/));
+    content.innerHTML = parseBlocks(stripFrontMatter(esc(srcRaw).split(/\r?\n/)));
     if (!titleParam) {
       var first = content.querySelector("h1, h2, h3");
       if (first) document.title = first.textContent;
