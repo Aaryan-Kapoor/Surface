@@ -178,7 +178,7 @@ function makeArtifact(title: string, mime: string, body: string, file = "a.txt")
     title,
     kind: mime === "text/html" ? "html" : "file",
     mime,
-    source_type: "created",
+    source_type: "generated",
     files: [{ path: file, content: body, mime }],
     reason: "test",
   });
@@ -189,7 +189,7 @@ test("a binary surface has no preview to offer", () => {
     title: "shot",
     kind: "file",
     mime: "image/png",
-    source_type: "created",
+    source_type: "generated",
     files: [{ path: "a.png", content_base64: Buffer.from("not really a png").toString("base64"), mime: "image/png" }],
     reason: "test",
   });
