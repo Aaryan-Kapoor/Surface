@@ -176,6 +176,25 @@ jobs:
           path: ${{ runner.temp }}/pkg
       - run: bash scripts/test-fresh-install.sh --tarball "$RUNNER_TEMP"/pkg/surface-display-*.tgz ${{ matrix.node-version }}
 
+  # The CONTRIBUTOR install path (`npm ci`) with no compiler, which the
+  # user path above does not cover — the two disagree. better-sqlite3 v13
+  # installed fine as a global tarball (npm reached its bundled prebuild)
+  # but compiled from source under npm ci; every runner and dev box has a
+  # toolchain, so that only showed up as a red Windows job.
+  npm-ci-no-toolchain:
+    name: npm ci without a toolchain (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: bash scripts/test-npm-ci-no-toolchain.sh ${{ matrix.node-version }}
+
   # The whole new-user path on the machine a new user actually has: stock
   # Ubuntu + real systemd, a non-root user, user-owned Node 24, no
   # compilers. Walks INSTALL_FOR_AGENTS.md end to end: tarball install →
@@ -258,7 +277,7 @@ jobs:
   # a GitHub Release is created with the CHANGELOG section as notes.
   publish:
     name: Publish to npm
-    needs: [pack, package, test, service-smoke, fresh-install, new-user-e2e, audit]
+    needs: [pack, package, test, service-smoke, fresh-install, npm-ci-no-toolchain, new-user-e2e, audit]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
