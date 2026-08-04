@@ -135,9 +135,24 @@ function registryUrl(): string {
 
 let contextCache: InstallContext | undefined;
 
-// installContext() spawns `npm root -g`; it is memoized and only ever called
-// from the background check, never from a request handler.
-function context(): InstallContext {
+// Resolve "how was surface-display installed here?" exactly once, and never on
+// a request.
+//
+// installContext() is blocking: outside a repo clone it spawns `npm root -g`
+// and waits, with no timeout. It has two callers, both off the request path —
+// runUpdateCheck() (the background timer) and startUpdateChecks() (boot). The
+// apply endpoint used to call it too, which meant `POST /api/update/apply`
+// blocked an Express worker on npm whenever the cache was still empty, and the
+// cache was reachably empty two ways: SURFACE_UPDATE_CHECK=0 (the background
+// check never runs at all), or any POST arriving inside the 30s first-check
+// delay. It also made the two endpoints disagree — the status endpoint reads
+// the cache and falls back to "dev", so it advertised `can_apply: false` with
+// repo-clone advice while the apply endpoint probed and started a real update
+// on the same host. Every reader now shares the one cached answer.
+//
+// A repo clone answers from the package path alone (no spawn), so this costs
+// nothing in a dev checkout or in the suites.
+function resolveContext(): InstallContext {
   if (contextCache === undefined) {
     try {
       contextCache = installContext();
@@ -217,7 +232,7 @@ let checking = false;
 export async function runUpdateCheck(): Promise<void> {
   if (checking) return;
   checking = true;
-  context(); // memoize the (blocking) install-context probe off the request path
+  resolveContext(); // memoize the (blocking) install-context probe off the request path
   const prev = loadCache();
   try {
     const latest = await fetchLatest();
@@ -255,6 +270,12 @@ function armTimer(delayMs: number): void {
 /** Start the background release check. No-op when disabled (tests, CI, opt-out). */
 export function startUpdateChecks(): void {
   reconcileRunFile(true);
+  // Before the early return, and regardless of whether the registry check is
+  // enabled: this is the one place the blocking install-context probe is
+  // guaranteed to run off a request. With SURFACE_UPDATE_CHECK=0 the background
+  // check never runs, and without this the first POST /api/update/apply would
+  // be the thing that spawned `npm root -g`.
+  resolveContext();
   if (!updateCheckEnabled()) return;
   const due = nextDueAt(loadCache());
   armTimer(Math.max(firstCheckDelayMs(), due - Date.now()));
@@ -423,7 +444,10 @@ export function updateStatus(): UpdateStatus {
 
 /**
  * Why a one-click update is not offered here, or null when it is.
- * Cache-only (never blocks); `applyUpdate` re-checks authoritatively.
+ *
+ * Cache-only, and so is `applyUpdate` — they read the same resolved context, so
+ * what the status endpoint advertises and what the apply endpoint will actually
+ * do cannot drift apart. Neither ever blocks on `npm root -g`.
  */
 export function applyBlockedReason(role: "system" | "device"): string | null {
   if (role !== "system") {
@@ -523,8 +547,13 @@ export function applyUpdate(role: "system" | "device"): ApplyResult {
   if (runCache && !isTerminal(runCache.phase)) {
     return { started: false, status: 409, error: "An update is already running." };
   }
-  if (context() !== "global") {
-    return { started: false, status: 409, error: contextAdvice(context()) };
+  // The cache, not a fresh probe: this runs on an Express worker, and the
+  // status endpoint answers from the same value — the two planes must not
+  // disagree about whether a one-click update is on offer. startUpdateChecks()
+  // has already resolved it; an unresolved cache reads "dev", which refuses.
+  const installedAs = cachedContext();
+  if (installedAs !== "global") {
+    return { started: false, status: 409, error: contextAdvice(installedAs) };
   }
   const cli = cliPath();
   if (!fs.existsSync(cli)) {

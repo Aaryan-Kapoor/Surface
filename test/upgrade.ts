@@ -526,6 +526,62 @@ try {
   assert.equal(upgrade.staleServiceError({ installed: true, restarted: true, version: "0.2.3" }, "0.2.3"), null,
     "…and the CLI says the same");
 
+  // ── the blocking install-context probe never runs on a request ──
+  // installContext() spawns `npm root -g` and waits, with no timeout. The apply
+  // endpoint called it, so `POST /api/update/apply` blocked an Express worker on
+  // npm whenever the cache was empty — reachable with SURFACE_UPDATE_CHECK=0, or
+  // by any POST inside the 30s first-check delay. It also made the two endpoints
+  // disagree: the status endpoint reads the cache and falls back to "dev", so it
+  // advertised `can_apply: false` with repo-clone advice while apply probed and
+  // could start a real update on the same host. The comment above the probe
+  // asserted the invariant the code had already broken, which is how it drifted;
+  // this is the assertion that keeps it true.
+  const updatesSrc = fs.readFileSync(path.join(REPO_ROOT, "server", "updates.ts"), "utf8");
+  const updatesCode = updatesSrc
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    })
+    .join("\n");
+  const bodyOf = (name: string): string => {
+    const start = updatesCode.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `${name} not found in server/updates.ts`);
+    const end = updatesCode.indexOf("\n}\n", start);
+    assert.ok(end !== -1, `could not find the end of ${name}`);
+    return updatesCode.slice(start, end);
+  };
+  assert.equal(
+    (updatesCode.match(/\binstallContext\(/g) || []).length, 1,
+    "resolveContext() must be the only thing in the module that runs the probe",
+  );
+  assert.match(bodyOf("resolveContext"), /installContext\(/, "…and it is the one that memoizes it");
+  assert.match(bodyOf("startUpdateChecks"), /resolveContext\(/,
+    "boot must resolve the context even when the background check is disabled");
+  for (const onARequest of ["applyUpdate", "applyBlockedReason", "updateStatus"]) {
+    assert.ok(
+      !/\bresolveContext\(/.test(bodyOf(onARequest)),
+      `${onARequest} runs on a request and must read the cache, never spawn npm`,
+    );
+    assert.ok(
+      !/\binstallContext\(/.test(bodyOf(onARequest)),
+      `${onARequest} must not reach past the cache to the probe either`,
+    );
+  }
+  // …and the two endpoints answer as one: whatever the status endpoint says
+  // about a one-click update is what the apply endpoint will actually do.
+  const savedEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test"; // no timer, no registry
+  updates.resetUpdateStateForTests();
+  updates.startUpdateChecks();
+  const blocked = updates.applyBlockedReason("system");
+  const applied = updates.applyUpdate("system");
+  process.env.NODE_ENV = savedEnv;
+  assert.ok(blocked, "a repo clone must not offer a one-click update");
+  assert.equal(applied.started, false, "…and must not start one either");
+  assert.equal(applied.error, blocked,
+    "the status endpoint and the apply endpoint must give one answer, not two");
+
   console.log("Upgrade/skill tests passed");
 } finally {
   cleanupDir(home);
