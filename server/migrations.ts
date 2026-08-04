@@ -15,7 +15,11 @@ interface Migration {
   up: (db: Database.Database) => void;
 }
 
-const migrations: Migration[] = [
+// Exported so tests can address a migration by description rather than by a
+// hard-coded version number. Two open branches both wanted to be v15, and
+// whichever lands second has to renumber — a test that pins the number breaks
+// on a rename that is otherwise entirely correct.
+export const migrations: Migration[] = [
   {
     version: BASELINE_VERSION,
     description: "fresh artifact-first baseline",

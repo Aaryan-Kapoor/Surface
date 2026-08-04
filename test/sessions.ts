@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import { runMigrations } from "../server/migrations.js";
+import { migrations, runMigrations } from "../server/migrations.js";
 import {
   DEFAULT_SESSION_TTL_SECONDS,
   DEFAULT_SYSTEM_SESSION_TTL_SECONDS,
@@ -48,7 +48,7 @@ check("system bearers keep the thirty-day default", () => {
   assert.equal(defaultTtlSeconds("system"), MONTH);
 });
 
-// ── Migration v15 ──
+// ── The session TTL migration ──
 
 const dir = tmpDir("surface-sessions-");
 const dbPath = path.join(dir, "db.sqlite");
@@ -78,12 +78,16 @@ function expiresOf(db: Database.Database, id: string): string {
 
 const db = new Database(dbPath);
 try {
-  // Build the current schema, then wind the version back so v15 runs again
-  // against rows shaped the way a real pre-upgrade database holds them.
+  // Build the current schema, then wind the version back so the session
+  // migration runs again against rows shaped the way a real pre-upgrade
+  // database holds them. Found by description: the version number is contested
+  // between branches and renumbering it is not a regression.
+  const sessionMigration = migrations.find((m) => m.description.startsWith("auth_sessions:"));
+  assert.ok(sessionMigration, "session TTL migration not found by description");
+  const rewindTo = sessionMigration.version - 1;
+
   runMigrations(db);
-  const head = db.pragma("user_version", { simple: true }) as number;
-  assert.equal(head, 15, "expected migration head to be v15");
-  db.pragma("user_version = 14");
+  db.pragma(`user_version = ${rewindTo}`);
 
   seed(db, { id: "phone", role: "device", ttl: MONTH, expiresSql: `datetime('now', '+10 days')` });
   seed(db, { id: "tablet", role: "device", ttl: MONTH, expiresSql: `datetime('now', '+29 days')` });
@@ -130,7 +134,7 @@ try {
   });
 
   check("the migration is idempotent", () => {
-    db.pragma("user_version = 14");
+    db.pragma(`user_version = ${rewindTo}`);
     runMigrations(db);
     assert.equal(ttlOf(db, "phone"), YEAR);
     assert.equal(ttlOf(db, "bearer"), MONTH);
