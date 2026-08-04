@@ -500,27 +500,67 @@ await atest("shutdownThumbnails is idempotent and stops accepting work", async (
 
 closeDb();
 
-// ── Placeholder cover ──
-// This is the picture the grid shows before a capture exists, so it has to be a
-// designed object: the surface's title, legible, on a field keyed to its id.
+// ── Generated cover ──
+// This is the picture /thumb serves when there is no capture on disk. It has to
+// be the same picture the dashboard card paints for itself: the surface's own
+// opening lines on the app's own paper, or — with nothing readable to excerpt —
+// the kind said once and nothing else. It is served as `image/svg+xml`, which a
+// browser renders as a *document* on the app origin, so everything that lands
+// in it is a trust boundary rather than a cosmetic concern.
 
-test("cover carries the full title and the kind label", () => {
+const CODE_PREVIEW = {
+  lines: ["[10:22:01] pulling image", "[10:22:14] image pulled", "[10:22:15] draining"],
+  mode: "code" as const,
+};
+const PROSE_PREVIEW = {
+  lines: ["Migration notes", "The staged rollout moves the workers.", "Wave 1"],
+  mode: "prose" as const,
+  heads: [2],
+};
+const TEXT_NODES = /<text[^>]*>([\s\S]*?)<\/text>/g;
+const C0 = /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/;
+
+test("cover with nothing to excerpt says the kind once and stops", () => {
   const svg = renderThumbPlaceholder({ id: "abc", title: "Ask Approval", mime: "text/html" });
-  assert.match(svg, /Ask Approval/, "title present");
   assert.match(svg, />HTML</, "kind label present");
   assert.match(svg, /viewBox="0 0 600 600"/, "600x600 cover");
+  // The title used to be set at 45px directly above a caption that already
+  // carried it. The card's own bare cover (.card-fallback--bare) does not repeat
+  // it, and neither does this.
+  const textNodes = [...svg.matchAll(TEXT_NODES)].map((m) => m[1]);
+  assert.deepEqual(textNodes, ["HTML"], "the kind is the only thing set on a bare cover");
+});
+
+test("cover sets the surface's own lines when there are lines to set", () => {
+  const svg = renderThumbPlaceholder({
+    id: "abc", title: "api deploy log", mime: "text/plain", preview: CODE_PREVIEW,
+  });
+  const textNodes = [...svg.matchAll(TEXT_NODES)].map((m) => m[1]);
+  assert.equal(textNodes.length, CODE_PREVIEW.lines.length, "one text node per excerpt line");
+  assert.match(textNodes[0], /pulling image/, "the excerpt is the picture");
+  assert.match(svg, /font-family="ui-monospace/, "a log is set in the mono face");
+});
+
+test("cover keeps a prose excerpt's lead and headings distinct", () => {
+  const svg = renderThumbPlaceholder({
+    id: "abc", title: "notes", mime: "text/markdown", preview: PROSE_PREVIEW,
+  });
+  const rows = [...svg.matchAll(/<text[^>]*font-size="([\d.]+)"[^>]*font-weight="(\d+)"[^>]*>([\s\S]*?)<\/text>/g)]
+    .map((m) => ({ size: Number(m[1]), weight: Number(m[2]), text: m[3] }));
+  assert.equal(rows.length, 3, "three lines");
+  assert.ok(rows[0].size > rows[1].size, "the lead is set larger than the body");
+  assert.equal(rows[0].weight, 600, "the lead is set bold");
+  assert.equal(rows[1].weight, 400, "body copy is not");
+  assert.equal(rows[2].weight, 600, "a heading keeps the weight the author gave it");
 });
 
 test("cover escapes titles rather than letting them build markup", () => {
-  const svg = renderThumbPlaceholder({ id: "x", title: '<script>alert(1)</script>', mime: "text/html" });
+  const svg = renderThumbPlaceholder({ id: "x", title: "<script>alert(1)</script>", mime: "text/html" });
   assert.ok(!svg.includes("<script>"), "raw script tag must not survive into the SVG");
   assert.match(svg, /&lt;script&gt;/, "title is escaped");
 });
 
-// The cover is served from /artifacts/:id/thumb as `image/svg+xml`, which a
-// browser renders as a *document* on the app origin — so a title that could
-// close a text node or an attribute would be stored XSS, not a cosmetic bug.
-test("a hostile title cannot break out of the SVG text node or its attributes", () => {
+test("a hostile title cannot break out of the SVG or its attributes", () => {
   const hostile = `</text><script>alert(1)</script><text x="0" y="0" onload="alert(2)" ' " & <![CDATA[`;
   const svg = renderThumbPlaceholder({ id: "x", title: hostile, mime: "text/html" });
   assert.ok(!svg.includes("<script"), "no element may be forged out of a title");
@@ -528,15 +568,7 @@ test("a hostile title cannot break out of the SVG text node or its attributes", 
   // surviving quote to open its value.
   assert.ok(!/on[a-z]+\s*=\s*["']/.test(svg), "no event handler may be forged out of a title");
   assert.ok(!svg.includes("<![CDATA["), "a title must not be able to open a CDATA section");
-  // No title text may carry markup delimiters at all: that is what stops it
-  // closing its own <text> node and starting an element of its own.
-  const textNodes = [...svg.matchAll(/<text[^>]*>([\s\S]*?)<\/text>/g)].map((m) => m[1]);
-  assert.ok(textNodes.length >= 2, "expected a label plus title lines");
-  for (const node of textNodes) {
-    assert.ok(!node.includes("<") && !node.includes(">"), `raw markup survived into a text node: ${node}`);
-  }
-  assert.ok((svg.match(/<text\b/g) || []).length <= 4, "a title must not be able to add elements");
-  // The aria-label attribute is the other injection surface: it is quoted, so
+  // aria-label is the injection surface a bare cover still has: it is quoted, so
   // both quote characters have to be entities.
   const ariaLabel = (svg.match(/aria-label="([^"]*)"/) || [])[1];
   assert.ok(ariaLabel !== undefined, "aria-label must still be a single well-formed attribute");
@@ -544,50 +576,87 @@ test("a hostile title cannot break out of the SVG text node or its attributes", 
   assert.equal((svg.match(/<svg/g) || []).length, 1, "still exactly one root element");
 });
 
-// XML 1.0 forbids most C0 control characters outright. A title carrying one
-// would make the whole cover a parse error — a blank card rather than a picture.
+// Preview lines are artifact *content*, which a paired device can author. They
+// reach the same SVG document the title does, so they need the same escaping —
+// and unlike the title, there can be a dozen of them.
+test("a hostile excerpt line cannot break out of its text node", () => {
+  const svg = renderThumbPlaceholder({
+    id: "x", title: "ok", mime: "text/plain",
+    preview: {
+      lines: [
+        "</text><script>alert(1)</script>",
+        '" onload="alert(2)',
+        "plain & simple <b>bold</b>",
+      ],
+      mode: "code",
+    },
+  });
+  assert.ok(!svg.includes("<script"), "no element may be forged out of an excerpt line");
+  assert.ok(!/on[a-z]+\s*=\s*["']/.test(svg), "no event handler may be forged out of an excerpt line");
+  assert.equal((svg.match(/<svg/g) || []).length, 1, "still exactly one root element");
+  const textNodes = [...svg.matchAll(TEXT_NODES)].map((m) => m[1]);
+  assert.equal(textNodes.length, 3, "three lines in, three text nodes out");
+  for (const node of textNodes) {
+    assert.ok(!node.includes("<") && !node.includes(">"), `raw markup survived into a text node: ${node}`);
+  }
+});
+
+// XML 1.0 forbids most C0 control characters outright. One of them anywhere in
+// the document makes the whole cover a parse error — a blank card, not a
+// picture.
 test("cover survives control characters in a title", () => {
-  const svg = renderThumbPlaceholder({ id: "x", title: "we\u0000ir\u0007d ti\u001ftle", mime: "text/html" });
-  assert.ok(!/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(svg), "no raw C0 control may reach the SVG");
-  assert.match(svg, /weird/, "the legible part of the title survives");
+  const svg = renderThumbPlaceholder({ id: "x", title: "we\u0000ir\u0007d title", mime: "text/html" });
+  assert.ok(!C0.test(svg), "no raw C0 control may reach the SVG");
+  assert.match(svg, /aria-label="weird title"/, "the legible part of the title survives");
+});
+
+test("cover survives control characters in an excerpt line", () => {
+  const svg = renderThumbPlaceholder({
+    id: "x", title: "t", mime: "text/plain",
+    preview: { lines: ["we\u0000ir\u001fd line"], mode: "code" },
+  });
+  assert.ok(!C0.test(svg), "no raw C0 control may reach the SVG");
+  assert.match(svg, /weird line/, "the legible part of the line survives");
 });
 
 // The dashboard crops a 600x600 cover to 16:10 from the TOP edge, so every line
-// of the title has to sit inside the top ~375px or it is simply not on the card.
+// has to sit inside the top ~375px or it is simply not on the card.
 test("cover keeps its text inside the visible top crop", () => {
   const svg = renderThumbPlaceholder({
     id: "x",
     title: "Migration notes for the ingest queue cutover and rollback plan",
     mime: "text/markdown",
+    preview: { lines: Array.from({ length: 12 }, (_, i) => `line ${i} of the excerpt`), mode: "code" },
   });
-  const ys = [...svg.matchAll(/<text[^>]*\sy="(\d+)"/g)].map((m) => Number(m[1]));
-  assert.ok(ys.length >= 2, "expected a label plus title lines");
+  const ys = [...svg.matchAll(/<text[^>]*\sy="([\d.]+)"/g)].map((m) => Number(m[1]));
+  assert.ok(ys.length >= 2, "expected several excerpt lines");
   assert.ok(Math.max(...ys) <= 375, `text must stay above the 16:10 crop line, saw y=${Math.max(...ys)}`);
 });
 
-test("cover wraps to at most three lines and ellipsises the overflow", () => {
+// SVG does no text layout of its own, so an over-long line would simply run off
+// the side of the cover.
+test("cover ellipsises a line too long to fit its face", () => {
+  const long = "x".repeat(400);
   const svg = renderThumbPlaceholder({
-    id: "x",
-    title: "one two three four five six seven eight nine ten eleven twelve thirteen",
-    mime: "text/html",
+    id: "x", title: "t", mime: "text/plain", preview: { lines: [long], mode: "code" },
   });
-  const titleLines = [...svg.matchAll(/font-size="45"[^>]*>([^<]*)</g)].map((m) => m[1]);
-  assert.ok(titleLines.length <= 3, `expected <= 3 title lines, got ${titleLines.length}`);
-  assert.ok(titleLines[titleLines.length - 1].endsWith("…"), "truncated title must end in an ellipsis");
+  const node = (svg.match(/<text[^>]*>([\s\S]*?)<\/text>/) || [])[1];
+  assert.ok(node.length < long.length, "the line must be cut to the cover's width");
+  assert.ok(node.endsWith("…"), "a cut line must read as truncated");
 });
 
 // Two covers inlined into one document must not share gradient ids, or every
-// card after the first wears the first card's colour.
+// card after the first wears the first card's tint.
 test("cover namespaces its gradient ids per surface", () => {
   const a = renderThumbPlaceholder({ id: "surface-one", title: "One", mime: "text/html" });
   const b = renderThumbPlaceholder({ id: "surface-two", title: "Two", mime: "text/html" });
-  const idOf = (svg: string) => (svg.match(/<linearGradient id="([^"]+)"/) || [])[1];
+  const idOf = (svg: string) => (svg.match(/<radialGradient id="([^"]+)"/) || [])[1];
   assert.ok(idOf(a), "gradient id present");
   assert.notEqual(idOf(a), idOf(b), "different surfaces must not share a gradient id");
   assert.ok(a.includes(`url(#${idOf(a)})`), "the rect must reference its own gradient");
 });
 
-test("cover colour is stable per id and spread across ids", () => {
+test("cover tint is stable per id and spread across ids", () => {
   const hue = (id: string) => {
     const m = renderThumbPlaceholder({ id, title: "t", mime: "text/html" }).match(/hsl\((\d+),/);
     return m ? Number(m[1]) : -1;
