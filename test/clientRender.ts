@@ -70,9 +70,22 @@ interface App {
   window: any;
   run: (code: string) => any;
   appRoot: FakeElement;
+  /** Handlers currently registered on `window` for `type`. */
+  windowListeners: (type: string) => Function[];
+  /** Every element still registered with the thumbnail IntersectionObserver. */
+  observedThumbs: () => FakeElement[];
 }
 
-function loadApp(): App {
+interface AppOptions {
+  /**
+   * Give the sandbox an IntersectionObserver. Off by default: with one, thumbs
+   * wait for an intersection that never comes in a headless DOM, so the tests
+   * that read `img.src` want the eager path.
+   */
+  intersectionObserver?: boolean;
+}
+
+function loadApp(options: AppOptions = {}): App {
   const doc = new FakeDocument();
   const appRoot = doc.createElement("div");
   appRoot.id = "app";
@@ -89,7 +102,11 @@ function loadApp(): App {
   const listeners = new Map<string, Function[]>();
   const win: any = {
     addEventListener: (type: string, fn: Function) => listeners.set(type, [...(listeners.get(type) || []), fn]),
-    removeEventListener: () => {},
+    // A real removal: "how many listeners are still on window" is a property
+    // this suite asserts, and a no-op would make every answer wrong.
+    removeEventListener: (type: string, fn: Function) => {
+      listeners.set(type, (listeners.get(type) || []).filter((f) => f !== fn));
+    },
     matchMedia: () => ({ matches: false, addEventListener() {} }),
     location: { hash: "", origin: "http://127.0.0.1", protocol: "http:", hostname: "127.0.0.1", reload() {} },
     innerWidth: 1280,
@@ -97,6 +114,18 @@ function loadApp(): App {
     isSecureContext: false,
     open() {},
   };
+
+  // Records what is observed and never fires — a real IntersectionObserver
+  // keeps its targets alive, so "what is still registered" is exactly the
+  // retention question the leak test asks.
+  const observers: any[] = [];
+  class FakeIntersectionObserver {
+    targets = new Set<FakeElement>();
+    constructor(public cb: Function, public opts: unknown) { observers.push(this); }
+    observe(el: FakeElement) { this.targets.add(el); }
+    unobserve(el: FakeElement) { this.targets.delete(el); }
+    disconnect() { this.targets.clear(); }
+  }
 
   class FakeEventSource {
     static CLOSED = 2;
@@ -131,6 +160,11 @@ function loadApp(): App {
     confirm: () => false,
     alert: () => {},
   };
+  if (options.intersectionObserver) {
+    sandbox.IntersectionObserver = FakeIntersectionObserver;
+    // app.js feature-detects with `"IntersectionObserver" in window`.
+    win.IntersectionObserver = FakeIntersectionObserver;
+  }
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8"), sandbox, { filename: "client/app.js" });
@@ -139,6 +173,8 @@ function loadApp(): App {
     window: win,
     appRoot,
     run: (code: string) => vm.runInContext(code, sandbox),
+    windowListeners: (type: string) => [...(listeners.get(type) || [])],
+    observedThumbs: () => observers.flatMap((o) => [...o.targets]),
   };
 }
 
@@ -479,6 +515,94 @@ try {
       if (chip === active[0]) continue;
       assert.equal(chip.getAttribute("aria-pressed"), "false", `${chip.getAttribute("data-filter")} must not claim to be pressed`);
     }
+  });
+
+  // ══ 2b. what a display that never reloads accumulates ═══════════════════
+  //
+  // Both of these grow per re-render, and renderGrid()/paintGrid() run on every
+  // hash change, every keystroke in the search box, every SSE reconnect and
+  // every display_theme. A kiosk runs for weeks without a reload.
+
+  check("repainting the grid does not leave detached thumbnails observed", () => {
+    const kiosk = loadApp({ intersectionObserver: true });
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      id: `s${i}`,
+      title: `surface ${i}`,
+      artifact_mime: "text/html",
+      updated_at: "2026-01-01T00:00:00Z",
+    }));
+    kiosk.run(`surfaces = JSON.parse(${JSON.stringify(JSON.stringify(many))}); renderGrid();`);
+    assert.equal(kiosk.observedThumbs().length, many.length, "each card's thumb registers once");
+
+    // None of these thumbs ever intersects, so nothing ever unobserves itself.
+    for (let i = 0; i < 5; i++) kiosk.run("paintGrid();");
+
+    const observed = kiosk.observedThumbs();
+    const detached = observed.filter((el) => !el.isConnected);
+    assert.equal(
+      detached.length, 0,
+      `${detached.length} detached thumb(s) still observed — an IntersectionObserver holds its targets strongly, and img.onerror closes over the card`,
+    );
+    assert.equal(observed.length, many.length, "the observer must hold one target per visible card, not one per paint");
+  });
+
+  // A dashboard showing a home widget. `displayConfig` has to be non-empty:
+  // applyTheme() treats an empty config as "reset" and tears the widget back
+  // out, and the empty state's gallery registers a resize listener of its own,
+  // so a card keeps that out of the count.
+  const withHomeWidget = (kiosk: App): void => {
+    kiosk.run(`
+      displayConfig = { title: "Kiosk" };
+      surfaces = [{ id: "a", title: "one", artifact_mime: "text/html", updated_at: "2026-01-01T00:00:00Z" }];
+      displaySlots = { renderer: null, home: { html: "<p>hi</p>" }, overlay: null };
+    `);
+  };
+
+  check("a re-render replaces the home widget's resize listener instead of stacking one", () => {
+    const kiosk = loadApp();
+    withHomeWidget(kiosk);
+    // app.js registers one at boot (presence reporting); count from there.
+    const base = kiosk.windowListeners("resize").length;
+    // Each render builds a brand-new iframe, whose load then fires.
+    const renderAndLoad = (): void => {
+      kiosk.run("renderGrid();");
+      const widget = kiosk.document.getElementById("home-widget");
+      assert.ok(widget, "the home widget iframe is missing");
+      (widget as any).onload();
+    };
+
+    renderAndLoad();
+    assert.equal(kiosk.windowListeners("resize").length, base + 1, "the home widget registers one resize listener");
+
+    for (let i = 0; i < 5; i++) renderAndLoad();
+    assert.equal(
+      kiosk.windowListeners("resize").length, base + 1,
+      "the previous render's listener must not survive the iframe it measures",
+    );
+
+    // The slot can also be cleared, and then nothing should still be measuring.
+    kiosk.run("displaySlots = { renderer: null, home: null, overlay: null }; renderGrid();");
+    assert.equal(kiosk.windowListeners("resize").length, base, "the listener must go when the widget does");
+  });
+
+  check("a stray home-widget resize handler unregisters itself rather than measuring a dead iframe", () => {
+    const kiosk = loadApp();
+    withHomeWidget(kiosk);
+    const base = kiosk.windowListeners("resize").length;
+    kiosk.run("renderGrid();");
+    const handler = kiosk.windowListeners("resize")[base];
+    assert.ok(handler, "the home widget registered no resize listener");
+    const widget = kiosk.document.getElementById("home-widget");
+    assert.ok(widget, "the home widget iframe is missing");
+    widget!.remove();
+    handler();
+    assert.ok(
+      !kiosk.windowListeners("resize").includes(handler),
+      "a handler whose iframe is gone must take itself off window",
+    );
+    // Measuring a detached iframe reads a null contentDocument, and the catch
+    // writes "200px" to a dead node; nothing should have been written at all.
+    assert.ok(!(widget!.style as any).height, "a detached iframe must not be resized");
   });
 
   check("the update notice renders server text without injecting anything", () => {
