@@ -541,6 +541,18 @@ button { -webkit-tap-highlight-color: transparent; }
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg) 34%, transparent);
 }
 
+/* The card carries `contain: paint`, which clips anything drawn outside its
+   border box — including the global focus outline. A keyboard user got the
+   hover treatment and no ring at all. The ring is drawn inside instead, on the
+   hairline that already frames the preview. */
+.surface-card:focus-visible { outline: none; }
+
+.surface-card:focus-visible .card-preview::after {
+  box-shadow:
+    inset 0 0 0 2px var(--fg),
+    inset 0 0 0 4px color-mix(in oklab, var(--bg) 70%, transparent);
+}
+
 .surface-card:active .card-preview { transform: translateY(-1px) scale(0.995); }
 
 .card-thumb {
@@ -769,9 +781,14 @@ button { -webkit-tap-highlight-color: transparent; }
 
 /* ── Card hover actions ── */
 
+/* Bottom-right, not top-right. The cover leads with a headline — a screenshot's
+   and an excerpt's alike — so a tray parked in the top corner covers the one
+   line worth reading. The bottom of the cover is where the content has already
+   faded under the scrim, and it keeps the tray clear of the pending-action
+   badge without having to dodge it. */
 .card-actions {
   position: absolute;
-  top: 8px;
+  bottom: 8px;
   right: 8px;
   display: flex;
   gap: 4px;
@@ -782,7 +799,7 @@ button { -webkit-tap-highlight-color: transparent; }
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
   opacity: 0;
-  transform: translateY(-4px) scale(0.96);
+  transform: translateY(4px) scale(0.96);
   transition: opacity 0.16s var(--ease-swift), transform 0.2s var(--ease-out);
   z-index: 6;
   pointer-events: none;
@@ -794,9 +811,6 @@ button { -webkit-tap-highlight-color: transparent; }
   transform: none;
   pointer-events: auto;
 }
-
-/* A pending-action badge occupies the top-right; move the tray out of its way. */
-.surface-card:has(.card-badge) .card-actions { top: 36px; }
 
 .card-action {
   width: 26px;
@@ -858,6 +872,21 @@ input.card-title {
   outline: none;
   width: calc(100% + 14px);
   cursor: text;
+  transition: border-color 0.14s var(--ease-swift), box-shadow 0.14s var(--ease-swift);
+}
+
+/* The card clips outlines (`contain: paint`), so the focus ring is a shadow. */
+input.card-title:focus {
+  border-color: var(--fg);
+  box-shadow: 0 0 0 1px var(--fg);
+}
+
+/* The field opens with its text selected. The global selection style is a solid
+   block of --fg, which turns the whole rename field into a white bar in dark
+   mode — a wash, not a selection. */
+input.card-title::selection {
+  background: color-mix(in oklab, var(--fg) 24%, transparent);
+  color: var(--fg);
 }
 
 .card-sub {

@@ -1661,7 +1661,9 @@ function createCard(s, index) {
       showToast(body.error || "Failed to delete", 3000, "error");
     }
   });
-  card.appendChild(actions);
+  // Inside the preview, not the card: the tray is anchored to the bottom of the
+  // picture, and the card box also contains the caption underneath it.
+  preview.appendChild(actions);
 
   // A surface title is device-authorable and lands here on the SYSTEM plane —
   // the dashboard that can POST /api/update/apply. It is written as text and as
@@ -1809,9 +1811,17 @@ function startRename(card, id) {
   input.type = "text";
   input.value = originalTitle;
   input.maxLength = 200;
+  // A surface title is not prose: red squiggles under "api-blue" or a
+  // capitalised first letter are noise in a field the user is retyping.
+  input.spellcheck = false;
+  input.autocapitalize = "off";
+  input.autocomplete = "off";
   titleEl.replaceWith(input);
   input.focus();
   input.select();
+  // select() leaves a long title scrolled to its end, so the field opens on the
+  // last few words of a name the user is about to replace. Show the start.
+  input.scrollLeft = 0;
 
   let settled = false;
   const finalize = (newText) => {
