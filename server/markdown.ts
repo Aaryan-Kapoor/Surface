@@ -63,8 +63,17 @@ function stripFrontMatter(lines: string[]): string[] {
   return lines;
 }
 
+/**
+ * Front matter belongs to a *document*, not to any fragment that happens to be
+ * parsed. Blockquotes recurse through the renderer, so stripping inside the
+ * recursion ate the body of any quote written as `> ---` / text / `> ---`,
+ * leaving an empty <blockquote> behind.
+ */
 export function renderMarkdown(src: string): string {
-  const lines = stripFrontMatter(String(src ?? "").replace(/\r\n/g, "\n").split("\n"));
+  return renderBlocks(stripFrontMatter(String(src ?? "").replace(/\r\n/g, "\n").split("\n")));
+}
+
+function renderBlocks(lines: string[]): string {
   const html: string[] = [];
   let i = 0;
   let para: string[] = [];
@@ -123,7 +132,7 @@ export function renderMarkdown(src: string): string {
         buf.push(lines[i].replace(/^>\s?/, ""));
         i++;
       }
-      html.push(`<blockquote>${renderMarkdown(buf.join("\n"))}</blockquote>`);
+      html.push(`<blockquote>${renderBlocks(buf)}</blockquote>`);
       continue;
     }
 

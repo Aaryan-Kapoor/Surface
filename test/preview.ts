@@ -192,6 +192,16 @@ test("the document renderer skips front matter too", () => {
   assert.match(html, /<h1[^>]*>Surface<\/h1>/);
 });
 
+// Front matter belongs to a document, not to any fragment that happens to be
+// parsed. Blockquotes recurse through the renderer, so stripping inside the
+// recursion ate the body of any quote written as `> ---` / text / `> ---` and
+// left an empty <blockquote> behind.
+test("a blockquote that opens with a rule keeps its body", () => {
+  const html = renderMarkdown("Intro.\n\n> ---\n> quoted body\n> ---\n\nAfter.");
+  assert.match(html, /quoted body/, `the quote was eaten: ${html}`);
+  assert.match(html, /<blockquote>[\s\S]*quoted body[\s\S]*<\/blockquote>/, "and it must stay inside the quote");
+});
+
 test("a lone rule still renders as a rule in a document", () => {
   const html = renderMarkdown("---\nJust a rule then text.");
   assert.match(html, /<hr>/, "an unterminated block is a thematic break, not front matter");
