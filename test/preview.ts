@@ -145,6 +145,42 @@ test("thematic breaks and fence markers do not spend a line", () => {
   assert.deepEqual(p!.lines, ["Intro", "const a = 1;"]);
 });
 
+// A README that opens with a centred div of badge images is the common case,
+// not an exotic one — and untouched, the first thing on the card is
+// `<div align="center">` followed by an `<img src="https://…">`.
+test("raw html inside markdown is stripped, not printed", () => {
+  const p = extractPreview(
+    `<div align="center">\n<img src="https://example.test/badge.svg">\n<br>\n</div>\n\nA two-way primitive.`,
+    "text/markdown",
+  );
+  assert.deepEqual(p!.lines, ["A two-way primitive."]);
+});
+
+// YAML front matter is metadata for a tool, not the opening of a document.
+test("yaml front matter is skipped rather than read as the headline", () => {
+  const p = extractPreview(
+    "---\nname: surface\ndescription: Surface-native display\n---\n\n# Surface\n\nThe universal display.",
+    "text/markdown",
+  );
+  assert.deepEqual(p!.lines, ["Surface", "The universal display."]);
+  assert.deepEqual(p!.heads, [0]);
+});
+
+// A `---` with no closing fence is a thematic break in the body, not an
+// unterminated front-matter block, and swallowing the file would be worse than
+// printing a rule.
+test("a lone rule is not mistaken for unterminated front matter", () => {
+  const p = extractPreview("---\nJust a document that opens with a rule.", "text/markdown");
+  assert.deepEqual(p!.lines, ["Just a document that opens with a rule."]);
+});
+
+// An entity left undecoded prints as `&rarr;` on the card, which reads as
+// broken markup rather than as the arrow the author wrote.
+test("the entities that turn up in real content are decoded", () => {
+  const p = extractPreview("<p>Send my pick &rarr; 5 &times; 3 &ne; 14 &mdash; &check;</p>", "text/html");
+  assert.deepEqual(p!.lines, ["Send my pick → 5 × 3 ≠ 14 — ✓"]);
+});
+
 // ── Plain text ──
 
 test("a log is shown as written, in monospace, blank lines and all", () => {

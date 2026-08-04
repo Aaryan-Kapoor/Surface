@@ -101,11 +101,21 @@ function readHead(filePath: string): { text: string; size: number; mtimeMs: numb
   }
 }
 
+// The named entities that actually turn up in surface content. An entity left
+// undecoded prints as `&rarr;` on the card, which reads as broken markup rather
+// than as the arrow the author wrote.
 const ENTITIES: Record<string, string> = {
   // `nbsp` decodes to an ordinary space, not U+00A0: the only thing a preview
   // does with whitespace is collapse it, and a non-breaking space would survive
   // that collapse and print as a gap.
-  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", mdash: "—", ndash: "–", hellip: "…",
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  mdash: "—", ndash: "–", hellip: "…", minus: "−", times: "×", divide: "÷",
+  larr: "←", rarr: "→", uarr: "↑", darr: "↓", harr: "↔",
+  laquo: "«", raquo: "»", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d",
+  bull: "•", middot: "·", sect: "§", para: "¶", dagger: "†", permil: "‰", prime: "\u2032",
+  copy: "©", reg: "®", trade: "™", deg: "°", plusmn: "±", ne: "≠", le: "≤", ge: "≥",
+  infin: "∞", euro: "€", pound: "£", yen: "¥", cent: "¢", frac12: "½", frac14: "¼",
+  check: "✓", cross: "✗", star: "★",
 };
 
 function decodeEntities(s: string): string {
@@ -205,6 +215,31 @@ function markdownInline(s: string): string {
     .trim();
 }
 
+/**
+ * Markdown may contain raw HTML, and plenty of READMEs open with a centred
+ * `<div>` full of badge images. Left alone, the first thing on the card is
+ * `<div align="center">` followed by an `<img src="https://…">` — the machinery
+ * again, and the least informative part of the file.
+ */
+function stripMarkdownHtml(line: string): string {
+  return decodeEntities(line.replace(/<[^>]*>/g, " ")).replace(/[^\S\n]+/g, " ").trim();
+}
+
+/**
+ * YAML front matter is metadata for a tool, not the opening of a document. A
+ * skill file that starts with `---\nname: surface\ndescription: …` was putting
+ * "name: surface description: …" on the card as its headline.
+ */
+function skipFrontMatter(lines: string[]): string[] {
+  if (lines[0]?.trim() !== "---") return lines;
+  for (let i = 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t === "---" || t === "...") return lines.slice(i + 1);
+  }
+  // No closing fence: it was a thematic break, not front matter.
+  return lines;
+}
+
 function fromMarkdown(text: string): CardPreview | null {
   const lines: string[] = [];
   const heads: number[] = [];
@@ -215,7 +250,7 @@ function fromMarkdown(text: string): CardPreview | null {
     if (paragraph) { lines.push(clip(paragraph, MAX_PROSE_CHARS)); paragraph = ""; }
   };
 
-  for (const raw of stripControls(text).split(/\r?\n/)) {
+  for (const raw of skipFrontMatter(stripControls(text).split(/\r?\n/))) {
     if (lines.length >= MAX_LINES) break;
     const line = raw.replace(/\s+$/, "");
     if (/^\s*(```|~~~)/.test(line)) { flush(); inFence = !inFence; continue; }
@@ -224,8 +259,9 @@ function fromMarkdown(text: string): CardPreview | null {
       if (code) lines.push(clip(code, MAX_CODE_CHARS));
       continue;
     }
-    const trimmed = line.trim();
+    const trimmed = stripMarkdownHtml(line);
     // A blank line ends a paragraph; a setext/thematic rule is pure punctuation.
+    // A line that was nothing but markup is blank once the tags are gone.
     if (!trimmed || /^(-{3,}|={3,}|\*{3,}|_{3,})$/.test(trimmed)) { flush(); continue; }
 
     const heading = /^#{1,6}\s+(.*)$/.exec(trimmed);
