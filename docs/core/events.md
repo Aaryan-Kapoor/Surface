@@ -40,7 +40,7 @@ Two properties of global connections matter for delivery:
 | `display_navigate` | `{surface_id}` (null = grid/home) | `POST /display/navigate`, or auto on present/link when `open !== false`; optionally directed at one device |
 | `display_notify` | `{text, duration, style}` | `POST /display/notify` (optionally directed), or a throttled webhook-failure warning |
 | `display_theme` | merged theme config (or `{}` on reset) | `PUT /display/config`, `POST /display/reset` |
-| `thumb_ready` | `{id}` | a thumbnail capture finishes (`server/thumbs.ts`) |
+| `thumb_ready` | `{id}` | a thumbnail capture finishes, or an update makes an image surface's passthrough available (`server/thumbs.ts`) |
 | `update_status` | `{current, latest, update_available, checked_at, check_error, context, advice, run}` | a cached release check completes, or a one-click update changes phase (`server/updates.ts`). Carries no per-plane fields — the PWA keeps `can_apply` from its own `GET /api/update/status`. |
 
 ### Per-surface stream (`/artifacts/:id/stream`)

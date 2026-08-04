@@ -311,7 +311,25 @@ export function enqueueThumb(id: string) {
   // prefers the bytes over a capture), so screenshotting it is wasted browser
   // time — and a worse picture besides.
   try {
-    if (imageThumbPassthrough(getDb(), id)) return;
+    if (imageThumbPassthrough(getDb(), id)) {
+      // The early return used to produce neither a capture nor a readiness
+      // event, which strands a card that is currently painting its own cover:
+      // `has_thumb: false` means it never calls the thumb route again, and the
+      // client's `surface_updated` handler patches title, subtitle and badges
+      // but not the preview. An update that TURNED a surface into a
+      // passthrough-sized image therefore left the cover up until a full
+      // reload, even though /thumb could serve the picture. Announce it
+      // instead — the client's thumb_ready path decodes off-thread and only
+      // swaps once the image is paintable, so there is no flash.
+      //
+      // This also fires for an update that merely re-saves an image the card
+      // already has, costing one redundant fetch. That is the cheaper mistake:
+      // it is bounded by "the surface actually changed", where the alternative
+      // — rebuilding the preview on every `surface_updated` — would re-decode
+      // on updates that have nothing to do with the picture.
+      broadcastGlobal("thumb_ready", { id });
+      return;
+    }
   } catch {}
   const generation = currentThumbGeneration(id);
   if (!generation) return; // artifact is gone: nothing to photograph

@@ -1,4 +1,5 @@
 import fs from "fs";
+import http from "http";
 import path from "path";
 import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
 import { thumbGenerationFor } from "../server/thumbs.js";
@@ -31,6 +32,39 @@ async function optionalDelete(path: string): Promise<void> {
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+// A minimal global-SSE reader. There is no helper for this yet and the
+// passthrough-readiness assertion below needs the real event, not a proxy for
+// it: the whole point is that the dashboard is told, over the wire, that the
+// picture it is not showing has become available.
+function openGlobalStream(): { events: Array<{ event: string; data: any }>; close: () => void } {
+  const events: Array<{ event: string; data: any }> = [];
+  const request = http.request(
+    { host: "127.0.0.1", port: serverPort, path: "/stream", headers: { Accept: "text/event-stream" } },
+    (res) => {
+      let buffer = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        buffer += chunk;
+        let split: number;
+        while ((split = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          const name = /^event: (.+)$/m.exec(frame)?.[1];
+          const payload = /^data: (.*)$/m.exec(frame)?.[1];
+          if (!name) continue;
+          let data: any = payload;
+          try { data = payload ? JSON.parse(payload) : undefined; } catch {}
+          events.push({ event: name, data });
+        }
+      });
+      res.on("error", () => {});
+    },
+  );
+  request.on("error", () => {});
+  request.end();
+  return { events, close: () => request.destroy() };
 }
 
 let tmpRoot2Cache: string | null = null;
@@ -481,6 +515,44 @@ async function main() {
   );
   assert(String(goneThumb.body).includes("Vanished Image"), "the cover must carry the surface title");
   await optionalDelete(`/artifacts/${goneId}`);
+
+  // ── an update that makes the passthrough available has to say so ──
+  //
+  // A card showing its own cover has `has_thumb: false` and deliberately never
+  // calls the thumb route again, and `surface_updated` patches text, not the
+  // preview. `enqueueThumb` returned early for a passthrough image without
+  // queueing a capture OR emitting a readiness event, so a surface that BECAME
+  // an image kept its cover until a full reload even though /thumb could serve
+  // the picture.
+  const becomesId = `artifact-test-becomes-image-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: becomesId,
+    title: "Becomes An Image",
+    mime: "text/html",
+    files: [{ path: "index.html", mime: "text/html", content: "<!doctype html><h1>not yet</h1>" }],
+  });
+  const beforeCard = (await api("GET", "/artifacts")).find((c: any) => c.id === becomesId);
+  assert(beforeCard && beforeCard.has_thumb === false, "the card starts on its own cover");
+
+  const stream = openGlobalStream();
+  try {
+    await sleep(150); // let the stream attach before the update that must be announced
+    await api("PUT", `/artifacts/${becomesId}`, {
+      mime: "image/png",
+      files: [{ path: "image.png", mime: "image/png", content_base64: "iVBORw0KGgo=" }],
+    });
+    let ready: { event: string; data: any } | undefined;
+    for (let i = 0; i < 40 && !ready; i++) {
+      ready = stream.events.find((e) => e.event === "thumb_ready" && e.data?.id === becomesId);
+      if (!ready) await sleep(50);
+    }
+    assert(ready, "becoming a passthrough image must announce thumb_ready, or the card keeps its cover");
+  } finally {
+    stream.close();
+  }
+  const afterCard = (await api("GET", "/artifacts")).find((c: any) => c.id === becomesId);
+  assert(afterCard && afterCard.has_thumb === true, "…and the route really can serve it now");
+  await optionalDelete(`/artifacts/${becomesId}`);
 
   // ── The immutable cache key must mean exactly one picture ──
   //
