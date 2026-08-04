@@ -55,6 +55,8 @@ bash scripts/check-leaks.sh
 
 `bash scripts/test-new-user-e2e.sh` (needs Docker) is the new-user gate: a `--privileged` Ubuntu 24.04 container booting real systemd, with a fresh non-root user and user-owned nvm-style Node 24 and no compilers, walks the INSTALL_FOR_AGENTS.md mechanical path end to end (install → service install under systemd+logind → skill install with both link targets → sanity block → seed/clear demos → create + state round trip → restart → uninstall). Also in CI; `publish` depends on it. The LLM-driven half of onboarding (the tutorial walkthrough) stays untested here — the opt-in OpenRouter e2e is the closest analogue.
 
+Both install scripts take three sources: default = pack the local tree; `--tarball <path>` = a prebuilt tarball (CI packs once in the `pack` job and feeds every install-shaped job the same bytes); `--npm [--spec <s>]` = the published registry package. CI revamp (2026-08-04): full {ubuntu,windows,macos} × {Node 22 floor, 24 LTS} test cross; `canary.yml` runs Mon+Thu installing the *published* package on node:22/lts/current-slim plus the systemd new-user path, and opens/bumps a `canary`-labeled issue on failure — this is the gate for ecosystem drift, which needs zero commits to break installs; Dependabot (npm weekly grouped minor+patch, github-actions) keeps the driver-pin incident class closed from the other side; publish requires a CHANGELOG section for the tag and auto-creates a GitHub Release from it; all actions SHA-pinned, all jobs time-boxed; the paid OpenRouter e2e runs via workflow_dispatch input `llm-e2e`.
+
 ## Distribution (decided 2026-07-07)
 
 - Published npm package: **`surface-display`** (bare `surface`/`surface-cli`

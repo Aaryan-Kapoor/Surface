@@ -20,6 +20,14 @@ All notable changes to Surface are recorded here.
   install`, `surface skill install` (both link targets verified), the
   sanity block, demo seed/clear, a first surface with live state, restart,
   uninstall. Publishing depends on this too.
+- CI revamp: one packed tarball artifact feeds every install-shaped job;
+  the test matrix is the full {ubuntu, windows, macos} × {Node 22, 24}
+  cross; a scheduled canary installs the *published* package on
+  node:22/lts/current and files an issue when it breaks (ecosystem drift
+  needs no commit to break installs); Dependabot watches npm and actions;
+  releases gain a CHANGELOG gate and an auto-created GitHub Release; all
+  jobs have timeouts and SHA-pinned actions. The paid OpenRouter e2e is
+  now runnable on demand via workflow_dispatch.
 
 ## 0.2.3 - 2026-07-31
 

@@ -16,6 +16,10 @@ its way back to an agent — even one that exited hours ago.
 [HTTP API](#direct-http) ·
 [Docs](docs/README.md)
 
+[![CI](https://github.com/Aaryan-Kapoor/Surface/actions/workflows/ci.yml/badge.svg)](https://github.com/Aaryan-Kapoor/Surface/actions/workflows/ci.yml)
+[![Canary](https://github.com/Aaryan-Kapoor/Surface/actions/workflows/canary.yml/badge.svg)](https://github.com/Aaryan-Kapoor/Surface/actions/workflows/canary.yml)
+[![npm](https://img.shields.io/npm/v/surface-display)](https://www.npmjs.com/package/surface-display)
+
 </div>
 
 ---
