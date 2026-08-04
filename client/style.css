@@ -193,26 +193,32 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .grid-view.is-scrolled .grid-header { border-bottom-color: var(--line); }
 
+/* Stacked, not inline. Side by side, the wordmark had to stay small enough to
+   leave the tagline room on one line, which left the bar reading as a thin
+   strip of nothing with a label in the corner. Stacked, the name can carry the
+   weight it should and the tagline sits under it as a caption. */
 .grid-brand {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
   min-width: 0;
 }
 
 .grid-title {
-  font-size: 17px;
-  font-weight: 620;
-  letter-spacing: -0.022em;
+  font-size: 22px;
+  font-weight: 680;
+  letter-spacing: -0.032em;
   color: var(--fg);
-  line-height: 1;
+  line-height: 1.1;
   white-space: nowrap;
 }
 
 .grid-subtitle {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--fg-faint);
   letter-spacing: -0.005em;
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -230,6 +236,45 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 .grid-meta-count { font-variant-numeric: tabular-nums; }
+
+.grid-version {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-ghost);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Header actions ──
+   Icon affordances, so they read as one cluster rather than three unrelated
+   controls. They are clickable, so they rest transparent and take the
+   interactive plane on hover — the same lift a card gets. */
+
+.grid-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.grid-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.15s var(--ease-swift), background 0.15s var(--ease-swift);
+}
+
+.grid-icon-btn:hover { color: var(--fg); background: var(--interactive); }
+.grid-icon-btn:active { transform: scale(0.94); }
+.grid-icon-btn svg { display: block; }
 
 /* ── Release notice ──
    Lives in the grid header meta row: noticeable because it is the only
@@ -1811,9 +1856,15 @@ iframe.surface-frame.is-loaded { opacity: 1; }
   :root { --gutter: 18px; --header-h: 54px; }
 
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 14px; }
-  .grid-header { gap: 10px; }
+  .grid-header { gap: 8px; }
   .grid-subtitle { display: none; }
   .grid-meta-count { display: none; }
+  /* The version is a diagnostic, not navigation — first thing to go when the
+     bar is fighting for room. The two icons stay: on a phone they are the only
+     way to reach the tutorial or the repo at all. */
+  .grid-version { display: none; }
+  .grid-title { font-size: 19px; }
+  .grid-icon-btn { width: 30px; height: 30px; }
   .grid-search-wrap { width: auto; }
   .grid-search-wrap::before { left: 10px; }
   .grid-search {

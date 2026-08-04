@@ -330,6 +330,25 @@ function applyUpdateStatus(next) {
     return;
   }
   paintUpdateNotice();
+  paintVersionChip();
+}
+
+/**
+ * The running version, in the header.
+ *
+ * It is the first thing anyone is asked for when something misbehaves, and
+ * until now the only way to read it was from the host shell — which is exactly
+ * the machine a paired display is not sitting at. Sourced from the update
+ * status the client already fetches, so it costs no extra request and stays
+ * hidden until that arrives rather than flashing a placeholder.
+ */
+function paintVersionChip(host) {
+  const el = host || document.getElementById("grid-version");
+  if (!el) return;
+  const current = updateState && updateState.current;
+  const known = !!current && current !== "unknown";
+  el.textContent = known ? `v${current}` : "";
+  el.hidden = !known;
 }
 
 function stopUpdateWatch() {
@@ -415,6 +434,20 @@ async function copyToClipboard(text) {
 // tutorial-walkthrough flow (defined in docs/TUTORIAL.md and gated by
 // INSTALL_FOR_AGENTS.md). Surface itself does not run the tutorial —
 // the agent does — so the modal is intentionally just a prompt + copy.
+
+// The header's fixed furniture.
+//
+// The tagline names the loop rather than the product: what makes Surface not-a-
+// dashboard is that the render goes out *and the tap comes back*. "state out,
+// actions back" was the same claim in a private shorthand nobody arriving here
+// could read.
+const TAGLINE = "Agents render here. Every tap goes back.";
+const REPO_URL = "https://github.com/Aaryan-Kapoor/Surface";
+
+// Inline so a display renders them offline; the shell already refuses to fetch
+// fonts for the same reason. currentColor everywhere, so they inherit hover.
+const ICON_GITHUB = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>`;
+const ICON_GUIDE = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M8 14.5A6.5 6.5 0 1 0 8 1.5a6.5 6.5 0 0 0 0 13Z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M6.2 6.1a1.9 1.9 0 1 1 2.6 1.77c-.5.19-.8.62-.8 1.13v.35"/><circle cx="8" cy="11.6" r="0.85" fill="currentColor"/></svg>`;
 
 const TUTORIAL_PROMPT =
   "Walk me through the Surface tutorial in docs/TUTORIAL.md. Update the tutorial state in INSTALL_FOR_AGENTS.md as you progress.";
@@ -1200,7 +1233,7 @@ function renderGrid() {
   header.innerHTML = `
     <div class="grid-brand">
       <span class="grid-title"></span>
-      <span class="grid-subtitle">state out, actions back</span>
+      <span class="grid-subtitle">${escapeText(TAGLINE)}</span>
     </div>
     <div class="grid-header-spacer"></div>
     ${count > 0 ? `
@@ -1212,9 +1245,16 @@ function renderGrid() {
       <span class="update-notice" id="update-notice" hidden></span>
       ${count > 0 ? `<span class="grid-meta-count">${count} ${count === 1 ? "surface" : "surfaces"}</span>` : ""}
       <span class="grid-meta-live" role="status"><span class="live-dot"></span></span>
+      <span class="grid-version" id="grid-version" hidden></span>
+    </div>
+    <div class="grid-actions">
+      <button type="button" class="grid-icon-btn" id="grid-guide" title="Hand the tutorial to your agent" aria-label="Hand the tutorial to your agent">${ICON_GUIDE}</button>
+      <a class="grid-icon-btn" href="${escapeAttr(REPO_URL)}" target="_blank" rel="noopener noreferrer" title="Surface on GitHub" aria-label="Surface on GitHub">${ICON_GITHUB}</a>
     </div>
   `;
   header.querySelector(".grid-title").textContent = title;
+  header.querySelector("#grid-guide").addEventListener("click", () => showTutorialModal());
+  paintVersionChip(header.querySelector("#grid-version"));
   const headerSearch = header.querySelector(".grid-search");
   if (headerSearch) {
     headerSearch.value = gridQuery;

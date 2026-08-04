@@ -634,6 +634,41 @@ try {
     assert.ok(emptyApp.document.querySelector("#update-notice"), "no release-pill host rendered");
   });
 
+  // The header's furniture is reachable from nowhere else: the tutorial had no
+  // entry point at all once a dashboard had surfaces on it (only the empty
+  // state offered it), and a paired display has no host shell to read a version
+  // off. Losing any of it is silent — the bar still looks fine.
+  check("the header carries its brand, tagline and action cluster", () => {
+    const header = emptyApp.document.querySelector(".grid-header");
+    assert.ok(header, "no .grid-header rendered");
+    assert.equal(header!.querySelector(".grid-title")?.textContent, "Surface");
+    const tagline = header!.querySelector(".grid-subtitle")?.textContent || "";
+    assert.ok(tagline.length > 0, "the wordmark lost its tagline");
+    assert.ok(header!.querySelector("#grid-guide"), "no tutorial entry point in the header");
+    const repo = header!.querySelector(".grid-actions a");
+    assert.ok(repo, "no repository link in the header");
+    assert.match(repo!.getAttribute("href") || "", /^https:\/\/github\.com\//, "repo link must point at GitHub");
+    assert.equal(repo!.getAttribute("rel"), "noopener noreferrer", "an external target needs rel=noopener");
+    assert.ok(header!.querySelector("#grid-version"), "no version chip host in the header");
+  });
+
+  check("the version chip stays hidden until the server has told us a version", () => {
+    // It reads from the update-status payload the client already fetches. A
+    // chip that renders "vundefined" for the first second is worse than one
+    // that arrives late.
+    const chip = emptyApp.document.querySelector("#grid-version");
+    assert.ok(chip, "no version chip");
+    assert.equal(chip!.hidden, true, "the chip must start hidden");
+    assert.equal(chip!.textContent, "", "the chip must start empty");
+
+    emptyApp.run(`applyUpdateStatus({ current: "9.9.9", latest: "9.9.9", update_available: false });`);
+    assert.equal(chip!.hidden, false, "the chip must appear once a version is known");
+    assert.equal(chip!.textContent, "v9.9.9");
+
+    emptyApp.run(`applyUpdateStatus({ current: "unknown", latest: null, update_available: false });`);
+    assert.equal(chip!.hidden, true, "an unknown version must not render as a chip");
+  });
+
   check("the empty state shares the header's stacking context instead of covering it", () => {
     // .grid-view is `position: relative; z-index: 1`, i.e. a stacking context.
     // While the empty state lived outside it, the header's z-index:20 could not
