@@ -116,7 +116,7 @@ See [../display/theming.md](../display/theming.md) and [../display/devices.md](.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/stream` | global event stream; connections are tagged with their device target; `?wait_for=<surface-id\|*>` registers a layer-1 waiter (system only) |
+| GET | `/stream` | global event stream; connections are tagged with their device target. `?wait_for_surface=<id>` / `?wait_for_project=<root>` / `?wait_for_all=1` (exactly one, **system** only) registers a layer-1 waiter and replies with a private `waiter_registered` event carrying the `client_id` needed to claim; `?wait_action=<name>` narrows eligibility. `?wait_for=<surface-id\|project:<root>\|*>` is the deprecated pre-claim form: it still registers (deployed CLIs depend on it) but such a client acks without a claim token, so the server logs a one-per-minute upgrade warning. Omit `wait_for_*` entirely to connect as an observer |
 | GET | `/artifacts/:id/stream` | per-surface stream (404 if the artifact doesn't exist) |
 
 Full event catalog: [events.md](events.md).

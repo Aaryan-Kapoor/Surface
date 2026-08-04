@@ -34,7 +34,8 @@ Two properties of global connections matter for delivery:
 | `state_patch` | `{id, patch, state_version}` | `PATCH /artifacts/:id/state`, or the server-side `ask` answered flip |
 | `stream_append` | `{id, seq, chunk:{kind, content, created_at}}` | `POST /artifacts/:id/append` (one event per chunk) |
 | `binding_status` | `{surface_id, binding_id, status, error}` | a binding run starts/finishes (`running` → `ok`/`failed`; `server/bindings.ts`) |
-| `waiter_status` | `{surface_id, listening}` | a `?wait_for` waiter connects or disconnects |
+| `waiter_status` | `{surface_id, listening}` | a `wait_for_*` waiter connects or disconnects (one event per surface its scope covers) |
+| `waiter_registered` | `{client_id, scope:{kind, value}, action}` | sent **only** to the connection that just registered as a waiter; the `client_id` is quoted on every claim |
 | `agent_reply` | `{surface_id, text}` | agent replies — `POST /artifacts/:id/reply` |
 | `display_navigate` | `{surface_id}` (null = grid/home) | `POST /display/navigate`, or auto on present/link when `open !== false`; optionally directed at one device |
 | `display_notify` | `{text, duration, style}` | `POST /display/notify` (optionally directed), or a throttled webhook-failure warning |
@@ -62,7 +63,7 @@ Note the per-surface `surface_updated` payload differs from the global one (it c
 
 ### CLI
 - `surface stream [--id]` connects to the chosen stream and prints one `{event, data}` JSON line per event, ignoring `:` heartbeat comments, reconnecting with exponential backoff on drops.
-- `surface wait` listens on the **global** stream for `surface_action` (default `--event`), filters by `--id`/`--action`, auto-acks the match, and exits `0`; it drains `/actions` first (oldest pending) and re-polls after each reconnect to catch events missed during gaps. Its connection registers as a waiter via `?wait_for`, suppressing bindings while it's alive.
+- `surface wait` listens on the **global** stream for `surface_action` (default `--event`) and filters by `--id`/`--action`. A claiming waiter registers via `?wait_for_surface` / `?wait_for_project` / `?wait_for_all`, waits for its `waiter_registered` identity, then *claims* each match before printing it and completes the claim once the line is out — so the same broadcast reaching several waiters still produces exactly one handler. It drains `/actions` on registration (oldest pending), on `actions_available`, and after each reconnect. `--no-ack` (and `--event <non-action>`) is an observer: it omits `wait_for_*`, claims nothing, and suppresses nothing.
 
 ## Keepalive heartbeat
 
