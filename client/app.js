@@ -1332,7 +1332,10 @@ function buildFallbackCover(s, mime) {
   cover.style.setProperty("--seed-h", String(hueForId(s.id)));
   const kind = document.createElement("div");
   kind.className = "card-fallback-kind";
-  kind.textContent = meta.icon || labelForMime(mime);
+  // Prefer the human label over metadata.icon: the CLI stamps terse codes like
+  // "FILE" on linked artifacts, which is exactly the file-extension chip this
+  // cover exists to replace. An agent's own icon still wins for unknown mimes.
+  kind.textContent = mime ? labelForMime(mime) : (meta.icon || "Surface");
   const title = document.createElement("div");
   title.className = "card-fallback-title";
   title.textContent = s.title || "Untitled";

@@ -65,6 +65,38 @@ All notable changes to Surface are recorded here.
   releases gain a CHANGELOG gate and an auto-created GitHub Release; all
   jobs have timeouts and SHA-pinned actions. The paid OpenRouter e2e is
   now runnable on demand via workflow_dispatch.
+- Dashboard redesign (`docs/display/pwa.md`). The homepage is a grid of framed
+  16:10 previews cropped from the top, with a left-aligned caption underneath —
+  the circular portholes are gone; they cropped titles at both edges and threw
+  away most of the screenshot. Header, search and filters collapse into a sticky
+  60px bar plus a filter row that only offers filters with members. The shell
+  now derives everything from two tokens (`--bg` / `--fg`, everything else via
+  `color-mix`) and ships a real light scheme via `prefers-color-scheme`; agent
+  themes map onto those tokens instead of unused legacy names.
+- The in-surface topbar is a single 40px row (was ~56px of stacked title and
+  screaming-caps meta): chevron back, title, kind · age · live, and copy-link /
+  open-raw actions. Escape leaves the surface; under 760px the meta collapses so
+  the title keeps the width.
+- A surface with no capture yet wears a designed cover — a tinted field keyed to
+  its id with the title set large — instead of a file-extension chip. The
+  dashboard paints its own equivalent client-side (`has_thumb` on
+  `GET /artifacts`) rather than fetching a placeholder it would replace seconds
+  later.
+- Thumbnails are ~50x faster to backfill (`docs/core/thumbnails.md`). Every
+  capture used to spawn its own Chrome against a throwaway profile dir, paying a
+  full cold start each time — ~30s per capture, so a fresh Surface sat on
+  placeholders for minutes. The queue now holds one browser across a burst and
+  drains it with three workers, each capture in its own throwaway browser
+  context, and waits for load + fonts + two frames instead of a flat 6.5s sleep.
+  Cold backfill of ten surfaces: ~300s -> ~9.6s. Tunable via
+  `SURFACE_THUMB_SETTLE_MS` / `_CONCURRENCY` / `_TIMEOUT_MS` / `_IDLE_MS`.
+- Grid performance: thumbnails load through an `IntersectionObserver`, cards use
+  `content-visibility` and containment, previews declare their aspect ratio so
+  nothing jumps as images land, and a versioned capture is now cached
+  `immutable` instead of `max-age=60`. The starfield/nebula/comet substrate is
+  retired (~180 hidden DOM nodes per grid render plus a mousemove listener), and
+  the artifact shell no longer tries to pull Inter from Google Fonts — a display
+  has to render offline.
 
 ## 0.2.3 - 2026-07-31
 

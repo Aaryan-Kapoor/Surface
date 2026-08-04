@@ -108,6 +108,8 @@ interface Job {
 
 const queue: Job[] = [];
 let running = false;
+const LAUNCH_BACKOFF_MS = 60_000;
+let launchBlockedUntil = 0;
 
 export function enqueueThumb(id: string) {
   if (!serverPort) return;
@@ -127,14 +129,24 @@ async function drain() {
     }
     return;
   }
+  if (Date.now() < launchBlockedUntil) {
+    queue.length = 0;
+    return;
+  }
   running = true;
   cancelIdleShutdown();
   try {
     let browser: Browser;
     try {
       browser = await acquireBrowser();
+      launchBlockedUntil = 0;
     } catch (err: any) {
-      console.error("[thumbs] could not start chrome:", err?.message || err);
+      // A misconfigured SURFACE_CHROME would otherwise retry on every card the
+      // dashboard renders. Back off and let the covers do their job.
+      launchBlockedUntil = Date.now() + LAUNCH_BACKOFF_MS;
+      console.error(
+        `[thumbs] could not start chrome (${err?.message || err}); using covers for the next ${Math.round(LAUNCH_BACKOFF_MS / 1000)}s`,
+      );
       queue.length = 0;
       return;
     }

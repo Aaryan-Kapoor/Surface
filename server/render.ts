@@ -257,10 +257,10 @@ function thumbLabelForMime(mime: string): string {
   if (mime.startsWith("video/")) return "VIDEO";
   if (mime.startsWith("audio/")) return "AUDIO";
   if (mime === "application/pdf") return "PDF";
-  if (mime === "text/markdown") return "MD";
+  if (mime === "text/markdown") return "MARKDOWN";
   if (mime.startsWith("image/")) return "IMAGE";
   if (mime.startsWith("text/")) return "TEXT";
-  return "FILE";
+  return "SURFACE";
 }
 
 // Greedy wrap to at most `maxLines` lines of `max` characters. The final line
