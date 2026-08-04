@@ -7,7 +7,7 @@ Surface is a single long-running Node service plus a vanilla-JS PWA, with a `sur
 
 ## Requirements
 
-- **Node 22+** (`engines` in `package.json`; `tsconfig` targets ES2022). The floor tracks `better-sqlite3` prebuilt-binary coverage — a fresh machine has no compiler toolchain, so a Node version without a prebuild means a failed install (`scripts/test-fresh-install.sh` guards this; Node 20 was dropped in 0.2.4 after its prebuilds ended).
+- **Node 22+** (`engines` in `package.json`; `tsconfig` targets ES2022). The floor tracks `better-sqlite3` prebuilt-binary coverage — a fresh machine has no compiler toolchain, so a Node version without a prebuild means a failed install (`scripts/test-fresh-install.sh` guards this; Node 20 was dropped in 0.2.4 after its prebuilds ended). The dependency is pinned to the **v12** line deliberately: v13 publishes no prebuilt binaries and has no install script, so npm falls back to compiling it with `node-gyp`. When bumping this dependency, check that the target version actually ships prebuilds for every ABI/platform pair we support.
 - **`better-sqlite3`** — a native module, installed as a regular dependency (it stays external to the server bundle).
 - **Chrome/Chromium (optional)** — only needed for card thumbnails. Without it, dashboards fall back to SVG/icon placeholders (`server/index.ts`, `server/thumbs.ts`). Override the binary with `SURFACE_CHROME`.
 

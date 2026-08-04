@@ -7,9 +7,13 @@ All notable changes to Surface are recorded here.
 - **Fixed fresh installs on current Node.** `npm install -g surface-display`
   failed on Node 24/25 (any machine without python/make/g++): better-sqlite3
   11.x has no prebuilt binaries there, so npm fell back to a node-gyp source
-  build and died. better-sqlite3 is now ^13 (prebuilds verified on Node
-  22/24/25) and the supported Node floor is 22 (Node 20 is EOL and has no
-  prebuilds in the v12/v13 lines).
+  build and died. better-sqlite3 is now ^12.11.1 — published prebuilds for
+  ABI 127/137/141/147 (Node 22/24/25/26) across win32, darwin, linux and
+  linuxmusl — and the supported Node floor is 22 (Node 20 is EOL and has no
+  prebuilds in the v12 line). v13 was tried first and reverted: it publishes
+  no prebuilt binaries at all and ships no install script, so npm's default
+  `node-gyp rebuild` compiles it from source on any machine where install
+  scripts run.
 - New `scripts/test-fresh-install.sh` + CI job: global-installs the packed
   tarball in toolchain-free `node:*-slim` containers and drives the CLI
   against a booted server, so a missing native prebuild can never reach a
