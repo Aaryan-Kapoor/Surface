@@ -6,6 +6,16 @@ import { fileURLToPath } from "node:url";
 
 // Isolate the data dir BEFORE importing thumbs (getDataDir caches on first call).
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "surface-thumbs-test-"));
+// On exit, not after the last assertion: a bare rmSync at the end of the file
+// only runs when every check passed, so each failing run — including every
+// deliberate red run used to prove a fix bites — left its scratch dir behind.
+process.on("exit", () => {
+  try {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  } catch {
+    // best effort; the suite's result is what matters
+  }
+});
 process.env.SURFACE_DATA_DIR = tmpRoot;
 // A binary that cannot start: the launch-failure path is what the backfill
 // recovery tests are about, and it guarantees no real Chrome is ever spawned
@@ -460,5 +470,4 @@ test("cover colour is stable per id and spread across ids", () => {
   assert.ok(spread > 90, `neighbouring ids should not cluster, spread was ${spread}`);
 });
 
-fs.rmSync(tmpRoot, { recursive: true, force: true });
 console.log("\nThumbnail tests passed\n");
