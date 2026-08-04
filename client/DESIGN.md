@@ -1,50 +1,79 @@
 # Surface · Default Chrome
 
-Pure black, pure white, system sans, hairline rules. Hierarchy is luminance, not weight.
+The shell's job is to be forgettable. Every surface an agent ships is a
+different design; the chrome around it has to hold all of them without arguing
+with any of them. So: previews carry the page, chrome is a hairline and a
+caption, and the whole thing derives from two colours.
 
 ## Color
 
-| Token | Value | Use |
-|---|---|---|
-| `--bg` | `#000000` | every surface |
-| `--fg` | `#ffffff` | primary text, active state |
-| `--fg-muted` | `rgba(255,255,255,0.5)` | secondary text, labels |
-| `--fg-faint` | `rgba(255,255,255,0.3)` | tertiary, decoration |
-| `--hairline` | `rgba(255,255,255,0.18)` | resting borders, grid rules |
-| `--hairline-strong` | `rgba(255,255,255,0.42)` | interactive borders |
+Two tokens. Everything else is `color-mix` of the pair, so a theme that swaps
+them gets a coherent palette for free.
 
-No gradients, no glows, no shadows, no chroma. Themes may override `--bg` and `--fg`; everything else is built from them.
+| Token | Dark | Light | Use |
+|---|---|---|---|
+| `--bg` | `#0a0b0d` | `#f6f6f7` | page |
+| `--fg` | `#ffffff` | `#0b0c0e` | primary ink |
+
+Derived: `--fg-muted` (62%), `--fg-faint` (40%), `--fg-ghost` (22%), `--panel`,
+`--panel-2`, `--panel-solid`, `--line`, `--line-strong`. Each derived token
+declares an rgba fallback immediately before its `color-mix` value.
+
+`--ok` (`#34d399` / `#067647`) is the only chroma in the shell, reserved for
+liveness — the connection dot, the "live" pill. `--danger` is destructive
+actions and the unanswered-action badge. Nothing else is coloured.
+
+Dark is the default; light comes from `prefers-color-scheme`. Agent themes
+override `--bg` / `--fg` and win over both.
 
 ## Type
 
-System stack: `-apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif`. No web font load.
+System stack. No web font — a display has to render offline and inside the
+headless thumbnailer.
 
-- **Weights:** 400 default, 500 for the four spots that need slight emphasis (card title, modal title, nav title, copy CTA). Nothing heavier.
-- **Case:** sentence case everywhere. No uppercase.
-- **Tracking:** `0` everywhere except `-0.02em` on the 56px hero and `-0.01em` on the 24px modal title.
-- **Sizes:** 56 / 24 / 16 / 15 / 14 / 13 / 12 / 11.
-
-Hierarchy is conveyed by **luminance** (100 → 50 → 30 % alpha), not weight.
+- **Sizes:** 17 wordmark / 15 cover title / 13.5 card title / 13 bar title /
+  12.5 chips and subtitle / 12 card meta / 11.5 bar meta.
+- **Weights:** 400 body, 550 for titles, 620 for the wordmark and hero. Nothing
+  heavier.
+- **Case:** sentence case everywhere. The only uppercase left is the mono kind
+  label on a cover, where it reads as a stamp.
+- **Tracking:** negative and proportional to size — `-0.035em` on the hero down
+  to `-0.006em` on chips. `0` on anything under 12px.
 
 ## Layout
 
-- Empty state is **left-aligned**, anchored to an 80px left margin, vertically centered.
-- Grid header is left-aligned to the same gutter.
-- Cards are rectangular, no radius, separated by **1px hairline rules** rendered as grid-gap fill — one continuous line between siblings, never duplicated borders.
-- Interactive borders (button, modal, back-btn) are 1px solid at `--hairline-strong` alpha.
+- **Grid header** is sticky, 60px, and holds identity, search and status. It
+  grows a rule only once content passes under it.
+- **Cards** are a 16:10 preview with a two-line caption. The preview is cropped
+  from the top, because surfaces lead with a headline.
+- **Column width** is `--card-min` per breakpoint (280 / 250 / 215px, then a
+  fixed 2-up under 760px), not one auto-fill floor.
+- **The in-surface bar** is 40px. One row. If something can be inferred from
+  the grid, it does not belong here.
+- **Optical alignment:** pill-shaped controls are pulled out by their own
+  padding so their text lines up with the grid edges, not their boxes.
+- Radius: 14px cards, 10px inputs and buttons, 8px icon buttons, pill for
+  chips and status.
 
 ## Interaction
 
-- Hover on a card: background lifts to `rgba(255,255,255,0.04)`. No transform.
-- Hover on a bordered button: inverts to white fill, black ink, border → white.
-- Transitions are 150ms linear. No easing curves, no spring.
+- Card hover: 3px lift, deeper shadow, ring goes from 16% to 34% of `--fg`.
+  No tilt, no gleam.
+- Transitions are 150–250ms on `--ease-out` / `--ease-swift`. Nothing springs.
+- The action tray is hover-revealed. Where hover doesn't exist it gets a `⋯`
+  handle in the **caption** — never on the picture.
+- `prefers-reduced-motion` removes every animation, transition and the hover
+  lift.
+
+## Accessibility
+
+One `:focus-visible` rule: 2px `--fg`, offset 2. Cards are links to the
+keyboard. Previews have real alt text. Chips carry `aria-pressed`, the
+connection indicator is a `role="status"`.
 
 ## What's not here
 
-No substrate (starfield, aurora, nebulae, grain, comets are all `display: none`). No empty-state glyph. No card preview color-grade. No card gleam, tilt, or materialize. No shimmer, breathe, pulse. No box-shadow. No backdrop-filter. No border-radius.
-
-`.surface-card`, `.modal-panel`, `.empty-tour-btn`, `.toast` — every container is a black rectangle with a 1px white-alpha border.
-
-## Themes
-
-`--bg` and `--fg` are the only tokens an agent should override. Everything else is derived. `starfield: false` is a no-op (there is no starfield).
+No starfield, nebula, aurora, grain or comets — retired, and the selectors are
+still `display: none` for themes that inject their own. No card tilt. No
+gradients or glows in the chrome (covers are the exception, and they are
+content, not chrome). No decorative iconography.
