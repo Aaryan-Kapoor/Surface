@@ -60,7 +60,7 @@ Commands:
   actions [<id>]             List pending user actions
   ack <action-id>            Acknowledge action
   reply <id> <text>          Send toast to surface
-  notify <text>              Display ephemeral notification
+  notify <text>              Display a notification (--button "Label=action" makes it answerable)
   theme [<json>|-|reset]     Get / set / reset display theme
   slot [<role> <id>|--clear] Show or assign display slots (renderer|home|overlay)
   status                     Get display state
@@ -145,7 +145,10 @@ const COMMANDS: Record<string, CommandSpec> = {
   actions: command("surface actions [<id>]"),
   ack: command("surface ack <action-id>"),
   reply: command("surface reply <id> <text>"),
-  notify: command("surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]", { style: STR, duration: NUM, on: STR }),
+  notify: command(
+    'surface notify <text> [--button "Label=action"]... [--id <surface-id>] [--style info|success|warning|error] [--duration <ms>] [--sticky] [--on <device>]',
+    { style: STR, duration: NUM, on: STR, id: STR, sticky: BOOL, button: MULTI },
+  ),
   theme: command("surface theme [<json>|-|reset]"),
   slot: command([
     "surface slot                          show current slot assignments",
@@ -243,7 +246,7 @@ const BOOLEAN_FLAGS = new Set([
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.
-const MULTI_FLAGS = new Set(["param", "to"]);
+const MULTI_FLAGS = new Set(["param", "to", "button"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -1379,6 +1382,24 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
       const duration = parseNumberFlag(flags, "duration");
       if (duration !== undefined) body.duration = duration;
       if (typeof flags.on === "string") body.device = flags.on;
+      if (flags.sticky) body.sticky = true;
+      if (typeof flags.id === "string") body.surface_id = flags.id;
+
+      // --button "Roll back=rollback" — the label is what the human reads, the
+      // action name is what lands in the inbox. Pressing one records an action
+      // against --id, so `surface wait` sees it exactly like an in-surface
+      // click. Split on the last "=" so a label may contain one.
+      const buttons = multi.button || [];
+      if (buttons.length) {
+        if (typeof flags.id !== "string") {
+          usage("--button needs --id <surface-id>: the action has to land on a surface");
+        }
+        body.actions = buttons.map((raw) => {
+          const eq = raw.lastIndexOf("=");
+          if (eq <= 0) usage(`--button expects "Label=action" (got "${raw}")`);
+          return { label: raw.slice(0, eq).trim(), action: raw.slice(eq + 1).trim() };
+        });
+      }
       out(await call("POST", "/display/notify", body));
       return;
     }

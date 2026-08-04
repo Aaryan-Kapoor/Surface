@@ -15,6 +15,7 @@ const suites = [
   "test:service",
   "test:upgrade",
   "test:updates",
+  "test:notify",
   "test:bindings",
   "test:agent-sessions",
   "test:codex-bridge",

@@ -10,6 +10,11 @@ import { addGlobalClient, broadcastGlobal, hasWaiter, sendToClient } from "../ss
 import { releaseWaiterClaims } from "../bindings.js";
 import { listPresence, reportPresence } from "../presence.js";
 import { deviceNameOf, requireSystem, resolveDeviceTarget, targetOf } from "./helpers.js";
+import { dispatchSurfaceAction } from "./actions.js";
+import {
+  dismissAllNotifications, dismissNotification, getNotification, listNotifications,
+  markAllSeen, markAnswered, recordNotification, unreadCount,
+} from "../notifications.js";
 
 export const displayRouter = Router();
 
@@ -258,17 +263,152 @@ displayRouter.post("/display/navigate", (req: Request, res: Response) => {
 });
 
 // Agent sends notification — optionally on one device only.
+//
+// A notification can carry buttons. They are not a second interaction model:
+// pressing one records an action against `surface_id` through the same store a
+// click inside a surface writes to, so `surface wait` and `surface actions` see
+// it without knowing a notification was involved. That is also why the surface
+// is required — an action with nothing to belong to has no inbox to land in.
+const NOTIFY_ACTION_LIMIT = 3;
+
 displayRouter.post("/display/notify", (req: Request, res: Response) => {
   if (!requireSystem(req, res)) return; // agents drive the display; devices view + click
-  const { text, duration, style, device } = req.body;
+  const { text, duration, style, device, surface_id, sticky } = req.body;
   if (!text) {
     res.status(400).json({ error: "text is required" });
     return;
   }
+
+  const rawActions = Array.isArray(req.body.actions) ? req.body.actions : [];
+  if (rawActions.length > NOTIFY_ACTION_LIMIT) {
+    res.status(400).json({ error: `at most ${NOTIFY_ACTION_LIMIT} notification buttons` });
+    return;
+  }
+  const actions: { label: string; action: string; data?: unknown }[] = [];
+  for (const entry of rawActions) {
+    const label = String(entry?.label ?? "").trim();
+    const action = String(entry?.action ?? "").trim();
+    if (!label || !action) {
+      res.status(400).json({ error: "each notification button needs a label and an action" });
+      return;
+    }
+    actions.push({ label, action, data: entry?.data });
+  }
+  if (actions.length && !surface_id) {
+    res.status(400).json({ error: "surface_id is required when a notification carries buttons" });
+    return;
+  }
+  if (surface_id && !getArtifact(getDb(), String(surface_id))) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+
   const target = resolveDeviceTarget(res, device);
   if (target === null) return;
-  broadcastGlobal("display_notify", { text, duration: duration || 5000, style: style || "info" }, target);
-  res.json({ sent: true, device: target ?? "all" });
+
+  // A notification you have to answer must not expire while you read it, so
+  // buttons imply sticky unless the caller says otherwise.
+  const isSticky = sticky === undefined ? actions.length > 0 : !!sticky;
+  const saved = recordNotification(getDb(), {
+    text: String(text),
+    style: style || "info",
+    surface_id: surface_id ? String(surface_id) : null,
+    device: target ?? null,
+    actions,
+    sticky: isSticky,
+  });
+
+  broadcastGlobal("display_notify", {
+    id: saved.id,
+    text: saved.text,
+    duration: duration || 6500,
+    style: saved.style,
+    sticky: isSticky,
+    surface_id: saved.surface_id,
+    actions,
+    unread: unreadCount(getDb()),
+  }, target);
+  res.json({ sent: true, id: saved.id, device: target ?? "all", actions: actions.length });
+});
+
+// ── The notification tray ──
+//
+// Reading and answering are the human's side of the conversation, so a paired
+// device gets them; only the system plane may create a notification, which is
+// the same split as everywhere else — agents drive the display, devices view
+// and click.
+
+displayRouter.get("/notifications", (_req: Request, res: Response) => {
+  res.json({ notifications: listNotifications(getDb()), unread: unreadCount(getDb()) });
+});
+
+displayRouter.post("/notifications/seen", (_req: Request, res: Response) => {
+  const seen = markAllSeen(getDb());
+  const unread = unreadCount(getDb());
+  broadcastGlobal("notification_read", { unread });
+  res.json({ seen, unread });
+});
+
+// Answering is two facts, and they must not drift apart: the agent's inbox gets
+// a normal action, and the tray stops asking. The action is recorded here
+// rather than by the client so a device cannot mark a question answered
+// without one.
+displayRouter.post("/notifications/:id/answer", (req: Request, res: Response) => {
+  const notification = getNotification(getDb(), String(req.params.id));
+  if (!notification) {
+    res.status(404).json({ error: "Notification not found" });
+    return;
+  }
+  if (notification.answered_at) {
+    res.status(409).json({ error: "Notification already answered", answer: notification.answer });
+    return;
+  }
+  const wanted = String(req.body?.action ?? "");
+  const choice = notification.actions.find((entry) => entry.action === wanted);
+  if (!choice) {
+    res.status(400).json({ error: `"${wanted}" is not one of this notification's buttons` });
+    return;
+  }
+  if (!notification.surface_id) {
+    res.status(400).json({ error: "Notification has no surface to record an action against" });
+    return;
+  }
+
+  const artifact = getArtifact(getDb(), notification.surface_id);
+  if (!artifact) {
+    res.status(404).json({ error: "Artifact not found" });
+    return;
+  }
+  // Straight down the same ladder an in-surface click takes — webhook fan-out,
+  // waiter first refusal, bindings, inbox. A press is a click.
+  const action = dispatchSurfaceAction(artifact, choice.action, {
+    ...(choice.data && typeof choice.data === "object" ? choice.data : {}),
+    label: choice.label,
+    from: "notification",
+    notification_id: notification.id,
+  }, deviceNameOf(req));
+  const updated = markAnswered(getDb(), notification.id, choice.action);
+
+  broadcastGlobal("notification_answered", {
+    id: notification.id,
+    answer: choice.action,
+    unread: unreadCount(getDb()),
+  });
+  res.json({ answered: choice.action, notification: updated, action });
+});
+
+displayRouter.post("/notifications/:id/dismiss", (req: Request, res: Response) => {
+  const ok = dismissNotification(getDb(), String(req.params.id));
+  const unread = unreadCount(getDb());
+  broadcastGlobal("notification_read", { unread });
+  res.json({ dismissed: ok, unread });
+});
+
+displayRouter.post("/notifications/dismiss-all", (_req: Request, res: Response) => {
+  const dismissed = dismissAllNotifications(getDb());
+  const unread = unreadCount(getDb());
+  broadcastGlobal("notification_read", { unread });
+  res.json({ dismissed, unread });
 });
 
 // ── Display renderer / home widget / overlay HTML ──

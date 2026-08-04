@@ -1,0 +1,53 @@
+{
+  "name": "triage",
+  "description": "Drag items onto an impact/effort plane \u2014 the whole layout comes back as one action when the human sends it",
+  "params": {
+    "title": {
+      "type": "string",
+      "default": "Triage",
+      "description": "Heading"
+    },
+    "x_label": {
+      "type": "string",
+      "default": "Effort",
+      "description": "Horizontal axis, low on the left"
+    },
+    "y_label": {
+      "type": "string",
+      "default": "Impact",
+      "description": "Vertical axis, high at the top"
+    },
+    "quadrants": {
+      "type": "list",
+      "default": [
+        "Do now",
+        "Plan it",
+        "Drop it",
+        "Delegate"
+      ],
+      "description": "Corner labels, clockwise from top-left: high-y/low-x, high-y/high-x, low-y/low-x, low-y/high-x"
+    },
+    "items": {
+      "type": "list",
+      "default": [],
+      "description": "Chips: [{ id, label, meta }] or plain strings"
+    }
+  },
+  "state": {
+    "placements": {
+      "type": "object",
+      "default": {}
+    },
+    "note": {
+      "type": "string",
+      "default": ""
+    },
+    "status": {
+      "type": "string",
+      "default": "open"
+    }
+  },
+  "actions": [
+    "ranked"
+  ]
+}

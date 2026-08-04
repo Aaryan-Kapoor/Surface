@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surface tour</title>
+<style>
+  /* The shell's three planes (client/DESIGN.md): the page sinks, anything you
+     click lifts. Neutral greys only — R == G == B. */
+  :root {
+    --bg: #0a0a0a;
+    --interactive: #121212;
+    --fg: #ffffff;
+    --fg-muted: rgba(255,255,255,.62);
+    --fg-faint: rgba(255,255,255,.40);
+    --line: rgba(255,255,255,.12);
+    --line-strong: rgba(255,255,255,.34);
+    --ok: #34d399;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f6f7;
+      --interactive: #ffffff;
+      --fg: #0b0c0e;
+      --fg-muted: rgba(11,12,14,.62);
+      --fg-faint: rgba(11,12,14,.42);
+      --line: rgba(11,12,14,.12);
+      --line-strong: rgba(11,12,14,.34);
+      --ok: #067647;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    overflow-y: auto;
+  }
+  main {
+    width: 100%;
+    max-width: 900px;
+    margin: auto;
+    padding: 56px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(26px, 4vw, 38px);
+    font-weight: 620;
+    letter-spacing: -.03em;
+    line-height: 1.1;
+  }
+  .sub { margin: -18px 0 0; font-size: 15px; line-height: 1.5; color: var(--fg-muted); max-width: 56ch; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 12px;
+  }
+  .pick {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    text-align: left;
+    font: inherit;
+    color: var(--fg);
+    background: var(--interactive);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 18px 16px;
+    cursor: pointer;
+    transition: border-color .15s ease, transform .12s ease, box-shadow .15s ease;
+  }
+  .pick:hover:not(:disabled) {
+    border-color: var(--line-strong);
+    transform: translateY(-3px);
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  .pick:active:not(:disabled) { transform: translateY(-1px); }
+  .pick:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .pick:disabled { cursor: default; }
+  .pick .title { font-size: 15px; font-weight: 550; letter-spacing: -.01em; }
+  .pick .blurb { font-size: 13px; line-height: 1.45; color: var(--fg-muted); }
+  .pick .proves {
+    margin-top: 3px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.5px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+
+  /* Once a pick lands, the others step back rather than vanishing — the menu
+     stays legible as a record of what else was on offer. */
+  body.picked .pick { opacity: .32; }
+  body.picked .pick.chosen {
+    opacity: 1;
+    border-color: var(--line-strong);
+    box-shadow: 0 0 0 1px var(--line-strong);
+  }
+
+  .other { display: flex; gap: 10px; flex-wrap: wrap; }
+  .other input {
+    flex: 1 1 260px;
+    min-width: 0;
+    font: inherit;
+    font-size: 14px;
+    color: var(--fg);
+    background: var(--interactive);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    outline: none;
+  }
+  .other input::placeholder { color: var(--fg-faint); }
+  .other input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .send {
+    font: inherit;
+    font-size: 14px;
+    font-weight: 550;
+    color: var(--bg);
+    background: var(--fg);
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 20px;
+    cursor: pointer;
+  }
+  .send:disabled { opacity: .3; cursor: default; }
+  .send:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    color: var(--fg-muted);
+    min-height: 20px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pick { transition: none; }
+    .pick:hover:not(:disabled) { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <main>
+    <h1>{{heading}}</h1>
+    <p class="sub">{{subhead}}</p>
+    <div class="grid" id="grid"></div>
+    <div class="other">
+      <input id="other-input" type="text" autocomplete="off"
+             placeholder="Or describe something you'd actually use…">
+      <button class="send" id="other-send" type="button">Build that</button>
+    </div>
+    <div class="status" id="status"></div>
+  </main>
+
+  <script>
+  (function () {
+    // The six are here rather than in the agent's prompt on purpose: an agent
+    // improvising this menu is an agent improvising the first thing a new user
+    // ever sees, and that is how you get neon green on navy.
+    var BUILT_IN = [
+      { id: "whiteboard", title: "A shared whiteboard",
+        blurb: "You draw, I look at what you drew, and I draw back on the same canvas.",
+        proves: "Surface sees you back" },
+      { id: "tictactoe", title: "Play tic-tac-toe",
+        blurb: "You move, I move. No refresh, no polling, no chat turn.",
+        proves: "Real-time loop" },
+      { id: "triage", title: "Rank a mock PR queue",
+        blurb: "Drag pull requests onto an impact/effort plane. I read the layout you made.",
+        proves: "Arbitrary UI, not widgets" },
+      { id: "mockup", title: "Pick a UI you like",
+        blurb: "Four live variants side by side. Choose one, tell me why, I keep going.",
+        proves: "Design review loop" },
+      { id: "video", title: "Watch something",
+        blurb: "I put a video on the display and control playback from here.",
+        proves: "Media, not just markup" },
+      { id: "dashboard", title: "A number that moves",
+        blurb: "A live gauge I keep updating while you watch it, without touching the page.",
+        proves: "State without redeploys" }
+    ];
+
+    function init() {
+      var Surface = window.Surface || {
+        state: {}, onState: function () { return function () {}; },
+        action: function () { return Promise.resolve(); }
+      };
+      var P = window.__TEMPLATE_PARAMS || {};
+      var opts = Array.isArray(P.options) && P.options.length ? P.options : BUILT_IN;
+
+      var grid = document.getElementById("grid");
+      var input = document.getElementById("other-input");
+      var send = document.getElementById("other-send");
+      var status = document.getElementById("status");
+      var buttons = [];
+      var locked = false;
+
+      opts.forEach(function (o) {
+        var id = String(o && o.id != null ? o.id : o);
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "pick";
+        b.setAttribute("data-id", id);
+
+        var t = document.createElement("span");
+        t.className = "title";
+        t.textContent = String(o && o.title != null ? o.title : id);
+        b.appendChild(t);
+
+        if (o && o.blurb) {
+          var d = document.createElement("span");
+          d.className = "blurb";
+          d.textContent = String(o.blurb);
+          b.appendChild(d);
+        }
+        if (o && o.proves) {
+          var pr = document.createElement("span");
+          pr.className = "proves";
+          pr.textContent = String(o.proves);
+          b.appendChild(pr);
+        }
+
+        b.addEventListener("click", function () {
+          if (locked) return;
+          pick(id, String(o && o.title != null ? o.title : id), null);
+        });
+        grid.appendChild(b);
+        buttons.push(b);
+      });
+
+      function pick(id, label, text) {
+        Surface.action("pick", { choice: id, label: label, text: text });
+        // Optimistic: the agent's state update confirms it a moment later, but
+        // a button that does nothing for a round trip reads as broken.
+        paint(id, text);
+      }
+
+      function submitOther() {
+        var v = input.value.trim();
+        if (locked || !v) return;
+        pick("other", "Something else", v);
+      }
+      input.addEventListener("input", function () { send.disabled = locked || !input.value.trim(); });
+      input.addEventListener("keydown", function (e) { if (e.key === "Enter") submitOther(); });
+      send.addEventListener("click", submitOther);
+      send.disabled = true;
+
+      function paint(picked, text) {
+        locked = !!picked;
+        document.body.classList.toggle("picked", locked);
+        for (var i = 0; i < buttons.length; i++) {
+          buttons[i].disabled = locked;
+          buttons[i].classList.toggle("chosen", buttons[i].getAttribute("data-id") === picked);
+        }
+        input.disabled = locked;
+        send.disabled = locked || !input.value.trim();
+
+        status.textContent = "";
+        if (!locked) return;
+        var dot = document.createElement("span");
+        dot.className = "dot";
+        status.appendChild(dot);
+        status.appendChild(document.createTextNode(
+          text ? "Building that — " + text : "Building that now…"
+        ));
+      }
+
+      function render() {
+        var st = Surface.state || {};
+        paint(st.status === "picked" ? String(st.picked || "") : "", null);
+      }
+
+      Surface.onState(render);
+      render();
+    }
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  })();
+  </script>
+</body>
+</html>

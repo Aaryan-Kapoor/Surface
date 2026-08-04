@@ -1,6 +1,8 @@
 import { Router } from "express";
 import type { Request } from "express";
 import { getDb } from "../db.js";
+import type { Artifact } from "../artifacts.js";
+import type { SurfaceAction } from "../actionsStore.js";
 import {
   ackAction,
   claimActionForWaiter,
@@ -88,6 +90,63 @@ async function fanOutWebhook(payload: {
   }
 }
 
+/**
+ * Record a user action and run it down the delivery ladder.
+ *
+ * Every route that turns a human gesture into an action goes through here — an
+ * in-surface click, and a press on a notification button. A second copy of this
+ * sequence is how you get an action that never fans out to a webhook, or never
+ * wakes a waiter, in exactly one of the two paths.
+ */
+export function dispatchSurfaceAction(
+  artifact: Artifact,
+  action: string,
+  data: unknown,
+  deviceName: string | null,
+): SurfaceAction {
+  const act = createAction(getDb(), { surface_id: artifact.id, action, data });
+
+  // An ask surface flips to answered server-side the moment the answer action
+  // lands, so the card can never be answered twice — independent of whether a
+  // waiter, binding, or nothing at all is listening (docs/templates/ask.md).
+  if (artifact.template === "ask" && action === "answer") {
+    const answer = {
+      ...(typeof data === "object" && data !== null ? data : {}),
+      answered_at: new Date().toISOString(),
+      device: deviceName,
+    };
+    const result = patchState(getDb(), artifact.id, { status: "answered", answer });
+    const event = { id: artifact.id, patch: { status: "answered", answer }, state_version: result.state_version };
+    broadcastGlobal("state_patch", event);
+    broadcastToSurface(artifact.id, "state_patch", event);
+  }
+
+  fanOutWebhook({
+    surface_id: artifact.id,
+    surface_title: artifact.title,
+    action: act.action,
+    data: data ?? {},
+    created_at: act.created_at,
+  });
+  broadcastGlobal("surface_action", {
+    id: act.id,
+    surface_id: artifact.id,
+    surface_title: artifact.title,
+    // Project ownership rides on the event so a project-scoped waiter can filter
+    // live actions the same way it filters its inbox drain.
+    project_root: artifact.project_root,
+    action: act.action,
+    data: act.data,
+    status: act.status,
+    created_at: act.created_at,
+  });
+
+  // Run the ladder: an eligible live waiter gets a bounded first refusal, then
+  // bindings fire, then the action simply waits in the inbox (server/bindings.ts).
+  scheduleDelivery(artifact.id, act.action);
+  return act;
+}
+
 // Display posts a user action (iframe postMessage → PWA → here).
 actionsRouter.post("/artifacts/:id/actions", (req, res) => {
   const artifact = getArtifact(getDb(), req.params.id);
@@ -106,48 +165,10 @@ actionsRouter.post("/artifacts/:id/actions", (req, res) => {
     res.status(400).json({ error: "action is required" });
     return;
   }
-  const act = createAction(getDb(), { surface_id: req.params.id, action, data });
-
-  // An ask surface flips to answered server-side the moment the answer action
-  // lands, so the card can never be answered twice — independent of whether a
-  // waiter, binding, or nothing at all is listening (docs/templates/ask.md).
-  if (artifact.template === "ask" && action === "answer") {
-    const answer = {
-      ...(typeof data === "object" && data !== null ? data : {}),
-      answered_at: new Date().toISOString(),
-      device: deviceNameOf(req),
-    };
-    const result = patchState(getDb(), req.params.id, { status: "answered", answer });
-    const event = { id: req.params.id, patch: { status: "answered", answer }, state_version: result.state_version };
-    broadcastGlobal("state_patch", event);
-    broadcastToSurface(req.params.id, "state_patch", event);
-  }
-  fanOutWebhook({
-    surface_id: req.params.id,
-    surface_title: artifact.title,
-    action: act.action,
-    data: data ?? {},
-    created_at: act.created_at,
-  });
-  broadcastGlobal("surface_action", {
-    id: act.id,
-    surface_id: req.params.id,
-    surface_title: artifact.title,
-    // Project ownership rides on the event so a project-scoped waiter can filter
-    // live actions the same way it filters its inbox drain.
-    project_root: artifact.project_root,
-    action: act.action,
-    data: act.data,
-    status: act.status,
-    created_at: act.created_at,
-  });
-
-  // Run the ladder: an eligible live waiter gets a bounded first refusal, then
-  // bindings fire, then the action simply waits in the inbox (server/bindings.ts).
-  scheduleDelivery(req.params.id, act.action);
-
+  const act = dispatchSurfaceAction(artifact, action, data, deviceNameOf(req));
   res.status(201).json(act);
 });
+
 
 // ── Bindings (layer 2 registration — system plane only) ──
 

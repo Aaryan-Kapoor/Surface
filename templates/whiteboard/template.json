@@ -1,0 +1,14 @@
+{
+  "name": "whiteboard",
+  "description": "A canvas the human draws on and the agent can both see and draw back on — strokes and a PNG come back as an action, the agent's own strokes arrive as state",
+  "params": {
+    "title": { "type": "string", "default": "Whiteboard", "description": "Heading above the canvas" },
+    "prompt": { "type": "string", "default": "Draw something and send it over.", "description": "One line of instruction" }
+  },
+  "state": {
+    "agent_strokes": { "type": "array", "default": [] },
+    "note": { "type": "string", "default": "" },
+    "status": { "type": "string", "default": "idle" }
+  },
+  "actions": ["snapshot", "cleared"]
+}

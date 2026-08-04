@@ -1671,28 +1671,187 @@ iframe.surface-frame.is-loaded { opacity: 1; }
 
 /* ══ Toast ══ */
 
-.toast {
+/* ── Notifications ──
+   Floating chrome, so it sits on the overlay plane with the modals and the
+   finder (DESIGN.md rule 1); what you press inside one lifts back off it
+   (rule 3). They stack in a column rather than landing on each other, and the
+   tray in the header is the record — so a plain one may leave on its own
+   without anything being lost. */
+
+.toast-stack {
   position: fixed;
-  top: calc(12px + env(safe-area-inset-top, 0px));
+  top: calc(var(--header-h) + 10px + env(safe-area-inset-top, 0px));
   right: 12px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-end;
+  pointer-events: none;
+  width: min(380px, calc(100vw - 24px));
+}
+
+.toast {
+  position: relative;
+  width: 100%;
   background: var(--overlay);
   border: 1px solid var(--line);
-  color: var(--fg);
-  padding: 10px 15px;
   border-radius: var(--r-md);
-  font-size: 13px;
-  z-index: 1000;
+  color: var(--fg);
+  padding: 13px 38px 13px 15px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  letter-spacing: -0.005em;
+  box-shadow: var(--shadow-lift);
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.22s var(--ease-swift), transform 0.3s var(--ease-out);
-  pointer-events: none;
-  max-width: min(380px, calc(100vw - 24px));
-  box-shadow: var(--shadow-lift);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
 }
 
 .toast--visible { opacity: 1; transform: none; }
+.toast-text { overflow-wrap: anywhere; }
+
 .toast--success { border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); }
 .toast--error { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
+.toast--warning { border-color: var(--line-strong); }
+
+/* Buttons on a notification are the whole point of the tray: an agent can ask
+   for one bit of intent without building a surface for it. */
+.toast-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.toast-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--fg);
+  background: var(--interactive);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease-swift), opacity 0.15s var(--ease-swift);
+}
+.toast-btn:hover:not(:disabled) { border-color: var(--line-strong); }
+.toast-btn:disabled { cursor: default; opacity: 0.35; }
+.toast-btn--chosen { opacity: 1; border-color: var(--line-strong); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+.toast-close {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--fg-faint);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.15s var(--ease-swift), background 0.15s var(--ease-swift);
+}
+.toast-close:hover { color: var(--fg); background: var(--interactive); }
+
+/* ── Notification tray ──
+   Reachable from the grid header and from inside a surface, because a question
+   you have not answered should not depend on which screen you are on. */
+
+.notif-btn { position: relative; }
+
+.notif-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 15px;
+  text-align: center;
+  letter-spacing: 0;
+}
+.notif-badge[hidden] { display: none; }
+
+.notif-panel {
+  position: fixed;
+  top: calc(var(--header-h) + 8px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  width: min(400px, calc(100vw - 24px));
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow-lift);
+  z-index: 1001;
+  padding: 8px;
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.16s var(--ease-swift), transform 0.2s var(--ease-out);
+}
+.notif-panel--visible { opacity: 1; transform: none; }
+
+.notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px 10px;
+}
+.notif-head-title {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+}
+.notif-clear {
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.notif-clear:hover { color: var(--fg); }
+
+.notif-item {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--interactive);
+  margin-bottom: 6px;
+}
+.notif-item:last-child { margin-bottom: 0; }
+/* Answered and read fade back; an open question keeps full luminance. */
+.notif-item--done { opacity: 0.45; }
+.notif-item-text { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.notif-item-meta { font-size: 11.5px; color: var(--fg-faint); }
+.notif-item-answer { font-size: 11.5px; color: var(--fg-muted); }
+
+.notif-empty {
+  padding: 22px 12px 26px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-faint);
+}
+
 
 /* ══ Finder (⌘K) ══ */
 
@@ -1890,7 +2049,8 @@ iframe.surface-frame.is-loaded { opacity: 1; }
   .card-sub { font-size: 11.5px; }
   .empty-state { padding: calc(var(--header-h) + 24px) 22px 32px; gap: 22px; }
   .modal-panel { padding: 26px 22px 22px; border-radius: 16px; }
-  .toast { left: 12px; right: 12px; max-width: none; }
+  .toast-stack { left: 12px; right: 12px; width: auto; align-items: stretch; }
+  .notif-panel { left: 12px; right: 12px; width: auto; }
 
   /* Narrow bar: the surface's name is the only identity worth the width. Kind
      and age are a tap away in the grid; the live dot stays because it is state. */

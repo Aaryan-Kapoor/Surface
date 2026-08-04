@@ -1,0 +1,18 @@
+{
+  "name": "mockup",
+  "description": "Live design variants side by side — the human picks one and says why, and both come back as an action",
+  "params": {
+    "title": { "type": "string", "default": "Which one?", "description": "Heading" },
+    "question": { "type": "string", "default": "", "description": "Optional line under the heading" },
+    "variants": {
+      "type": "list",
+      "default": [],
+      "description": "[{ label, caption, html }] — html renders in its own frame, so a variant cannot restyle the page"
+    }
+  },
+  "state": {
+    "status": { "type": "string", "default": "open" },
+    "chosen": { "type": "string", "default": "" }
+  },
+  "actions": ["vote"]
+}

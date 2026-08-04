@@ -1,0 +1,15 @@
+{
+  "name": "tictactoe",
+  "description": "Tic-tac-toe against the agent — the human's move arrives as an action, the agent's reply arrives as state",
+  "params": {
+    "you": { "type": "string", "default": "X", "description": "The human's mark" },
+    "agent": { "type": "string", "default": "O", "description": "The agent's mark" }
+  },
+  "state": {
+    "board": { "type": "string", "default": "........." },
+    "turn": { "type": "string", "default": "you" },
+    "status": { "type": "string", "default": "playing" },
+    "note": { "type": "string", "default": "" }
+  },
+  "actions": ["move", "restart"]
+}
