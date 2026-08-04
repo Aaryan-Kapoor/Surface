@@ -1406,10 +1406,12 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 .modal-close:hover { color: var(--fg); background: var(--interactive); }
 
 .modal-eyebrow {
-  font-size: 11.5px;
-  font-weight: 500;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
   color: var(--fg-faint);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .modal-title {

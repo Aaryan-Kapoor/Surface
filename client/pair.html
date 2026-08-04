@@ -29,6 +29,7 @@
       --line: rgba(255, 255, 255, 0.10);
       --line-strong: rgba(255, 255, 255, 0.20);
       --danger: #ff4d4a;
+      --ok: #34d399;
       --shadow-pop: 0 40px 90px -30px rgba(0, 0, 0, 0.85);
       --r-md: 10px;
       --r-card: 18px;
@@ -48,6 +49,7 @@
         --line: rgba(0, 0, 0, 0.10);
         --line-strong: rgba(0, 0, 0, 0.22);
         --danger: #d92d20;
+        --ok: #067647;
         --shadow-pop: 0 40px 90px -30px rgba(16, 18, 22, 0.28);
       }
     }
@@ -87,15 +89,31 @@
       from { opacity: 0; transform: translateY(12px); }
       to   { opacity: 1; transform: none; }
     }
-    .eyebrow { font-size: 11.5px; font-weight: 500; color: var(--fg-faint); margin-bottom: 10px; }
+    .eyebrow {
+      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase;
+      color: var(--fg-faint); margin-bottom: 12px;
+    }
     h1 { font-size: 23px; margin: 0 0 10px; font-weight: 620; letter-spacing: -0.024em; line-height: 1.18; }
     p.sub { margin: 0 0 20px; color: var(--fg-muted); font-size: 13.5px; line-height: 1.55; }
-    label {
-      display: block;
-      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 10px; letter-spacing: .18em; text-transform: uppercase;
-      color: var(--fg-faint); margin: 0 0 8px;
+    /* Numbered steps. Pairing is a three-move sequence that spans two machines
+       — run a command over there, carry what it prints back here, then name
+       this screen — and a flat stack of fields gave no clue that the token has
+       to be fetched before anything can be typed. */
+    .steps { list-style: none; display: grid; gap: 24px; margin: 0 0 24px; padding: 0; }
+    .step { display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start; }
+    .step-n {
+      width: 26px; height: 26px; border-radius: 50%;
+      border: 1px solid var(--line-strong); color: var(--fg-faint);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1;
+      margin-top: 1px; flex: 0 0 auto;
     }
+    .step-body { min-width: 0; }
+    .step-title { font-size: 14px; font-weight: 600; letter-spacing: -0.008em; margin: 4px 0 10px; }
+    .step-title label { cursor: pointer; }
+    .hint { margin: 8px 0 0; font-size: 12px; color: var(--fg-faint); line-height: 1.45; }
+    .mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
     input {
       width: 100%; padding: 11px 13px;
       background: var(--interactive); color: var(--fg);
@@ -105,16 +123,17 @@
       caret-color: var(--fg);
       transition: border-color .18s var(--ease-swift), background .18s var(--ease-swift), box-shadow .18s var(--ease-swift);
     }
+    input.plain { text-transform: none; letter-spacing: normal; font-family: inherit; font-size: 15px; }
     input::placeholder { color: var(--fg-ghost); }
     input:hover { border-color: var(--line-strong); }
     input:focus {
       outline: none; border-color: var(--fg);
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg) 10%, transparent);
     }
-    .row { display: flex; gap: 10px; margin-top: 20px; }
-    button {
-      flex: 1; padding: 10px 16px; border-radius: var(--r-md);
-      font: inherit; font-size: 13px; font-weight: 550; cursor: pointer;
+    button.primary, button.linkish { width: 100%; }
+    button.primary {
+      padding: 12px 16px; border-radius: var(--r-md);
+      font: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
       transition: background-color .16s var(--ease-swift), color .16s var(--ease-swift), border-color .16s var(--ease-swift), opacity .16s var(--ease-swift);
     }
     button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
@@ -122,19 +141,44 @@
     button.primary:hover { opacity: .88; }
     button.primary:active { transform: scale(.985); }
     button.primary:disabled { opacity: .45; cursor: default; }
-    button.ghost { background: transparent; color: var(--fg-muted); border: 1px solid var(--line-strong); }
-    button.ghost:hover { color: var(--fg); border-color: var(--fg); }
+    .linkish {
+      margin-top: 14px; padding: 6px 0; background: transparent; border: 0;
+      color: var(--fg-faint); font: inherit; font-size: 12.5px; cursor: pointer;
+      text-decoration: underline; text-underline-offset: 3px;
+      transition: color .16s var(--ease-swift);
+    }
+    .linkish:hover { color: var(--fg); }
+    .linkish:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
     /* The token has to come from somewhere, and the somewhere is a command on
        another machine. Naming it here saves the walk back to the docs. It is
        the bare `surface pair` on purpose: --name would collide with the device
-       name field two rows below, and one of them would have to lose. */
+       name field two rows below, and one of them would have to lose.
+
+       Styled as a *terminal line*, not a field. On the interactive plane with a
+       1px border and a 10px radius it was the same object as the two inputs
+       under it — a third box to type into. The shell prompt, the flush-left
+       mono, the copy glyph and the whole row being the button are what say
+       "this is output from somewhere else, take it" instead of "fill me in". */
     .cmd {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 10px;
+      width: 100%;
       background: var(--interactive);
-      border: 1px solid var(--line);
-      border-radius: var(--r-md);
-      padding: 9px 9px 9px 13px;
-      margin: 0 0 22px;
+      border: 0;
+      border-left: 2px solid var(--line-strong);
+      border-radius: 0 var(--r-md) var(--r-md) 0;
+      padding: 11px 12px 11px 13px;
+      margin: 0;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background .16s var(--ease-swift), border-color .16s var(--ease-swift);
+    }
+    .cmd:hover { border-left-color: var(--fg); }
+    .cmd:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+    .cmd:active { transform: scale(.995); }
+    .cmd-prompt {
+      font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px; color: var(--fg-ghost); user-select: none; flex: 0 0 auto;
     }
     .cmd code {
       flex: 1; min-width: 0;
@@ -143,16 +187,16 @@
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       user-select: all;
     }
-    .cmd-copy {
-      flex: 0 0 auto; padding: 5px 10px; border-radius: 7px;
-      background: transparent; color: var(--fg-faint);
-      border: 1px solid var(--line-strong);
-      font: inherit; font-size: 11.5px; font-weight: 550; cursor: pointer;
-      transition: color .16s var(--ease-swift), border-color .16s var(--ease-swift);
+    .cmd-glyph { flex: 0 0 auto; display: flex; color: var(--fg-faint); transition: color .16s var(--ease-swift); }
+    .cmd-glyph svg { display: block; }
+    .cmd:hover .cmd-glyph { color: var(--fg); }
+    .cmd-label {
+      flex: 0 0 auto; font-size: 11.5px; font-weight: 550;
+      color: var(--fg-faint); transition: color .16s var(--ease-swift);
     }
-    .cmd-copy:hover { color: var(--fg); border-color: var(--fg); }
-    .cmd-copy:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
-    .msg { margin-top: 16px; font-size: 12px; line-height: 1.5; min-height: 18px; }
+    .cmd:hover .cmd-label { color: var(--fg); }
+    .cmd--done .cmd-glyph, .cmd--done .cmd-label { color: var(--ok); }
+    .msg { margin-top: 14px; text-align: center; font-size: 12px; line-height: 1.5; min-height: 18px; }
     .msg.error { color: var(--danger); }
     .msg.ok { color: var(--fg); }
     .msg.info { color: var(--fg-faint); }
@@ -161,25 +205,51 @@
 <body>
   <div class="card">
     <div class="eyebrow">Surface · Pairing</div>
-    <h1>Pair this device</h1>
-    <p class="sub">Run this on the machine hosting Surface, then enter the token it prints.</p>
-    <div class="cmd">
-      <code id="cmd-text">surface pair</code>
-      <button type="button" class="cmd-copy" id="cmd-copy" aria-label="Copy command">Copy</button>
-    </div>
+    <h1>Connect this device</h1>
+    <p class="sub">Link this device to the computer running Surface.</p>
+
     <form id="pair-form" autocomplete="off">
-      <label for="device-name">Device name</label>
-      <input id="device-name" name="device-name" type="text" inputmode="text" autocapitalize="none"
-             spellcheck="false" placeholder="phone, desk-monitor, kitchen-tablet" maxlength="40"
-             style="text-transform:none;letter-spacing:normal;font-family:inherit;margin-bottom:14px;" required>
-      <label for="token">Pairing token</label>
-      <input id="token" name="token" type="text" inputmode="latin" autocapitalize="characters"
-             spellcheck="false" placeholder="UKKD5N47XXZ8" maxlength="24" required>
-      <div class="row">
-        <button class="primary" id="submit" type="submit">Continue</button>
-        <button class="ghost" id="reload" type="button">Reload app</button>
-      </div>
+      <ol class="steps">
+        <li class="step">
+          <span class="step-n" aria-hidden="true">1</span>
+          <div class="step-body">
+            <h2 class="step-title">Run command</h2>
+            <button type="button" class="cmd" id="cmd-copy">
+              <span class="cmd-prompt" aria-hidden="true">$</span>
+              <code id="cmd-text">surface pair</code>
+              <span class="cmd-glyph" id="cmd-glyph" aria-hidden="true">
+                <svg viewBox="0 0 16 16" width="15" height="15"><rect x="5.6" y="5.6" width="8.4" height="8.4" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.9 3.6V3a1.6 1.6 0 0 0-1.6-1.6H3.6A1.6 1.6 0 0 0 2 3v5.7a1.6 1.6 0 0 0 1.6 1.6h.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              </span>
+              <span class="cmd-label" id="cmd-label">Copy</span>
+            </button>
+            <p class="hint">Run this on the machine hosting Surface.</p>
+          </div>
+        </li>
+
+        <li class="step">
+          <span class="step-n" aria-hidden="true">2</span>
+          <div class="step-body">
+            <h2 class="step-title"><label for="token">Enter pairing token</label></h2>
+            <input id="token" name="token" type="text" inputmode="latin" autocapitalize="characters"
+                   spellcheck="false" placeholder="UKKD5N47XXZ8" maxlength="24" required>
+            <p class="hint">Paste the token printed in your terminal.</p>
+          </div>
+        </li>
+
+        <li class="step">
+          <span class="step-n" aria-hidden="true">3</span>
+          <div class="step-body">
+            <h2 class="step-title"><label for="device-name">Name this device</label></h2>
+            <input id="device-name" name="device-name" type="text" inputmode="text" autocapitalize="words"
+                   spellcheck="false" placeholder="Phone" maxlength="40" class="plain" required>
+            <p class="hint">How you will recognise it in <span class="mono">surface devices</span>.</p>
+          </div>
+        </li>
+      </ol>
+
+      <button class="primary" id="submit" type="submit">Connect device</button>
     </form>
+    <button class="linkish" id="reload" type="button">Already paired? Reload app</button>
     <div class="msg info" id="msg"></div>
   </div>
 
@@ -219,11 +289,26 @@
         return ok;
       }
 
+      var cmdLabel = document.getElementById("cmd-label");
+      var cmdGlyph = document.getElementById("cmd-glyph");
+      var GLYPH_COPY = cmdGlyph.innerHTML;
+      var GLYPH_DONE = '<svg viewBox="0 0 16 16" width="15" height="15"><path d="M3 8.4l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      var cmdResetTimer = null;
+
       copyBtn.addEventListener("click", function () {
         var text = document.getElementById("cmd-text").textContent;
+        // Only the label and the glyph change — the button's own text content
+        // is the command, and rewriting it would delete what was just copied.
         var done = function (ok) {
-          copyBtn.textContent = ok ? "Copied" : "Copy failed";
-          setTimeout(function () { copyBtn.textContent = "Copy"; }, 1800);
+          cmdLabel.textContent = ok ? "Copied" : "Copy failed";
+          cmdGlyph.innerHTML = ok ? GLYPH_DONE : GLYPH_COPY;
+          copyBtn.classList.toggle("cmd--done", ok);
+          if (cmdResetTimer) clearTimeout(cmdResetTimer);
+          cmdResetTimer = setTimeout(function () {
+            cmdLabel.textContent = "Copy";
+            cmdGlyph.innerHTML = GLYPH_COPY;
+            copyBtn.classList.remove("cmd--done");
+          }, 1800);
         };
         if (navigator.clipboard && window.isSecureContext) {
           navigator.clipboard.writeText(text).then(
@@ -240,13 +325,13 @@
       // revocation, and `--on <device>` targeting refer to this screen.
       function guessDeviceName() {
         var ua = navigator.userAgent;
-        if (/iPhone/.test(ua)) return "iphone";
-        if (/iPad/.test(ua)) return "ipad";
-        if (/Android/.test(ua)) return "android";
-        if (/Macintosh/.test(ua)) return "mac";
-        if (/Windows/.test(ua)) return "windows";
-        if (/Linux/.test(ua)) return "linux";
-        return "device";
+        if (/iPhone/.test(ua)) return "iPhone";
+        if (/iPad/.test(ua)) return "iPad";
+        if (/Android/.test(ua)) return "Android";
+        if (/Macintosh/.test(ua)) return "Mac";
+        if (/Windows/.test(ua)) return "Windows";
+        if (/Linux/.test(ua)) return "Linux";
+        return "Device";
       }
       nameInput.value = guessDeviceName();
 
@@ -297,7 +382,10 @@
 
       form.addEventListener("submit", function (e) {
         e.preventDefault();
-        var credential = input.value.trim();
+        // The token is printed as 12 unbroken characters, but it arrives here
+        // through a clipboard and a human: stray whitespace, and the dashes
+        // people add out of habit, should not read as a wrong token.
+        var credential = input.value.replace(/[\s-]/g, "").trim();
         if (!credential) { setMsg("Enter a pairing token.", "error"); return; }
         bootstrap(credential);
       });
@@ -310,11 +398,11 @@
       // names the device first — that label is its identity from here on.
       if (hashToken) {
         input.value = hashToken;
-        setMsg("Token received. Name this device and continue.", "info");
+        setMsg("Token received — name this device and connect.", "info");
         nameInput.focus();
         nameInput.select();
       } else {
-        nameInput.focus();
+        input.focus();
       }
     })();
   </script>

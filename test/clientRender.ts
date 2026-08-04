@@ -760,8 +760,12 @@ try {
     // Title and lede scale, shared across both files.
     assert.match(ruleIn(pair, "h1"), /font-size:\s*23px/, "the pairing title left the shared scale");
     assert.match(ruleIn(css, ".modal-title"), /font-size:\s*23px/, "the modal title left the shared scale");
-    assert.match(ruleIn(pair, ".eyebrow"), /font-size:\s*11\.5px/, "the pairing eyebrow left the shared scale");
-    assert.match(ruleIn(css, ".modal-eyebrow"), /font-size:\s*11\.5px/, "the modal eyebrow left the shared scale");
+    assert.match(ruleIn(pair, ".eyebrow"), /font-size:\s*10\.5px/, "the pairing eyebrow left the shared scale");
+    assert.match(ruleIn(css, ".modal-eyebrow"), /font-size:\s*10\.5px/, "the modal eyebrow left the shared scale");
+    for (const [src, sel] of [[pair, ".eyebrow"], [css, ".modal-eyebrow"]] as const) {
+      assert.match(ruleIn(src, sel), /text-transform:\s*uppercase/, `${sel} lost the shared eyebrow treatment`);
+      assert.match(ruleIn(src, sel), /letter-spacing:\s*0?\.18em/, `${sel} lost the shared eyebrow tracking`);
+    }
 
     // Rule 3: what you click inside a dialog lifts off it.
     assert.match(ruleIn(pair, "input"), /background:\s*var\(--interactive\)/, "the token field must lift off the card");
@@ -792,6 +796,22 @@ try {
     assert.match(pair, /function\s*\(\s*\)\s*\{\s*done\(legacyCopy\(text\)\);\s*\}/,
       "a refused clipboard write must fall back, not report failure");
     assert.match(pair, /document\.execCommand\("copy"\)/, "no legacy clipboard fallback");
+  });
+
+  // Pairing spans two machines, and the token cannot be typed until the command
+  // has been run over there. The numbered sequence is the instruction; a flat
+  // stack of fields was not.
+  check("the pairing page walks the three steps in the order they happen", () => {
+    const pair = fs.readFileSync(path.join(REPO_ROOT, "client", "pair.html"), "utf8");
+    const titles = [...pair.matchAll(/<h2 class="step-title">(?:<label[^>]*>)?([^<]+)/g)].map((m) => m[1].trim());
+    assert.deepEqual(titles, ["Run command", "Enter pairing token", "Name this device"]);
+
+    // The command must come before the field that consumes its output.
+    assert.ok(pair.indexOf('id="cmd-text"') < pair.indexOf('id="token"'), "the command must precede the token field");
+    assert.ok(pair.indexOf('id="token"') < pair.indexOf('id="device-name"'), "the token must precede the device name");
+
+    // A token pasted with the dashes people add out of habit is not a wrong token.
+    assert.match(pair, /replace\(\/\[\\s-\]\/g, ""\)/, "the token must tolerate whitespace and dashes");
   });
 
   // `1fr` is `minmax(auto, 1fr)`, and that `auto` floor is the grid item's
