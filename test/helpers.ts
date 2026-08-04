@@ -131,8 +131,31 @@ export function tmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+// Retry, then complain. A scratch dir is routinely still held the instant a
+// suite tears down — a detached server keeping sqlite handles open, or a
+// Chrome profile whose renderer children go on touching lock files after the
+// parent dies (server/thumbs.ts retries for exactly that reason). The old
+// version swallowed the failure, so `finally { cleanupDir(dir) }` read as
+// proof of cleanup while quietly leaving the directory behind: correct
+// structure, silent leak, nothing anywhere saying so.
+//
+// This warns rather than throws: a suite that passed should not be reported
+// as failed because /tmp is untidy, but a leak should never again be silent.
 export function cleanupDir(dir: string): void {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      lastErr = err;
+      // synchronous backoff: teardown runs on the way out, with no event loop
+      // left to await on, and the holder usually releases within a few ms
+      const until = Date.now() + 25;
+      while (Date.now() < until) { /* spin briefly */ }
+    }
+  }
+  console.warn(`[cleanup] could not remove ${dir}: ${(lastErr as Error)?.message ?? lastErr}`);
 }
 
 export async function assertNoLeakedTestServers(): Promise<void> {
