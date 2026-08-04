@@ -222,6 +222,29 @@ try {
   };
   check("the press arrives with its action name and payload",
     parsed?.action === "deploy" && payloadOf(parsed)?.from === "notification", parsed);
+  // ── the whiteboard keeps what the human drew ──
+  //
+  // Strokes lived only in the browser that made them, so reopening the board
+  // showed the agent's marks on an otherwise blank canvas — the one drawing
+  // worth keeping was the one thrown away.
+  const board = await call("POST", "/artifacts", {
+    body: { title: "Board", mime: "text/html", content: "<h1>b</h1>", template: "whiteboard" },
+  });
+  const boardId: string = board.body.artifact.id;
+  const strokes = [{ points: [[0.1, 0.1], [0.4, 0.4]], width: 4, erase: false }];
+  await call("POST", `/artifacts/${boardId}/actions`, {
+    body: { action: "snapshot", data: { png: "data:image/png;base64,AAAA", strokes } },
+  });
+  const boardState = await call("GET", `/artifacts/${boardId}/state`);
+  check("a sent drawing survives the browser that drew it",
+    JSON.stringify(boardState.body?.state?.user_strokes) === JSON.stringify(strokes),
+    boardState.body?.state);
+  // The PNG is two orders of magnitude larger and reconstructible from the
+  // vectors; keeping it would put a screenshot in every state read.
+  check("the picture is not kept alongside them",
+    !JSON.stringify(boardState.body?.state || {}).includes("base64"),
+    Object.keys(boardState.body?.state || {}));
+
 } finally {
   await killServer(server, port).catch(() => {});
   await sleep(100);

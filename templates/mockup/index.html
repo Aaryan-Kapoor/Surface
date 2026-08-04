@@ -114,6 +114,13 @@
   .tour-next:disabled { opacity: .4; cursor: default; }
   .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
   @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
+  /* The rail floats over the bottom-right corner, which is exactly where a
+     demo puts its own primary action — it was swallowing the clicks on Send.
+     A page that is a tour step yields that corner. */
+  html[data-tour="1"] footer { padding-right: 208px; }
+  @media (max-width: 620px) {
+    html[data-tour="1"] footer { padding-right: 0; padding-bottom: 66px; }
+  }
 </style>
 </head>
 <body>
@@ -273,6 +280,7 @@
       if (!rail || !next) return;
 
       rail.setAttribute("data-on", "1");
+      document.documentElement.setAttribute("data-tour", "1");
       step.textContent = String(P.tour_step || "");
       next.textContent = String(P.tour_next || "Next");
       next.addEventListener("click", function () {

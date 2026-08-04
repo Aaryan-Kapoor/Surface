@@ -143,6 +143,13 @@
   .tour-next:disabled { opacity: .4; cursor: default; }
   .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
   @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
+  /* The rail floats over the bottom-right corner, which is exactly where a
+     demo puts its own primary action — it was swallowing the clicks on Send.
+     A page that is a tour step yields that corner. */
+  html[data-tour="1"] footer { padding-right: 208px; }
+  @media (max-width: 620px) {
+    html[data-tour="1"] footer { padding-right: 0; padding-bottom: 66px; }
+  }
 </style>
 </head>
 <body>
@@ -347,13 +354,25 @@
         noteEl.appendChild(document.createTextNode("Sent — I'm looking at it."));
       });
 
+      function asStrokes(value) {
+        if (typeof value === "string") {
+          try { value = JSON.parse(value); } catch (err) { return []; }
+        }
+        return Array.isArray(value) ? value : [];
+      }
+
       function render() {
         var st = Surface.state || {};
-        var incoming = st.agent_strokes;
-        if (typeof incoming === "string") {
-          try { incoming = JSON.parse(incoming); } catch (err) { incoming = []; }
+        theirs = asStrokes(st.agent_strokes);
+
+        // The board the human drew is kept server-side once sent, so opening it
+        // again — or on another device — shows the drawing rather than a blank
+        // canvas with only the agent's marks on it. Live local strokes always
+        // win: adopting mid-drawing would fight the pointer.
+        if (!mine.length && !current) {
+          var saved = asStrokes(st.user_strokes);
+          if (saved.length) mine = saved;
         }
-        theirs = Array.isArray(incoming) ? incoming : [];
         redraw();
         if (st.note) {
           noteEl.textContent = "";
@@ -393,6 +412,7 @@
       if (!rail || !next) return;
 
       rail.setAttribute("data-on", "1");
+      document.documentElement.setAttribute("data-tour", "1");
       step.textContent = String(P.tour_step || "");
       next.textContent = String(P.tour_next || "Next");
       next.addEventListener("click", function () {

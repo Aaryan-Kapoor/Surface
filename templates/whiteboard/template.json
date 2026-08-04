@@ -1,6 +1,6 @@
 {
   "name": "whiteboard",
-  "description": "A canvas the human draws on and the agent can both see and draw back on — strokes and a PNG come back as an action, the agent's own strokes arrive as state",
+  "description": "A canvas the human draws on and the agent can both see and draw back on — strokes and a PNG come back as an action, the strokes are kept so the board survives a reload, and the agent's own strokes arrive as state",
   "params": {
     "title": {
       "type": "string",
@@ -40,6 +40,10 @@
     "status": {
       "type": "string",
       "default": "idle"
+    },
+    "user_strokes": {
+      "type": "array",
+      "default": []
     }
   },
   "actions": [

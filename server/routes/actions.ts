@@ -121,6 +121,20 @@ export function dispatchSurfaceAction(
     broadcastToSurface(artifact.id, "state_patch", event);
   }
 
+  // A whiteboard's strokes lived only in the browser that drew them, so a
+  // reload kept the agent's drawing and lost the human's — exactly backwards.
+  // Persist the vectors (not the PNG, which is two orders of magnitude larger
+  // and reconstructible) so the board survives being closed.
+  if (artifact.template === "whiteboard" && action === "snapshot") {
+    const payload = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+    if (Array.isArray(payload.strokes)) {
+      const result = patchState(getDb(), artifact.id, { user_strokes: payload.strokes });
+      const event = { id: artifact.id, patch: { user_strokes: payload.strokes }, state_version: result.state_version };
+      broadcastGlobal("state_patch", event);
+      broadcastToSurface(artifact.id, "state_patch", event);
+    }
+  }
+
   fanOutWebhook({
     surface_id: artifact.id,
     surface_title: artifact.title,

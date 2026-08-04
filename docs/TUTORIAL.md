@@ -70,7 +70,8 @@ surface wait --id <tour-id> --action pick --timeout 900
 ```
 
 The action's `data.choice` is one of `whiteboard`, `tictactoe`, `triage`,
-`mockup`, `video`, `dashboard`, or `other`. Mark the menu answered so it stops
+`mockup`, `pdf`, `video`, `dashboard`, or `other` — one per step below, so the
+menu promises exactly what the tour delivers. Mark the menu answered so it stops
 looking live:
 
 ```bash
