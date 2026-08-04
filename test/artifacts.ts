@@ -8,7 +8,15 @@ import type { ChildProcess } from "node:child_process";
 let SURFACE_URL = "";
 let server: ChildProcess | null = null;
 let serverPort = 0;
-const dataDir = tmpDir("surface-artifacts-data-");
+// A dot component on purpose. Surface's default data directory is `~/.surface`,
+// and `res.sendFile` defaults to `dotfiles: "ignore"` — with no `root` set, that
+// check runs over the whole absolute path, so every cached thumbnail and every
+// stored non-HTML file 404ed on a default install. This suite already asserts
+// that captures and stored bytes come back; running it from a dotted directory
+// is what makes those assertions cover the case that actually ships.
+const dataRoot = tmpDir("surface-artifacts-data-");
+const dataDir = path.join(dataRoot, ".surface");
+fs.mkdirSync(dataDir, { recursive: true });
 const req = () => makeClient(SURFACE_URL);
 
 async function api(method: string, path: string, body?: unknown): Promise<any> {
@@ -768,6 +776,6 @@ main().then(async () => {
 
 async function cleanup() {
   await killServer(server, serverPort).catch(() => {});
-  cleanupDir(dataDir);
+  cleanupDir(dataRoot);
   if (tmpRoot2Cache) cleanupDir(tmpRoot2Cache);
 }

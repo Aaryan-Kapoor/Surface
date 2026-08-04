@@ -124,6 +124,18 @@ function captureAgentLink(req: Request, surfaceId: string): void {
   recordAgentLink(getDb(), surfaceId, session);
 }
 
+/**
+ * Options every `res.sendFile` in this file needs.
+ *
+ * `send` defaults `dotfiles` to "ignore", and with no `root` the whole absolute
+ * path is checked for dot segments. Surface's default data directory is
+ * `~/.surface`, so every file under it — every cached thumbnail, every stored
+ * image — answered 404 on a default install. Nothing was missing and nothing was
+ * unreadable; the path had a dot in it. HTML surfaces are sent with `res.send`
+ * and so were never affected, which is why the dashboard looked like it worked.
+ */
+const SEND_FILE_OPTS = { dotfiles: "allow" } as const;
+
 // `onError` is for callers that have a fallback. `res.sendFile` reports
 // failures asynchronously — to its callback, or to `next()` when there isn't
 // one — so a caller's try/catch only ever sees a synchronous throw, and a
@@ -146,10 +158,10 @@ function sendArtifactFile(
     return;
   }
   if (onError) {
-    res.sendFile(file.storage_path, (err) => { if (err) onError(err); });
+    res.sendFile(file.storage_path, SEND_FILE_OPTS, (err) => { if (err) onError(err); });
     return;
   }
-  res.sendFile(file.storage_path);
+  res.sendFile(file.storage_path, SEND_FILE_OPTS);
 }
 
 // Per-surface SSE stream
@@ -756,7 +768,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
       res.setHeader("Cache-Control", immutableCache);
     }
     res.setHeader("Content-Type", "image/png");
-    res.sendFile(cached.path);
+    res.sendFile(cached.path, SEND_FILE_OPTS);
     // A capture of an older revision is a stand-in: ask for the current one.
     if (!cached.exact) enqueueThumb(req.params.id);
     return;
@@ -825,7 +837,7 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
         res.setHeader("Cache-Control", "no-cache");
         res.send(injectSurfaceRuntime(fs.readFileSync(realAbs), artifactId));
       } else {
-        res.sendFile(realAbs);
+        res.sendFile(realAbs, SEND_FILE_OPTS);
       }
       return;
     }
