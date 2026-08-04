@@ -680,6 +680,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
       id: req.params.id,
       title: result.artifact.title || "Untitled",
       mime,
+      preview: previewForCard(getDb(), { id: req.params.id, current_version_id: result.artifact.current_version_id, artifact_mime: mime }),
     }));
     return;
   }
@@ -750,6 +751,7 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
     id: req.params.id,
     title: result.artifact.title || "Untitled",
     mime,
+    preview: previewForCard(getDb(), { id: req.params.id, current_version_id: result.artifact.current_version_id, artifact_mime: mime }),
   }));
 });
 
