@@ -736,7 +736,8 @@ function themeColorMetas() {
 
 function snapshotThemeColorMetas() {
   if (themeColorDefaults) return;
-  themeColorDefaults = themeColorMetas().map((meta) => ({
+  // Array.from: querySelectorAll answers a NodeList, which has forEach but no map.
+  themeColorDefaults = Array.from(themeColorMetas(), (meta) => ({
     content: meta.getAttribute("content"),
     media: meta.getAttribute("media"),
   }));

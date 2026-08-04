@@ -258,7 +258,7 @@ try {
   });
 
   check("each card renders its title as text, and as an exact title attribute", () => {
-    const titles = grid.document.querySelectorAll(".card-title");
+    const titles = [...grid.document.querySelectorAll(".card-title")];
     assert.equal(titles.length, cards.length, "one .card-title per card");
     for (const title of HOSTILE_TITLES) {
       const el = titles.find((t) => t.textContent === title);
@@ -285,7 +285,7 @@ try {
     finder.run(`surfaces = JSON.parse(${JSON.stringify(JSON.stringify(cards))}); openSurfaceFinder();`);
     const injected = injectedAttributes(finder.document.documentElement);
     assert.deepEqual(injected, [], `injected attribute(s): ${injected.join(" ")}`);
-    const results = finder.document.querySelectorAll(".finder-result-title");
+    const results = [...finder.document.querySelectorAll(".finder-result-title")];
     assert.equal(results.length, cards.length);
     assert.ok(results.some((r) => r.textContent === HOSTILE_TITLE), "the finder must render the raw title as text");
   });
@@ -361,7 +361,7 @@ try {
   // ══ 4. theme reset restores the PWA chrome ══════════════════════════════
   const themed = loadApp();
   const metaState = () =>
-    themed.document.querySelectorAll('meta[name="theme-color"]')
+    [...themed.document.querySelectorAll('meta[name="theme-color"]')]
       .map((m) => `${m.getAttribute("content")}|${m.getAttribute("media") ?? ""}`);
   const before = metaState();
 

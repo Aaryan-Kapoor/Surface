@@ -374,14 +374,32 @@ try {
   const fakeGlobalRoot = path.dirname(fakePkgRoot);
   const fakeBin = path.join(home, "fake-bin");
   fs.mkdirSync(fakeBin, { recursive: true });
-  if (process.platform === "win32") {
-    fs.writeFileSync(path.join(fakeBin, "npm.cmd"),
-      `@echo off\r\nif "%1"=="root" (\r\necho ${fakeGlobalRoot}\r\nexit /b 0\r\n)\r\necho added 1 package in 1s\r\nexit /b 0\r\n`);
-  } else {
-    fs.writeFileSync(path.join(fakeBin, "npm"),
-      `#!/bin/sh\nif [ "$1" = "root" ]; then\n  echo "${fakeGlobalRoot}"\n  exit 0\nfi\necho "added 1 package in 1s"\nexit 0\n`,
-      { mode: 0o755 });
-  }
+  const fakePkgJson = path.join(fakePkgRoot, "package.json");
+  const repoVersion = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).version as string;
+  // A real `npm install -g` REPLACES the package on disk. A fake that only
+  // exits 0 is a fake of a *broken* npm, and asserting success against it is
+  // how "installed === current, phase: done" got written down as correct.
+  const bumpScript = path.join(fakeBin, "bump-version.mjs");
+  fs.writeFileSync(bumpScript,
+    `import fs from "node:fs";\n` +
+    `const [, , file, version] = process.argv;\n` +
+    `const pkg = JSON.parse(fs.readFileSync(file, "utf8"));\n` +
+    `pkg.version = version;\n` +
+    `fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\\n");\n`);
+  const writeFakeNpm = (installs: string | null) => {
+    const bump = installs ? `"${process.execPath}" "${bumpScript}" "${fakePkgJson}" "${installs}"` : "";
+    if (process.platform === "win32") {
+      fs.writeFileSync(path.join(fakeBin, "npm.cmd"),
+        `@echo off\r\nif "%1"=="root" (\r\necho ${fakeGlobalRoot}\r\nexit /b 0\r\n)\r\n` +
+        `echo added 1 package in 1s\r\n${bump ? `${bump}\r\n` : ""}exit /b 0\r\n`);
+    } else {
+      fs.writeFileSync(path.join(fakeBin, "npm"),
+        `#!/bin/sh\nif [ "$1" = "root" ]; then\n  echo "${fakeGlobalRoot}"\n  exit 0\nfi\n` +
+        `echo "added 1 package in 1s"\n${bump ? `${bump}\n` : ""}exit 0\n`,
+        { mode: 0o755 });
+    }
+  };
+  writeFakeNpm("99.0.0");
   const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const globalEnv = {
     [pathKey]: `${fakeBin}${path.delimiter}${process.env[pathKey] || ""}`,
@@ -395,7 +413,25 @@ try {
     const g = JSON.parse(globalUp.stdout); // throws if npm output leaked into stdout
     assert.equal(g.context, "global", "a copy under the npm global root is detected as global");
     assert.match(g.package, /^updated /, "npm install ran");
+    assert.equal(g.installed, "99.0.0", "the reported version is the one now on disk");
+    assert.equal(JSON.parse(fs.readFileSync(fakePkgJson, "utf8")).version, "99.0.0",
+      "the fixture must really replace the package, or success proves nothing");
     assert.ok(!globalUp.stdout.includes("added 1 package"), "npm chatter stays out of --json stdout");
+
+    // ── npm exit 0 is not proof the version landed ──
+    // A cached tarball, a prefix other than the one `npm root -g` reported, or
+    // a dist-tag that resolved elsewhere all exit 0 while leaving the old
+    // package in place. Reporting that as a successful upgrade is a lie the
+    // one-click update in the PWA then repeats as "Updated to 99.0.0".
+    writeFakeNpm(null);
+    fs.writeFileSync(fakePkgJson, JSON.stringify(
+      { ...JSON.parse(fs.readFileSync(fakePkgJson, "utf8")), version: repoVersion }, null, 2) + "\n");
+    const lying = await run(["upgrade", "--json", "--name", upgName],
+      { ...globalEnv, SURFACE_NPM_REGISTRY: globalReg.url }, fakeCli);
+    assert.equal(lying.code, 1, "an npm that changed nothing must not exit 0");
+    assert.match(lying.stderr, /exited 0 but/, lying.stderr);
+    assert.match(lying.stderr, new RegExp(repoVersion.replace(/\./g, "\\.")),
+      "the error must name the version still installed");
   } finally {
     globalReg.close();
   }

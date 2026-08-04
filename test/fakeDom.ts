@@ -251,9 +251,19 @@ export class FakeElement {
 
   // ── selectors ──
 
-  querySelector(selector: string): FakeElement | null { return this.querySelectorAll(selector)[0] ?? null; }
+  querySelector(selector: string): FakeElement | null { return this.matchAll(selector)[0] ?? null; }
 
-  querySelectorAll(selector: string): FakeElement[] {
+  /**
+   * NodeList, not Array — on purpose. A real querySelectorAll answers a
+   * NodeList, which has forEach and iteration but NOT map/filter/find. Handing
+   * back a plain array once let `metas.map(…)` pass here and throw in every
+   * browser, so the harness models the narrower surface.
+   */
+  querySelectorAll(selector: string): FakeNodeList {
+    return new FakeNodeList(this.matchAll(selector));
+  }
+
+  private matchAll(selector: string): FakeElement[] {
     const out: FakeElement[] = [];
     for (const group of selector.split(",")) {
       for (const el of matchDescendants(this, group.trim())) if (!out.includes(el)) out.push(el);
@@ -295,6 +305,25 @@ export class FakeElement {
   get offsetWidth(): number { return 0; }
   get scrollHeight(): number { return 0; }
   get scrollTop(): number { return 0; }
+}
+
+/** The subset of NodeList that browsers actually provide. */
+export class FakeNodeList {
+  readonly length: number;
+  [index: number]: FakeElement;
+
+  constructor(items: FakeElement[]) {
+    this.length = items.length;
+    items.forEach((el, i) => { this[i] = el; });
+  }
+
+  item(i: number): FakeElement | null { return this[i] ?? null; }
+  forEach(fn: (el: FakeElement, i: number, list: FakeNodeList) => void): void {
+    for (let i = 0; i < this.length; i++) fn(this[i], i, this);
+  }
+  *[Symbol.iterator](): Iterator<FakeElement> {
+    for (let i = 0; i < this.length; i++) yield this[i];
+  }
 }
 
 export class FakeFragment extends FakeElement {
@@ -483,7 +512,7 @@ export class FakeDocument {
   createTextNode(text: string): FakeText { return new FakeText(text); }
   getElementById(id: string): FakeElement | null { return this.documentElement.querySelector(`#${id}`); }
   querySelector(selector: string): FakeElement | null { return this.documentElement.querySelector(selector); }
-  querySelectorAll(selector: string): FakeElement[] { return this.documentElement.querySelectorAll(selector); }
+  querySelectorAll(selector: string): FakeNodeList { return this.documentElement.querySelectorAll(selector); }
   addEventListener(type: string, fn: Function): void {
     this.listeners.set(type, [...(this.listeners.get(type) || []), fn]);
   }
