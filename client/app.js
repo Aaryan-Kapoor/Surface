@@ -765,10 +765,19 @@ function applyTheme(config) {
     document.body.removeAttribute("style");
     const themeCSS = document.getElementById("theme-css");
     if (themeCSS) themeCSS.remove();
-    const overlay = document.getElementById("display-overlay");
-    if (overlay) overlay.remove();
-    const hw = document.getElementById("home-widget");
-    if (hw) hw.remove();
+    // Slots are not theme state. `surface slot home|overlay` promotes an
+    // *artifact* (metadata.display_role); a theme is display config, and the
+    // two are set independently. Tearing the slot iframes out here meant that
+    // on a display with no theme — the default — an empty config took this
+    // branch and destroyed them: renderGrid() ends with
+    // applyTheme(displayConfig), so the home widget it had just built was
+    // removed on every single render, and the overlay never survived one.
+    // renderOverlay() is the overlay's authority and drops it only when the
+    // slot is genuinely empty (which is also what mounts it at boot, since
+    // startApp() reaches applyTheme() through this branch on such a display).
+    // The home widget belongs to renderGrid(), which rebuilds the view
+    // wholesale, so nothing here has to remove it.
+    renderOverlay();
     displayConfig = {};
     return;
   }

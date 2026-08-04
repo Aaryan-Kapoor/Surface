@@ -692,6 +692,71 @@ try {
     themed.run(`applyTheme({ background: "#abcdef" }); applyTheme({});`);
     assert.deepEqual(metaState(), before);
   });
+
+  // ══ 5. display slots are not theme state ════════════════════════════════
+  //
+  // `surface slot home|overlay` promotes an artifact (metadata.display_role);
+  // a theme is display config. applyTheme()'s reset branch used to remove both
+  // slot iframes, and an unthemed display — the default — reaches that branch
+  // with `{}` on every render, because renderGrid() ends with
+  // applyTheme(displayConfig). The home slot was therefore dead out of the box.
+
+  check("an unthemed display keeps the home widget renderGrid just built", () => {
+    const plain = loadApp();
+    plain.run(`
+      displayConfig = {};
+      surfaces = [];
+      displaySlots = { renderer: null, home: { html: "<p>hi</p>" }, overlay: null };
+      renderGrid();
+    `);
+    const widget = plain.document.getElementById("home-widget");
+    assert.ok(widget, "the home widget was destroyed by the theme reset at the end of renderGrid()");
+    assert.equal(widget!.getAttribute("src"), "/display/home/html");
+  });
+
+  check("a themed display keeps it too", () => {
+    const plain = loadApp();
+    plain.run(`
+      surfaces = [];
+      displaySlots = { renderer: null, home: { html: "<p>hi</p>" }, overlay: null };
+      displayConfig = { colors: { void: "#123456" } };
+      renderGrid();
+    `);
+    assert.ok(plain.document.getElementById("home-widget"), "the home widget is missing");
+  });
+
+  check("a theme reset mounts the overlay slot rather than tearing it out", () => {
+    const plain = loadApp();
+    plain.run(`
+      displaySlots = { renderer: null, home: null, overlay: { html: "<p>o</p>" } };
+      applyTheme({});
+    `);
+    const overlay = plain.document.getElementById("display-overlay");
+    assert.ok(overlay, "the overlay slot did not survive a theme reset");
+    assert.equal(overlay!.getAttribute("src"), "/display/overlay/html");
+  });
+
+  check("…and still drops the overlay once the slot is empty", () => {
+    const plain = loadApp();
+    plain.run(`
+      displaySlots = { renderer: null, home: null, overlay: { html: "<p>o</p>" } };
+      applyTheme({});
+      displaySlots = { renderer: null, home: null, overlay: null };
+      applyTheme({});
+    `);
+    assert.equal(plain.document.getElementById("display-overlay"), null, "a cleared overlay slot must leave no iframe");
+  });
+
+  check("a theme reset still clears the theme state it does own", () => {
+    const plain = loadApp();
+    plain.run(`applyTheme({ css: ".card { color: red }", colors: { void: "#123456" } });`);
+    const bg = () => plain.document.documentElement.style.getPropertyValue("--bg");
+    assert.ok(plain.document.getElementById("theme-css"), "the custom stylesheet was never injected");
+    assert.equal(bg(), "#123456", "no custom properties were set");
+    plain.run("applyTheme({});");
+    assert.equal(plain.document.getElementById("theme-css"), null, "the custom stylesheet survived the reset");
+    assert.equal(bg(), "", "the custom properties survived the reset");
+  });
 } finally {
   await killServer(server, port).catch(() => {});
   await sleep(100);
