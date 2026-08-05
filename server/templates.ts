@@ -127,9 +127,24 @@ function coerceParam(name: string, spec: TemplateParamSpec, raw: unknown): unkno
       }
       return s;
     }
-    case "list":
-      if (Array.isArray(raw)) return raw.map(String);
-      return String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+    case "list": {
+      // Entries stay whatever they are. Stringifying them turned every list of
+      // objects — a template's variants, chips, menu cards — into a row of
+      // "[object Object]", which is the shape most list params actually want.
+      if (Array.isArray(raw)) return raw;
+      if (typeof raw === "object") return raw;
+      const s = String(raw).trim();
+      if (!s) return spec.default ?? [];
+      // The CLI can only hand over strings, so a list of objects arrives as
+      // JSON text. Comma-splitting stays the fallback for the simple case.
+      if (s.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(s);
+          if (Array.isArray(parsed)) return parsed;
+        } catch { /* not JSON: fall through to the comma form */ }
+      }
+      return s.split(",").map((part) => part.trim()).filter(Boolean);
+    }
     case "markdown":
     case "string":
     default:

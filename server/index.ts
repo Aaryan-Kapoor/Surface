@@ -284,6 +284,15 @@ app.use((req, res, next) => {
 // System plane only: the content port resolves to `device` and gets 403,
 // so a TCP connect on that port is the (sufficient) content-plane probe.
 const STARTED_AT = Date.now();
+
+// The address a browser on another device should actually open. Only the server
+// can work this out — it knows the bind, the resolved port, and any
+// SURFACE_PUBLIC_URL override — and until it said so anywhere but its own log,
+// callers had to guess. An agent installing on a headless box guessed the
+// container's internal address and handed the user a URL that could not resolve.
+// The token stays out of this: a connection string is an address, not a secret.
+let connectionString: string | null = null;
+
 app.get("/healthz", (req, res) => {
   if (req.auth?.role !== "system") {
     sendError(res, 403, "healthz requires the system plane");
@@ -296,6 +305,7 @@ app.get("/healthz", (req, res) => {
     uptime_seconds: Math.round((Date.now() - STARTED_AT) / 1000),
     port: PORT,
     content_port: CONTENT_PORT,
+    connection_string: connectionString,
   });
 });
 
@@ -311,6 +321,8 @@ app.use(jsonErrorMiddleware);
 const httpServer = app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
   setThumbServerPort(PORT);
+  connectionString = PUBLIC_BASE_URL
+    || resolveConnectionString(BIND, resolveListeningPort(httpServer.address(), PORT));
 
   // Release awareness: resolves any update that was in flight across this
   // restart, then arms the cached (TTL'd, opt-out-able, off in tests/CI)
@@ -323,13 +335,12 @@ const httpServer = app.listen(PORT, BIND, () => {
   if (shouldPair) {
     try {
       const token = createPairingToken({ label: "startup" });
-      const port = resolveListeningPort(httpServer.address(), PORT);
-      const connectionString = PUBLIC_BASE_URL || resolveConnectionString(BIND, port);
+      const base = connectionString ?? resolveConnectionString(BIND, PORT);
       console.log("");
       console.log(formatHeadlessAccessOutput({
-        connectionString,
+        connectionString: base,
         token: token.credential,
-        pairingUrl: buildPairingUrl(connectionString, token.credential),
+        pairingUrl: buildPairingUrl(base, token.credential),
       }));
     } catch (err) {
       console.error("[auth] failed to mint startup pairing token:", err);

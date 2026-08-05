@@ -130,6 +130,20 @@ Both install scripts take three sources: default = pack the local tree; `--tarba
 - Pre-baseline SQLite databases are archived to `db.sqlite.bak` at boot and are not row-migrated.
 - Linked artifacts remain sourced from disk; edit the file and run `surface touch <id>`.
 - The archived MCP adapter is not installed by default.
+- **Migration merge order (2026-08-05): #86 → #87 → #88.** Three branches in
+  flight each added a migration and two of them picked v15. `runMigrations`
+  silently skips any version at or below the database's current one, so the
+  loser of a collision never runs at all — no error, nothing to notice. They
+  are renumbered 15 (`artifacts.content_rev`, #86) / 16 (`auth_sessions` TTL
+  carry-over, #87) / 17 (`notifications`, #88) and **must merge to master in
+  that order**. Landing #88 before #87 means no already-paired device ever
+  moves onto the year-long TTL.
+- The lab containers (`~/surface-lab`) are the from-scratch install rig: two
+  factory-fresh Debian machines with real systemd, one driven by Claude Code
+  (ports 3200/3201) and one by Codex CLI (3300/3301). `/opt/surface-rc.tgz` is
+  packed from `local/deploy` = master + #86 + #87 + #88. Reset recipe and the
+  two `INSTALL-*.md` files the agent is pointed at live in that directory's
+  README.
 
 ## Source of Truth
 

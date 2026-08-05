@@ -1,0 +1,88 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 1415 >>
+stream
+BT
+/F1 22 Tf
+1 0 0 1 72 720 Tm
+(Surface - one-page brief) Tj
+/F2 11 Tf
+1 0 0 1 72 690 Tm
+(What your agent just put on your screen) Tj
+/F1 13 Tf
+1 0 0 1 72 646 Tm
+(The primitive) Tj
+/F2 11 Tf
+1 0 0 1 72 626 Tm
+(An agent renders live UI onto every screen you own, and every tap) Tj
+/F2 11 Tf
+1 0 0 1 72 610 Tm
+(lands back in its context as intent. Two directions, one object.) Tj
+/F1 13 Tf
+1 0 0 1 72 572 Tm
+(Why a PDF is here) Tj
+/F2 11 Tf
+1 0 0 1 72 552 Tm
+(Not everything an agent wants to show you is markup. A PDF, an image,) Tj
+/F2 11 Tf
+1 0 0 1 72 536 Tm
+(a video, a spreadsheet export - surface present <path> puts any of) Tj
+/F2 11 Tf
+1 0 0 1 72 520 Tm
+(them on the display in one command, and the browser's own reader) Tj
+/F2 11 Tf
+1 0 0 1 72 504 Tm
+(handles the rest. No conversion, no screenshotting, no upload.) Tj
+/F1 13 Tf
+1 0 0 1 72 466 Tm
+(Three ways in) Tj
+/F2 11 Tf
+1 0 0 1 72 446 Tm
+(surface create   ad-hoc HTML the agent writes on the spot) Tj
+/F2 11 Tf
+1 0 0 1 72 430 Tm
+(surface link     a file in your project, re-served live as you edit it) Tj
+/F2 11 Tf
+1 0 0 1 72 414 Tm
+(surface present  a one-shot look at a document like this one) Tj
+/F1 13 Tf
+1 0 0 1 72 376 Tm
+(Say it out loud) Tj
+/F2 11 Tf
+1 0 0 1 72 356 Tm
+("surface it"   "put that on my surface"   "show me on the display") Tj
+/F2 11 Tf
+1 0 0 1 72 340 Tm
+(Your agent reads SKILL.md, so plain English is the whole interface.) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000001717 00000 n 
+0000001792 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1862
+%%EOF

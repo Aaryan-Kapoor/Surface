@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
-import { runService, SERVICE_HELP } from "./service.js";
+import { runService, savedServiceBaseUrl, SERVICE_HELP } from "./service.js";
 import { runSkill, runUpgrade } from "./upgrade.js";
 import { runCodex, CODEX_HELP } from "./codex.js";
 
@@ -20,7 +20,9 @@ function cliVersion(): string {
   }
 }
 
-const BASE = (process.env.SURFACE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
+// SURFACE_URL wins; otherwise ask the service registry where the service this
+// machine installed actually listens, and only then fall back to the default.
+const BASE = (process.env.SURFACE_URL || savedServiceBaseUrl() || "http://127.0.0.1:3000").replace(/\/$/, "");
 // Loopback callers need no credential. A remote agent (SSH box, container)
 // carries a system bearer minted from the system plane:
 //   surface auth session issue --role system --label devbox
@@ -60,7 +62,7 @@ Commands:
   actions [<id>]             List pending user actions
   ack <action-id>            Acknowledge action
   reply <id> <text>          Send toast to surface
-  notify <text>              Display ephemeral notification
+  notify <text>              Display a notification (--button "Label=action" makes it answerable)
   theme [<json>|-|reset]     Get / set / reset display theme
   slot [<role> <id>|--clear] Show or assign display slots (renderer|home|overlay)
   status                     Get display state
@@ -122,7 +124,16 @@ const COMMANDS: Record<string, CommandSpec> = {
   state: command("surface state <id>"),
   ask: command("surface ask <question> [--options a,b,c] [--freetext] [--context -|<md>] [--context-file <p>] [--wait] [--timeout <s>] [--on <device>] [--id <id>] [--agent <l>] [--title <t>]", { options: STR, freetext: BOOL, context: STR, "context-file": STR, wait: BOOL, timeout: NUM, on: STR, id: STR, agent: STR, title: STR }),
   append: command("surface append <id> [<text>|-] [--md]   (- pipes stdin line by line)", { md: BOOL }),
-  video: command("surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]", { title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR }),
+  video: command([
+    "surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]",
+    "surface video transcript <url|video-id> [--lang en] [--at <sec>] [--window <sec>] [--block <sec>] [--json]",
+    "    timestamped captions for the video on screen. --at <sec> returns just the part",
+    "    around a moment — pair it with the `t` on an `ask` action to answer from the",
+    "    passage they were actually watching.",
+  ].join("\n"), {
+    title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR,
+    lang: STR, at: NUM, window: NUM, block: NUM, json: BOOL,
+  }),
   doc: command("surface doc <path> [--title <t>] [--toc] [--width narrow|default|wide] [--agent <l>] [--no-open]", { title: STR, toc: BOOL, width: STR, agent: STR, "no-open": BOOL }),
   template: command([
     "surface template list [--json]",
@@ -145,7 +156,10 @@ const COMMANDS: Record<string, CommandSpec> = {
   actions: command("surface actions [<id>]"),
   ack: command("surface ack <action-id>"),
   reply: command("surface reply <id> <text>"),
-  notify: command("surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]", { style: STR, duration: NUM, on: STR }),
+  notify: command(
+    'surface notify <text> [--button "Label=action"]... [--id <surface-id>] [--style info|success|warning|error] [--duration <ms>] [--sticky] [--on <device>]',
+    { style: STR, duration: NUM, on: STR, id: STR, sticky: BOOL, button: MULTI },
+  ),
   theme: command("surface theme [<json>|-|reset]"),
   slot: command([
     "surface slot                          show current slot assignments",
@@ -243,7 +257,7 @@ const BOOLEAN_FLAGS = new Set([
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.
-const MULTI_FLAGS = new Set(["param", "to"]);
+const MULTI_FLAGS = new Set(["param", "to", "button"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -1064,6 +1078,36 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
     }
 
     case "video": {
+      // `surface video transcript <url>` — the words, not the player. It is a
+      // subcommand of `video` rather than its own verb because it is only ever
+      // useful about a video that is already on someone's screen.
+      if (positional[0] === "transcript") {
+        const target = positional[1];
+        if (!target) usage("usage: surface video transcript <url|video-id> [--lang en] [--at <sec>]");
+        const { fetchTranscript, blocks, around, clockText } = await import("./transcript.js");
+        const result = await fetchTranscript(target, typeof flags.lang === "string" ? flags.lang : "en");
+        const block = parseNumberFlag(flags, "block") ?? 30;
+        let list = blocks(result.cues, block);
+        const at = parseNumberFlag(flags, "at");
+        if (at !== undefined) list = around(list, at, parseNumberFlag(flags, "window") ?? 45);
+        if (flags.json === true) {
+          out({ ...result, cues: undefined, blocks: list });
+          return;
+        }
+        // Say which track this is: an auto-generated one has no punctuation to
+        // speak of and mangles names, and a quote from it should be hedged.
+        const provenance = [
+          result.generated ? "auto-generated" : null,
+          result.translated_from ? `machine-translated from ${result.translated_from}` : null,
+        ].filter(Boolean).join(", ");
+        console.log(
+          `# ${result.video_id} · ${result.language}${provenance ? ` (${provenance})` : ""}` +
+          `${result.duration ? ` · ${clockText(result.duration)}` : ""}`,
+        );
+        for (const b of list) console.log(`${clockText(b.t)}\t${b.text}`);
+        return;
+      }
+
       const url = positional[0];
       if (!url) usage("usage: " + CMD_HELP.video);
       if (!/^https?:\/\//.test(url)) {
@@ -1379,6 +1423,24 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
       const duration = parseNumberFlag(flags, "duration");
       if (duration !== undefined) body.duration = duration;
       if (typeof flags.on === "string") body.device = flags.on;
+      if (flags.sticky) body.sticky = true;
+      if (typeof flags.id === "string") body.surface_id = flags.id;
+
+      // --button "Roll back=rollback" — the label is what the human reads, the
+      // action name is what lands in the inbox. Pressing one records an action
+      // against --id, so `surface wait` sees it exactly like an in-surface
+      // click. Split on the last "=" so a label may contain one.
+      const buttons = multi.button || [];
+      if (buttons.length) {
+        if (typeof flags.id !== "string") {
+          usage("--button needs --id <surface-id>: the action has to land on a surface");
+        }
+        body.actions = buttons.map((raw) => {
+          const eq = raw.lastIndexOf("=");
+          if (eq <= 0) usage(`--button expects "Label=action" (got "${raw}")`);
+          return { label: raw.slice(0, eq).trim(), action: raw.slice(eq + 1).trim() };
+        });
+      }
       out(await call("POST", "/display/notify", body));
       return;
     }

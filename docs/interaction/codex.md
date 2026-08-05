@@ -13,6 +13,18 @@ TUI as native turns; clicks on dead sessions revive the exact thread that
 created the surface, and the exchange is in the transcript the next time the
 user runs `codex resume`.
 
+## Scope: the CLI, not the desktop app
+
+**The Codex desktop app cannot listen live.** Everything below hangs off a
+SessionStart hook installed into `$CODEX_HOME` and an app-server daemon the CLI
+starts; the desktop app runs neither, so there is no session for Surface to
+deliver a turn into and no `CODEX_THREAD_ID` stamped onto the surfaces it
+creates. Nothing is lost when it is used anyway — unclaimed actions fall to the
+inbox, which is the ladder's floor, and `surface actions` drains them — but the
+interaction is poll-shaped rather than live, and an agent running there should
+say so rather than promising to react on the click. Windows desktop flowback is
+in progress (PR #78) and not shipped.
+
 ## How a surface knows its codex session
 
 Nobody copies session ids. Codex exports `CODEX_THREAD_ID` to every shell it

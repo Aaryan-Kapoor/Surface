@@ -31,7 +31,7 @@ import { addSurfaceClient, broadcastGlobal, broadcastToSurface, hasWaiter } from
 import { enqueueThumb, hasAnyThumb, removeThumbs, resolveThumbFile, thumbGenerationFor } from "../thumbs.js";
 import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
 import { previewForCard } from "../preview.js";
-import { getState, patchState, setStateIfEmpty } from "../state.js";
+import { appendToStateList, getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
 import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
 import { planeOf, requireSystem, targetOf } from "./helpers.js";
@@ -608,6 +608,22 @@ artifactsRouter.patch("/artifacts/:id/state", (req, res) => {
           : value;
       }
       patch = stamped;
+    }
+    // The other half of a video's ask bar. The agent answers with
+    // `patch '{"reply":"…"}'` — one key, no read-modify-write, no chance of
+    // two answers clobbering each other — and the turn is appended here, on
+    // the same code path and with the same shape as the question was.
+    if (artifact?.template === "video" && patch && typeof patch === "object" && "reply" in patch) {
+      const { reply, ...rest } = patch as Record<string, unknown>;
+      const body = typeof reply === "string" ? { text: reply } : (reply as Record<string, unknown> | null);
+      patch = rest;
+      if (body && typeof body.text === "string" && body.text.trim()) {
+        patch.thread = appendToStateList(getDb(), req.params.id, "thread", {
+          role: "agent",
+          text: body.text.trim(),
+          t: typeof body.t === "number" ? body.t : null,
+        });
+      }
     }
     const result = patchState(getDb(), req.params.id, patch);
     const event = { id: req.params.id, patch, state_version: result.state_version };

@@ -704,22 +704,67 @@ try {
   // centres it on the full height its first line lands underneath. Measured in
   // a real browser before this guard existed: 22px of the "Surface is
   // listening" pill hidden at 390px, 4px at 820px.
-  check("the narrow empty state clears the header instead of centring through it", () => {
+  check("the empty state clears the header at every width instead of centring through it", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
-    const blockFor = (query: string) => {
-      const at = css.indexOf(`@media (max-width: ${query})`);
-      assert.ok(at > -1, `no ${query} breakpoint`);
-      return css.slice(at, css.indexOf("@media", at + 10));
-    };
-    for (const width of ["1100px", "760px"]) {
-      const rule = /\.empty-state\s*\{([^}]*)\}/.exec(blockFor(width));
-      assert.ok(rule, `no .empty-state rule at ${width}`);
-      assert.match(
-        rule![1],
-        /padding(-top)?:\s*calc\(var\(--header-h\)/,
-        `.empty-state at ${width} must reserve the header's height`,
+    // Every `.empty-state` rule in the sheet, base and overrides alike. The
+    // reservation belongs in the base rule — it is not a narrow-window problem,
+    // a short window puts the first row under the wordmark at any width — and
+    // no override may quietly shorten it again.
+    const rules = [...css.matchAll(/\.empty-state\s*\{([^}]*)\}/g)].map((m) => m[1]);
+    assert.ok(rules.length, "no .empty-state rule at all");
+    assert.match(rules[0], /padding:\s*calc\(var\(--header-h\)/, "the base .empty-state must reserve the header's height");
+    for (const body of rules.slice(1)) {
+      const pad = /padding(-top)?:\s*([^;]+);/.exec(body);
+      if (!pad) continue;
+      assert.match(pad[2], /calc\(var\(--header-h\)/, `an .empty-state override drops the header reservation: ${pad[0]}`);
+    }
+  });
+
+  check("the empty state keeps its gallery down to a phone", () => {
+    // The gallery is the only thing on a first-run screen that shows what a
+    // surface *is*. It used to be deleted outright the moment the layout went
+    // to one column, leaving a headline on a blank page — which is what the
+    // user reported. It may only go when there is genuinely no room.
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const hides = [...css.matchAll(/@media ([^{]+)\{[^@]*?\.empty-portal\s*\{[^}]*display:\s*none/g)];
+    assert.ok(hides.length, "nothing hides .empty-portal — expected a small-screen guard");
+    for (const hit of hides) {
+      const query = hit[1];
+      const widths = [...query.matchAll(/max-width:\s*(\d+)px/g)].map((m) => Number(m[1]));
+      const shortOnly = /max-height/.test(query);
+      assert.ok(
+        shortOnly || widths.every((w) => w <= 620),
+        `.empty-portal is hidden too eagerly, at "${query.trim()}"`,
       );
     }
+  });
+
+  check("a timestamped video link plays from its timestamp", () => {
+    // The link a person copies out of YouTube carries "&t=195", and the tour
+    // now ships one. The template only ever read its own `start` param, so a
+    // pasted timestamp was silently dropped and the video began at zero.
+    // Run the template's own two functions rather than grepping for them.
+    const tpl = fs.readFileSync(path.join(REPO_ROOT, "templates", "video", "index.html"), "utf8");
+    const from = tpl.indexOf("function youtubeId(");
+    const to = tpl.indexOf("// ── The playhead", from);
+    assert.ok(from > -1 && to > from, "could not find the video template's URL code");
+    const src = (params: Record<string, unknown>) =>
+      new Function("params", "URL", "URLSearchParams", "location", `${tpl.slice(from, to)} return buildSrc(String(params.url));`)(
+        params, URL, URLSearchParams, { origin: "http://127.0.0.1:3000" },
+      ) as string;
+
+    assert.match(src({ url: "https://youtu.be/DWcqbPm_Rn4?si=abc&t=195" }), /[?&]start=195(&|$)/,
+      "a share link's &t= must reach the embed");
+    assert.match(src({ url: "https://www.youtube.com/watch?v=DWcqbPm_Rn4&t=1h2m3s" }), /[?&]start=3723(&|$)/,
+      "YouTube's clock form must be read as seconds");
+    // The caller is more specific than the URL, so an explicit param wins.
+    assert.match(src({ url: "https://youtu.be/DWcqbPm_Rn4?t=195", start: 40 }), /[?&]start=40(&|$)/,
+      "an explicit start param must beat the URL's");
+    assert.doesNotMatch(src({ url: "https://youtu.be/DWcqbPm_Rn4" }), /start=/,
+      "a plain link must not gain a start offset");
+    // A non-YouTube URL is handed to the iframe untouched — no rewriting a URL
+    // whose query string we do not own.
+    assert.equal(src({ url: "https://example.com/clip.mp4?t=195" }), "https://example.com/clip.mp4?t=195");
   });
 
   check("the empty state shares the header's stacking context instead of covering it", () => {
@@ -877,6 +922,25 @@ try {
 
     app.flushTimers();
     assert.ok(!shown(), "the dialog stayed open after the prompt was copied");
+  });
+
+  // A sandboxed browsing context may not instantiate plugins, and Chrome's PDF
+  // reader is one — so a PDF in the normal surface frame rendered as "this page
+  // has been blocked by Chrome" while the identical URL opened fine on its own.
+  // The exemption is narrow on purpose, and the narrowness is the property
+  // worth guarding: device-authored content keeps the sandbox whatever mime it
+  // claims, because its mime is not a promise we should take.
+  check("an agent-authored PDF drops the sandbox, and nothing else does", () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
+    const guard = /const isAgentPdf = ([^;]+);/.exec(src);
+    assert.ok(guard, "the PDF exemption is gone");
+    assert.match(guard![1], /!fromDevicePlane/, "the exemption must not extend to device-authored content");
+    assert.match(guard![1], /application\/pdf/, "the exemption must be limited to PDFs");
+    assert.match(
+      src,
+      /if \(!isAgentPdf\) \{\s*\n\s*iframe\.setAttribute\("sandbox"/,
+      "the surface frame must still be sandboxed for everything else",
+    );
   });
 
   check("the pairing page names the command that produces a token", () => {

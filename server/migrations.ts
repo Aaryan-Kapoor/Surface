@@ -303,6 +303,46 @@ const migrations: Migration[] = [
       }
     },
   },
+  {
+    // 17, not 15, on purpose. Two branches in flight each claim a version below
+    // this one (year-long sessions, and the UI refresh), and runMigrations
+    // SILENTLY SKIPS any version at or below the database's current one — so
+    // landing here first would mean their migrations never ran on any database
+    // that had seen this one. Numbering above both is the only ordering that is
+    // safe whichever way the merges go.
+    version: 17,
+    description: "notifications: keep what the agent said, and what it asked",
+    up: (db) => {
+      // A notification used to exist only as an SSE frame: if no display was
+      // open, or the tab reloaded, it was gone. That is the same mistake the
+      // delivery ladder exists to avoid — agent lifetimes are shorter than the
+      // questions they ask, so an unanswered one has to outlive both the agent
+      // and the page that missed it.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id            TEXT PRIMARY KEY,
+          text          TEXT NOT NULL,
+          style         TEXT NOT NULL DEFAULT 'info',
+          surface_id    TEXT,
+          device        TEXT,
+          actions_json  TEXT NOT NULL DEFAULT '[]',
+          sticky        INTEGER NOT NULL DEFAULT 0,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          seen_at       TEXT,
+          answered_at   TEXT,
+          answer        TEXT,
+          dismissed_at  TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_notifications_created
+        ON notifications(created_at DESC);
+
+        -- The tray's only expensive question: what is still outstanding.
+        CREATE INDEX IF NOT EXISTS idx_notifications_open
+        ON notifications(dismissed_at, answered_at, seen_at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -31,9 +31,6 @@ export function renderArtifactShell(params: {
   preview: boolean;
 }): string {
   const title = escapeHtml(params.title);
-  const fileUrl = escapeHtml(params.fileUrl);
-  const mime = escapeHtml(params.mime);
-  const filePath = escapeHtml(params.filePath);
   const previewClass = params.preview ? " preview" : "";
 
   return `<!DOCTYPE html>
@@ -58,82 +55,10 @@ export function renderArtifactShell(params: {
        the platform UI face everywhere. */
     html, body { margin: 0; width: 100%; height: 100%; background: var(--void); color: var(--text-primary); font-family: var(--font); -webkit-font-smoothing: antialiased; }
     body { display: flex; flex-direction: column; overflow: hidden; }
-    .bar {
-      display: ${params.preview ? "none" : "flex"};
-      align-items: center;
-      gap: 14px;
-      padding: 14px 22px;
-      border-bottom: 1px solid var(--hairline);
-      background: rgba(10, 10, 10, 0.78);
-      backdrop-filter: blur(20px) saturate(140%);
-      -webkit-backdrop-filter: blur(20px) saturate(140%);
-      flex-shrink: 0;
-      position: relative;
-    }
-    .bar::after {
-      content: ""; position: absolute; left: 8%; right: 8%; bottom: -1px; height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.18), transparent);
-      opacity: 0.55;
-    }
-    .bar-marker {
-      width: 8px;
-      height: 8px;
-      border-radius: 2px;
-      background: linear-gradient(135deg, #ffffff 0%, #c8c8c6 100%);
-      box-shadow:
-        inset 0 0.5px 0 rgba(255, 255, 255, 0.6),
-        0 0 10px rgba(255, 255, 255, 0.55),
-        0 0 22px rgba(255, 255, 255, 0.18);
-      flex-shrink: 0;
-      animation: bar-breathe 4.2s ease-in-out infinite;
-    }
-    @keyframes bar-breathe {
-      0%, 100% { opacity: 0.7; transform: scale(1);   }
-      50%      { opacity: 1;   transform: scale(1.15); }
-    }
-    .bar-titlewrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-    .bar-title {
-      font-family: var(--font);
-      font-weight: 700;
-      font-size: 14px;
-      letter-spacing: -0.2px;
-      color: var(--text-primary);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .bar-meta {
-      font-family: var(--font);
-      font-size: 9px;
-      font-weight: 800;
-      letter-spacing: 2.4px;
-      text-transform: uppercase;
-      color: var(--text-ghost);
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      overflow: hidden;
-    }
-    .bar-meta-dot {
-      display: inline-block;
-      width: 1px;
-      height: 8px;
-      background: var(--text-ghost);
-      flex-shrink: 0;
-    }
-    .bar-path {
-      font-family: var(--font);
-      font-size: 9.5px;
-      font-weight: 600;
-      letter-spacing: 0.2px;
-      color: var(--text-ghost);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 50%;
-      direction: rtl;
-      text-align: right;
-    }
+    /* The presented document used to carry its own title bar. In the app it was
+       the second of three labels for the same file — the surface bar above it
+       already gives title, kind and age, and a PDF adds the browser's own
+       filename toolbar below. The viewer shows the document. */
     .viewer { flex: 1; min-height: 0; display: flex; align-items: stretch; justify-content: stretch; overflow: auto; }
     .viewer.preview { overflow: hidden; }
     img, video { display: block; max-width: 100%; max-height: 100%; margin: auto; }
@@ -176,14 +101,6 @@ export function renderArtifactShell(params: {
   </style>
 </head>
 <body>
-  <div class="bar">
-    <span class="bar-marker" aria-hidden="true"></span>
-    <div class="bar-titlewrap">
-      <div class="bar-title">${title}</div>
-      <div class="bar-meta"><span>${mime}</span></div>
-    </div>
-    <div class="bar-path" title="${filePath}">${filePath}</div>
-  </div>
   <main id="viewer" class="viewer${previewClass}"></main>
   <script>
     const mime = ${safeJsonForScript(params.mime)};
