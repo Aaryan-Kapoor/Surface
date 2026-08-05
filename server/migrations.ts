@@ -15,7 +15,11 @@ interface Migration {
   up: (db: Database.Database) => void;
 }
 
-const migrations: Migration[] = [
+// Exported so tests can address a migration by description rather than by a
+// hard-coded version number. Two open branches both wanted to be v15, and
+// whichever lands second has to renumber — a test that pins the number breaks
+// on a rename that is otherwise entirely correct.
+export const migrations: Migration[] = [
   {
     version: BASELINE_VERSION,
     description: "fresh artifact-first baseline",
@@ -277,6 +281,39 @@ const migrations: Migration[] = [
         ON surface_actions(status, claim_deadline_at)
         WHERE status = 'claimed' AND claim_deadline_at IS NOT NULL;
       `);
+    },
+  },
+  {
+    // 16, not 15. The UI-refresh branch claims 15 (artifacts.content_rev) and
+    // the tour branch claims 17, and runMigrations SILENTLY SKIPS any version
+    // at or below the database's current one — so these three have to land in
+    // numeric order, 15 → 16 → 17, or the ones that land later never run on a
+    // database that has already seen a higher number.
+    version: 16,
+    description: "auth_sessions: carry already-paired devices to the one-year TTL",
+    up: (db) => {
+      // Rolling expiry reads each session's *own* ttl_seconds, frozen at the
+      // moment it was created. Raising the default alone would therefore fix
+      // nothing for anyone already paired: their phone would still hit the
+      // thirty-day wall and get sent back to the host terminal for a fresh
+      // token, which is the entire complaint.
+      //
+      // Only rows still sitting on the old default move. An operator who
+      // deliberately asked for a short-lived session keeps it, and system
+      // bearers keep the month by design (DEFAULT_SYSTEM_SESSION_TTL_SECONDS),
+      // so the role filter is load-bearing rather than incidental. A device
+      // that explicitly requested exactly 2592000 is indistinguishable from one
+      // that took the default and is swept along; that is a benign coincidence,
+      // not a setting silently overridden.
+      db.prepare(
+        `UPDATE auth_sessions
+         SET ttl_seconds = 31536000,
+             expires_at = datetime('now', '+31536000 seconds')
+         WHERE role = 'device'
+           AND ttl_seconds = 2592000
+           AND revoked_at IS NULL
+           AND expires_at > datetime('now')`,
+      ).run();
     },
   },
 ];

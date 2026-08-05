@@ -8,6 +8,7 @@ const suites = [
   "test:app-routing",
   "test:thumbs",
   "test:auth",
+  "test:sessions",
   "test:content-origin",
   "test:service",
   "test:upgrade",
