@@ -517,6 +517,19 @@ function wireNotifButton(root) {
   paintNotifBadges();
 }
 
+// The badge is per-device, so no broadcast can carry the number — a count that
+// is true for the kitchen screen is wrong for the study. Every notification
+// event is therefore a nudge to go and ask for your own.
+async function refreshNotifUnread() {
+  try {
+    const res = await fetch("/notifications");
+    if (!res.ok) return;
+    const body = await res.json();
+    notifUnread = Number(body.unread) || 0;
+    paintNotifBadges();
+  } catch { /* the badge simply stays where it was */ }
+}
+
 async function loadNotifications() {
   try {
     const res = await fetch("/notifications");
@@ -2576,8 +2589,7 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("notification_answered", (e) => {
     const data = JSON.parse(e.data);
-    notifUnread = Number(data.unread) || 0;
-    paintNotifBadges();
+    refreshNotifUnread();
     // Another screen answered it; a live toast for the same question is stale.
     // Matched in JS rather than through a selector: an id is server data, and
     // building a selector out of server data is the same mistake as building
@@ -2588,9 +2600,8 @@ function connectGlobalSSE() {
     }
   });
 
-  globalSSE.addEventListener("notification_read", (e) => {
-    notifUnread = Number(JSON.parse(e.data).unread) || 0;
-    paintNotifBadges();
+  globalSSE.addEventListener("notification_read", () => {
+    refreshNotifUnread();
   });
 
   globalSSE.addEventListener("display_navigate", (e) => {
@@ -2604,7 +2615,7 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("display_notify", (e) => {
     const data = JSON.parse(e.data);
-    if (typeof data.unread === "number") { notifUnread = data.unread; paintNotifBadges(); }
+    refreshNotifUnread();
     showToast(data.text, data.duration, data.style || "info", {
       actions: data.actions,
       notificationId: data.id,

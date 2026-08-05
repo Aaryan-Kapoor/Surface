@@ -13,7 +13,7 @@ import { deviceNameOf, requireSystem, resolveDeviceTarget, targetOf } from "./he
 import { dispatchSurfaceAction } from "./actions.js";
 import {
   dismissAllNotifications, dismissNotification, getNotification, listNotifications,
-  markAllSeen, markAnswered, recordNotification, unreadCount,
+  markAllSeen, markAnswered, recordNotification, unreadCount, visibleTo,
 } from "../notifications.js";
 
 export const displayRouter = Router();
@@ -326,7 +326,6 @@ displayRouter.post("/display/notify", (req: Request, res: Response) => {
     sticky: isSticky,
     surface_id: saved.surface_id,
     actions,
-    unread: unreadCount(getDb()),
   }, target);
   res.json({ sent: true, id: saved.id, device: target ?? "all", actions: actions.length });
 });
@@ -337,16 +336,30 @@ displayRouter.post("/display/notify", (req: Request, res: Response) => {
 // device gets them; only the system plane may create a notification, which is
 // the same split as everywhere else — agents drive the display, devices view
 // and click.
+//
+// Every one of these is scoped by `viewerOf`. A notification sent `--on
+// kitchen` is a question put to the kitchen screen, and the tray is where that
+// question outlives the toast — so a tray that ignored the target would hand
+// the question, and the button that answers it, to every other display in the
+// house.
+//
+// None of the broadcasts below carry an unread count any more. They cannot:
+// the count is now per-device, so a single number in a fan-out frame is wrong
+// for everyone it was not computed for. The client refetches its own instead.
+function viewerOf(req: Request): string | null {
+  return req.auth?.role === "system" ? null : targetOf(req);
+}
 
-displayRouter.get("/notifications", (_req: Request, res: Response) => {
-  res.json({ notifications: listNotifications(getDb()), unread: unreadCount(getDb()) });
+displayRouter.get("/notifications", (req: Request, res: Response) => {
+  const viewer = viewerOf(req);
+  res.json({ notifications: listNotifications(getDb(), viewer), unread: unreadCount(getDb(), viewer) });
 });
 
-displayRouter.post("/notifications/seen", (_req: Request, res: Response) => {
-  const seen = markAllSeen(getDb());
-  const unread = unreadCount(getDb());
-  broadcastGlobal("notification_read", { unread });
-  res.json({ seen, unread });
+displayRouter.post("/notifications/seen", (req: Request, res: Response) => {
+  const viewer = viewerOf(req);
+  const seen = markAllSeen(getDb(), viewer);
+  broadcastGlobal("notification_read", {});
+  res.json({ seen, unread: unreadCount(getDb(), viewer) });
 });
 
 // Answering is two facts, and they must not drift apart: the agent's inbox gets
@@ -355,7 +368,9 @@ displayRouter.post("/notifications/seen", (_req: Request, res: Response) => {
 // without one.
 displayRouter.post("/notifications/:id/answer", (req: Request, res: Response) => {
   const notification = getNotification(getDb(), String(req.params.id));
-  if (!notification) {
+  // A question addressed to another screen is not this screen's to answer, and
+  // it should not even confirm the id exists.
+  if (!notification || !visibleTo(notification, viewerOf(req))) {
     res.status(404).json({ error: "Notification not found" });
     return;
   }
@@ -392,23 +407,27 @@ displayRouter.post("/notifications/:id/answer", (req: Request, res: Response) =>
   broadcastGlobal("notification_answered", {
     id: notification.id,
     answer: choice.action,
-    unread: unreadCount(getDb()),
   });
-  res.json({ answered: choice.action, notification: updated, action });
+  res.json({ answered: choice.action, notification: updated, action, unread: unreadCount(getDb(), viewerOf(req)) });
 });
 
 displayRouter.post("/notifications/:id/dismiss", (req: Request, res: Response) => {
+  const viewer = viewerOf(req);
+  const existing = getNotification(getDb(), String(req.params.id));
+  if (!existing || !visibleTo(existing, viewer)) {
+    res.status(404).json({ error: "Notification not found" });
+    return;
+  }
   const ok = dismissNotification(getDb(), String(req.params.id));
-  const unread = unreadCount(getDb());
-  broadcastGlobal("notification_read", { unread });
-  res.json({ dismissed: ok, unread });
+  broadcastGlobal("notification_read", {});
+  res.json({ dismissed: ok, unread: unreadCount(getDb(), viewer) });
 });
 
-displayRouter.post("/notifications/dismiss-all", (_req: Request, res: Response) => {
-  const dismissed = dismissAllNotifications(getDb());
-  const unread = unreadCount(getDb());
-  broadcastGlobal("notification_read", { unread });
-  res.json({ dismissed, unread });
+displayRouter.post("/notifications/dismiss-all", (req: Request, res: Response) => {
+  const viewer = viewerOf(req);
+  const dismissed = dismissAllNotifications(getDb(), viewer);
+  broadcastGlobal("notification_read", {});
+  res.json({ dismissed, unread: unreadCount(getDb(), viewer) });
 });
 
 // ── Display renderer / home widget / overlay HTML ──

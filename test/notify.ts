@@ -268,6 +268,96 @@ try {
     !JSON.stringify(boardState.body?.state || {}).includes("base64"),
     Object.keys(boardState.body?.state || {}));
 
+  // Clear has to erase what persisting saved, or it only looks like it worked
+  // and the drawing returns on the next reload.
+  await call("PATCH", `/artifacts/${boardId}/state`, {
+    body: { patch: { agent_strokes: [{ points: [[0, 0], [1, 1]], width: 2 }], note: "have a look" } },
+  });
+  await call("POST", `/artifacts/${boardId}/actions`, { body: { action: "cleared", data: {} } });
+  const cleared = await call("GET", `/artifacts/${boardId}/state`);
+  check("clearing the board clears what was saved",
+    JSON.stringify(cleared.body?.state?.user_strokes ?? []) === "[]", cleared.body?.state?.user_strokes);
+  check("clearing takes the agent's marks with it",
+    JSON.stringify(cleared.body?.state?.agent_strokes ?? []) === "[]", cleared.body?.state?.agent_strokes);
+  check("clearing takes the caption with it",
+    !cleared.body?.state?.note, cleared.body?.state?.note);
+
+  // ── a question put to one screen is not every screen's ──
+  //
+  // `--on kitchen` scopes the toast. If the stored row is not scoped the same
+  // way, the targeting is decoration: the study screen reloads, finds the
+  // question in its tray, and can press the button that answers it.
+  //
+  // This needs a second boot. Everything above runs over trusted loopback,
+  // where every request is the system plane no matter what cookie it carries,
+  // so a paired cookie could never be told apart from the agent.
+  const sysMint = await call("POST", "/api/auth/sessions", { body: { role: "system", label: "notify-admin" } });
+  const SYS = sysMint.body.token as string;
+  const mint = await call("POST", "/api/auth/pairing-token", { body: { label: "kitchen" } });
+  const boot = await call("POST", "/api/auth/bootstrap", { body: { credential: mint.body.credential } });
+  const kitchen = (boot.headers.get("set-cookie") || "").match(/surface_session=[^;]+/)?.[0] || "";
+  const mint2 = await call("POST", "/api/auth/pairing-token", { body: { label: "study" } });
+  const boot2 = await call("POST", "/api/auth/bootstrap", { body: { credential: mint2.body.credential } });
+  const study = (boot2.headers.get("set-cookie") || "").match(/surface_session=[^;]+/)?.[0] || "";
+  check("two devices paired for the scoping tests", !!kitchen && !!study, { kitchen: !!kitchen, study: !!study });
+
+  await killServer(server, port);
+  server = spawnServer(port, dataDir, { SURFACE_TRUST_LOOPBACK: "0" }, contentPort);
+  await waitForReady(base);
+
+  const targeted = await call("POST", "/display/notify", {
+    token: SYS,
+    body: {
+      text: "Kitchen only: start the roast?",
+      device: "kitchen",
+      surface_id: id,
+      actions: [{ label: "Start", action: "roast" }],
+    },
+  });
+  const targetedId: string = targeted.body.id;
+
+  const kitchenTray = await call("GET", "/notifications", { cookie: kitchen });
+  check("the targeted screen sees its own question",
+    kitchenTray.body?.notifications?.some((n: any) => n.id === targetedId), kitchenTray.body);
+  const studyTray = await call("GET", "/notifications", { cookie: study });
+  check("another screen never sees it",
+    !studyTray.body?.notifications?.some((n: any) => n.id === targetedId), studyTray.body);
+  // Both screens share the untargeted backlog from earlier in this file, so the
+  // number to assert is the difference: the targeted question is on exactly one
+  // of the two badges.
+  check("and it is not counted on that screen's badge",
+    kitchenTray.body?.unread === studyTray.body?.unread + 1,
+    { kitchen: kitchenTray.body?.unread, study: studyTray.body?.unread });
+
+  // Not 403: confirming the id exists is itself a leak.
+  const steal = await call("POST", `/notifications/${targetedId}/answer`, {
+    cookie: study, body: { action: "roast" },
+  });
+  check("another screen cannot answer it", steal.status === 404, steal.status);
+  const snoop = await call("POST", `/notifications/${targetedId}/dismiss`, { cookie: study });
+  check("another screen cannot dismiss it", snoop.status === 404, snoop.status);
+
+  const mine = await call("POST", `/notifications/${targetedId}/answer`, {
+    cookie: kitchen, body: { action: "roast" },
+  });
+  check("the screen it was put to can answer it", mine.status === 200, mine.body);
+
+  // The agent side is bookkeeping, not eavesdropping: a read from the system
+  // plane still sees the whole log.
+  const systemTray = await call("GET", "/notifications", { token: SYS });
+  check("the agent still sees every notification",
+    systemTray.body?.notifications?.some((n: any) => n.id === targetedId), systemTray.body?.notifications?.length);
+
+  // An untargeted notification is still everyone's.
+  const broadcast = await call("POST", "/display/notify", { token: SYS, body: { text: "Dinner is ready" } });
+  const bothSee = await Promise.all([
+    call("GET", "/notifications", { cookie: kitchen }),
+    call("GET", "/notifications", { cookie: study }),
+  ]);
+  check("a notification with no device still reaches every screen",
+    bothSee.every((r) => r.body?.notifications?.some((n: any) => n.id === broadcast.body.id)),
+    bothSee.map((r) => r.body?.notifications?.length));
+
 } finally {
   await killServer(server, port).catch(() => {});
   await sleep(100);

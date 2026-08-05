@@ -16,7 +16,7 @@ import { getArtifact } from "../artifacts.js";
 import { appendToStateList, patchState } from "../state.js";
 import { broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
 import { createBinding, deleteBinding, listBindings, projectAllowsBindings, scheduleDelivery, setBindingEnabled } from "../bindings.js";
-import { resolveMatchingNotifications, unreadCount } from "../notifications.js";
+import { resolveMatchingNotifications } from "../notifications.js";
 import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
 
 export const actionsRouter = Router();
@@ -137,6 +137,19 @@ export function dispatchSurfaceAction(
     }
   }
 
+  // Clear has to erase the same thing persisting saved it, or it only looks
+  // like it worked: the canvas goes blank, and the next reload — or the board
+  // opened on a second screen — brings the whole drawing back. Everything the
+  // board renders goes, agent marks and caption included, because that is what
+  // the person watching the canvas empty just saw happen.
+  if (artifact.template === "whiteboard" && action === "cleared") {
+    const patch = { user_strokes: [], agent_strokes: [], note: null };
+    const result = patchState(getDb(), artifact.id, patch);
+    const event = { id: artifact.id, patch, state_version: result.state_version };
+    broadcastGlobal("state_patch", event);
+    broadcastToSurface(artifact.id, "state_patch", event);
+  }
+
   // The same decision may also be sitting in the tray as a question. Doing it
   // on the page answers it there too, rather than leaving the badge counting a
   // question the user has already dealt with.
@@ -147,11 +160,7 @@ export function dispatchSurfaceAction(
   // must not silently decide the other.
   if (!opts?.fromNotificationId) {
     for (const resolved of resolveMatchingNotifications(getDb(), artifact.id, act.action)) {
-      broadcastGlobal("notification_answered", {
-        id: resolved.id,
-        answer: act.action,
-        unread: unreadCount(getDb()),
-      });
+      broadcastGlobal("notification_answered", { id: resolved.id, answer: act.action });
     }
   }
 

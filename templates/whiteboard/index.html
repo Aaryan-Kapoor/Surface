@@ -374,8 +374,10 @@
           if (saved.length) mine = saved;
         }
         redraw();
+        // Cleared unconditionally: a note that survives the note being removed
+        // is a caption for a drawing that is no longer on the board.
+        noteEl.textContent = "";
         if (st.note) {
-          noteEl.textContent = "";
           var d = document.createElement("span");
           d.className = "dot";
           noteEl.appendChild(d);

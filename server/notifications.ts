@@ -110,13 +110,36 @@ export function getNotification(db: Database.Database, id: string): Notification
   return row ? hydrate(row) : null;
 }
 
-export function listNotifications(db: Database.Database, limit = 50): NotificationRow[] {
+/**
+ * Who a stored notification belongs to.
+ *
+ * `--on <device>` already scopes the live toast. The row has to be scoped the
+ * same way or that targeting is decoration: any other display could reload,
+ * find the question sitting in its tray, read it, and answer it. A row with no
+ * device belongs to everyone. A `null` viewer is the system plane, which reads
+ * the whole log — an agent listing notifications is doing bookkeeping, not
+ * peering at someone else's screen.
+ */
+export type Viewer = string | null;
+
+function deviceScope(viewer: Viewer): { sql: string; params: string[] } {
+  if (viewer === null) return { sql: "", params: [] };
+  return { sql: " AND (device IS NULL OR device = ?)", params: [viewer] };
+}
+
+/** Whether `viewer` is allowed to act on a row it names by id. */
+export function visibleTo(row: NotificationRow, viewer: Viewer): boolean {
+  return viewer === null || row.device === null || row.device === viewer;
+}
+
+export function listNotifications(db: Database.Database, viewer: Viewer, limit = 50): NotificationRow[] {
+  const scope = deviceScope(viewer);
   const rows = db.prepare(`
     SELECT * FROM notifications
-    WHERE dismissed_at IS NULL
+    WHERE dismissed_at IS NULL${scope.sql}
     ORDER BY created_at DESC, rowid DESC
     LIMIT ?
-  `).all(Math.max(1, Math.min(200, limit))) as DbRow[];
+  `).all(...scope.params, Math.max(1, Math.min(200, limit))) as DbRow[];
   return rows.map(hydrate);
 }
 
@@ -124,24 +147,29 @@ export function listNotifications(db: Database.Database, limit = 50): Notificati
  * What the badge counts: anything you have not looked at, plus anything still
  * waiting on you. A question you *have* seen but not answered keeps counting —
  * seeing a question is not answering it.
+ *
+ * Scoped per viewer, which is why no broadcast carries this number: one count
+ * is not true of two devices at once.
  */
-export function unreadCount(db: Database.Database): number {
+export function unreadCount(db: Database.Database, viewer: Viewer): number {
+  const scope = deviceScope(viewer);
   const row = db.prepare(`
     SELECT count(*) AS n FROM notifications
-    WHERE dismissed_at IS NULL
+    WHERE dismissed_at IS NULL${scope.sql}
       AND (
         seen_at IS NULL
         OR (actions_json <> '[]' AND answered_at IS NULL)
       )
-  `).get() as { n: number };
+  `).get(...scope.params) as { n: number };
   return row.n;
 }
 
-export function markAllSeen(db: Database.Database): number {
+export function markAllSeen(db: Database.Database, viewer: Viewer): number {
+  const scope = deviceScope(viewer);
   return db.prepare(`
     UPDATE notifications SET seen_at = datetime('now')
-    WHERE seen_at IS NULL AND dismissed_at IS NULL
-  `).run().changes;
+    WHERE seen_at IS NULL AND dismissed_at IS NULL${scope.sql}
+  `).run(...scope.params).changes;
 }
 
 export function markAnswered(db: Database.Database, id: string, answer: string): NotificationRow | null {
@@ -188,14 +216,15 @@ export function dismissNotification(db: Database.Database, id: string): boolean 
   `).run(id).changes > 0;
 }
 
-export function dismissAllNotifications(db: Database.Database): number {
+export function dismissAllNotifications(db: Database.Database, viewer: Viewer): number {
   // An unanswered question is not clutter, so "clear all" leaves it alone —
   // otherwise the one thing the tray exists for is the easiest thing to lose.
+  const scope = deviceScope(viewer);
   return db.prepare(`
     UPDATE notifications SET dismissed_at = datetime('now')
-    WHERE dismissed_at IS NULL
+    WHERE dismissed_at IS NULL${scope.sql}
       AND (actions_json = '[]' OR answered_at IS NOT NULL)
-  `).run().changes;
+  `).run(...scope.params).changes;
 }
 
 export function gcNotifications(db: Database.Database, keep = KEEP_ROWS): number {
