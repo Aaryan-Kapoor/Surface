@@ -10,7 +10,7 @@ All notable changes to Surface are recorded here.
   carried a `Max-Age` fixed at pairing time, so a phone used every day still
   dropped its cookie on the original deadline and had to be re-paired from
   the host terminal. The auth middleware now re-issues the cookie whenever a
-  session's deadline moves. Migration v15 carries already-paired devices onto
+  session's deadline moves. Migration v16 carries already-paired devices onto
   the new TTL, so nobody has to re-pair *once* to stop re-pairing. System
   bearers deliberately keep the 30-day default — they get carried off the
   host, and are not sitting in front of the person who would notice them
