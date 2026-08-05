@@ -284,7 +284,12 @@ export const migrations: Migration[] = [
     },
   },
   {
-    version: 15,
+    // 16, not 15. The UI-refresh branch claims 15 (artifacts.content_rev) and
+    // the tour branch claims 17, and runMigrations SILENTLY SKIPS any version
+    // at or below the database's current one — so these three have to land in
+    // numeric order, 15 → 16 → 17, or the ones that land later never run on a
+    // database that has already seen a higher number.
+    version: 16,
     description: "auth_sessions: carry already-paired devices to the one-year TTL",
     up: (db) => {
       // Rolling expiry reads each session's *own* ttl_seconds, frozen at the
