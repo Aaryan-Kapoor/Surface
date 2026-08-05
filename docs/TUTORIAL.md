@@ -374,10 +374,18 @@ point of the step:
 surface patch $V '{"reply":"<your answer>"}'
 ```
 
-You know the video id and the second. Fetch the transcript however you normally
-would and answer from the passage at that timestamp — the surface tells you
-*where*, finding out *what* is your job. If you can't get a transcript, say so
-in the reply rather than bluffing.
+You know the video id and the second. Get the words for that second and answer
+from them:
+
+```bash
+surface video transcript "<url>" --at <the t from the action>
+```
+
+That prints only the passage around that moment. Quote it back to them — "at
+3:28 he's reading the article's first line" — because the whole point of the
+step is that you know *where they are*, not just what the video is about. If the
+command errors, say so in the reply rather than guessing from the title; a
+confident wrong answer about a video they are watching is obviously wrong.
 
 Two things worth showing off once they've asked something:
 

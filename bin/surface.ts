@@ -124,7 +124,16 @@ const COMMANDS: Record<string, CommandSpec> = {
   state: command("surface state <id>"),
   ask: command("surface ask <question> [--options a,b,c] [--freetext] [--context -|<md>] [--context-file <p>] [--wait] [--timeout <s>] [--on <device>] [--id <id>] [--agent <l>] [--title <t>]", { options: STR, freetext: BOOL, context: STR, "context-file": STR, wait: BOOL, timeout: NUM, on: STR, id: STR, agent: STR, title: STR }),
   append: command("surface append <id> [<text>|-] [--md]   (- pipes stdin line by line)", { md: BOOL }),
-  video: command("surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]", { title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR }),
+  video: command([
+    "surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]",
+    "surface video transcript <url|video-id> [--lang en] [--at <sec>] [--window <sec>] [--block <sec>] [--json]",
+    "    timestamped captions for the video on screen. --at <sec> returns just the part",
+    "    around a moment — pair it with the `t` on an `ask` action to answer from the",
+    "    passage they were actually watching.",
+  ].join("\n"), {
+    title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR,
+    lang: STR, at: NUM, window: NUM, block: NUM, json: BOOL,
+  }),
   doc: command("surface doc <path> [--title <t>] [--toc] [--width narrow|default|wide] [--agent <l>] [--no-open]", { title: STR, toc: BOOL, width: STR, agent: STR, "no-open": BOOL }),
   template: command([
     "surface template list [--json]",
@@ -1069,6 +1078,32 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
     }
 
     case "video": {
+      // `surface video transcript <url>` — the words, not the player. It is a
+      // subcommand of `video` rather than its own verb because it is only ever
+      // useful about a video that is already on someone's screen.
+      if (positional[0] === "transcript") {
+        const target = positional[1];
+        if (!target) usage("usage: surface video transcript <url|video-id> [--lang en] [--at <sec>]");
+        const { fetchTranscript, blocks, around, clockText } = await import("./transcript.js");
+        const result = await fetchTranscript(target, typeof flags.lang === "string" ? flags.lang : "en");
+        const block = parseNumberFlag(flags, "block") ?? 30;
+        let list = blocks(result.cues, block);
+        const at = parseNumberFlag(flags, "at");
+        if (at !== undefined) list = around(list, at, parseNumberFlag(flags, "window") ?? 45);
+        if (flags.json === true) {
+          out({ ...result, cues: undefined, blocks: list });
+          return;
+        }
+        // Say which track this is: an auto-generated one has no punctuation to
+        // speak of and mangles names, and a quote from it should be hedged.
+        console.log(
+          `# ${result.video_id} · ${result.language}${result.generated ? " (auto-generated)" : ""}` +
+          `${result.duration ? ` · ${clockText(result.duration)}` : ""} · via ${result.source}`,
+        );
+        for (const b of list) console.log(`${clockText(b.t)}\t${b.text}`);
+        return;
+      }
+
       const url = positional[0];
       if (!url) usage("usage: " + CMD_HELP.video);
       if (!/^https?:\/\//.test(url)) {
