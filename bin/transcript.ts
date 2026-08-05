@@ -31,7 +31,14 @@ export interface TranscriptResult {
   cues: Cue[];
 }
 
-const INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+// No `?key=` on the player call. The InnerTube web key is a constant YouTube
+// serves in its own homepage HTML to every visitor — not a credential, and not
+// ours — but any Google-shaped key literal in a repository trips secret
+// scanners, and a false alarm that recurs forever is worse than the line it
+// flags and cannot be told apart from a real one by the next person. It turns out
+// the endpoint does not want it anyway: the call is accepted on the strength of
+// the client context alone. Verified against a signed-out caller with the key
+// removed entirely.
 
 // Order matters. The mobile contexts are the ones still served; WEB and MWEB
 // answer UNPLAYABLE for a signed-out caller, and TVHTML5 errors outright.
@@ -159,7 +166,7 @@ async function fetchOnce(url: string, init?: RequestInit): Promise<Response | nu
 
 async function viaInnerTube(videoId: string, lang: string): Promise<TranscriptResult | null> {
   for (const client of CLIENTS) {
-    const res = await fetchOnce(`https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`, {
+    const res = await fetchOnce("https://www.youtube.com/youtubei/v1/player", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ context: { client }, videoId }),
