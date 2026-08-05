@@ -152,6 +152,35 @@ export function markAnswered(db: Database.Database, id: string, answer: string):
   return getNotification(db, id);
 }
 
+/**
+ * A question can be answered somewhere other than its own button.
+ *
+ * The tour asks "ready for the next one?" in a notification while the same
+ * `next` sits on the page itself — press the one on the page and the tray was
+ * left holding a question the user had already answered, counted forever by the
+ * unread badge. Any action on a surface resolves every open question that
+ * offered that action against that surface. One decision, one answer.
+ */
+export function resolveMatchingNotifications(
+  db: Database.Database,
+  surfaceId: string,
+  action: string,
+): NotificationRow[] {
+  const rows = db.prepare(`
+    SELECT * FROM notifications
+    WHERE surface_id = ? AND answered_at IS NULL AND dismissed_at IS NULL
+      AND actions_json <> '[]'
+  `).all(surfaceId) as DbRow[];
+  const resolved: NotificationRow[] = [];
+  for (const row of rows) {
+    const notification = hydrate(row);
+    if (!notification.actions.some((entry) => entry.action === action)) continue;
+    const updated = markAnswered(db, notification.id, action);
+    if (updated) resolved.push(updated);
+  }
+  return resolved;
+}
+
 export function dismissNotification(db: Database.Database, id: string): boolean {
   return db.prepare(`
     UPDATE notifications SET dismissed_at = datetime('now')

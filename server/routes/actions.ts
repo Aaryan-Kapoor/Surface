@@ -16,6 +16,7 @@ import { getArtifact } from "../artifacts.js";
 import { patchState } from "../state.js";
 import { broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
 import { createBinding, deleteBinding, listBindings, projectAllowsBindings, scheduleDelivery, setBindingEnabled } from "../bindings.js";
+import { resolveMatchingNotifications, unreadCount } from "../notifications.js";
 import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
 
 export const actionsRouter = Router();
@@ -103,6 +104,7 @@ export function dispatchSurfaceAction(
   action: string,
   data: unknown,
   deviceName: string | null,
+  opts?: { fromNotificationId?: string },
 ): SurfaceAction {
   const act = createAction(getDb(), { surface_id: artifact.id, action, data });
 
@@ -132,6 +134,24 @@ export function dispatchSurfaceAction(
       const event = { id: artifact.id, patch: { user_strokes: payload.strokes }, state_version: result.state_version };
       broadcastGlobal("state_patch", event);
       broadcastToSurface(artifact.id, "state_patch", event);
+    }
+  }
+
+  // The same decision may also be sitting in the tray as a question. Doing it
+  // on the page answers it there too, rather than leaving the badge counting a
+  // question the user has already dealt with.
+  //
+  // Only for actions that came *from* the surface. A tray press answers exactly
+  // the question whose button was pressed and nothing else: two unrelated
+  // questions can legitimately offer the same action name, and pressing one
+  // must not silently decide the other.
+  if (!opts?.fromNotificationId) {
+    for (const resolved of resolveMatchingNotifications(getDb(), artifact.id, act.action)) {
+      broadcastGlobal("notification_answered", {
+        id: resolved.id,
+        answer: act.action,
+        unread: unreadCount(getDb()),
+      });
     }
   }
 

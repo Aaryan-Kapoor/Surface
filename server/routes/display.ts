@@ -386,7 +386,7 @@ displayRouter.post("/notifications/:id/answer", (req: Request, res: Response) =>
     label: choice.label,
     from: "notification",
     notification_id: notification.id,
-  }, deviceNameOf(req));
+  }, deviceNameOf(req), { fromNotificationId: notification.id });
   const updated = markAnswered(getDb(), notification.id, choice.action);
 
   broadcastGlobal("notification_answered", {

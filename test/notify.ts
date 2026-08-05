@@ -201,6 +201,29 @@ try {
     !afterClear.body.notifications.some((n: any) => n.text === "Build finished"),
     afterClear.body.notifications.map((n: any) => n.text));
 
+  // ── the same decision, answered somewhere else ──
+  //
+  // The tour asks "ready for the next one?" in the tray while the same Next
+  // sits on the page. Pressing the page one used to leave the tray holding a
+  // question already answered, counted forever by the badge.
+  const twinned = await call("POST", "/display/notify", {
+    body: { text: "Ready for the next one?", surface_id: id, actions: [{ label: "Next", action: "next" }] },
+  });
+  const otherQuestion = await call("POST", "/display/notify", {
+    body: { text: "Ship it?", surface_id: id, actions: [{ label: "Ship", action: "ship" }] },
+  });
+  await call("POST", `/artifacts/${id}/actions`, { body: { action: "next", data: { from: "gauge" } } });
+  const afterPageSide = await call("GET", "/notifications");
+  const rowOf = (nid: string) => afterPageSide.body.notifications.find((n: any) => n.id === nid);
+  check("pressing Next on the page answers the same question in the tray",
+    !!rowOf(twinned.body.id)?.answered_at && rowOf(twinned.body.id)?.answer === "next",
+    rowOf(twinned.body.id));
+  // The narrowness is the whole safety of it: a surface fires many actions, and
+  // only the one a question actually offered may close that question.
+  check("an unrelated action leaves other questions open",
+    !rowOf(otherQuestion.body.id)?.answered_at,
+    rowOf(otherQuestion.body.id));
+
   const waiter = spawn("node", [cli, "wait", "--id", id, "--action", "deploy", "--timeout", "10"], {
     cwd: REPO_ROOT,
     env: { ...process.env, SURFACE_URL: base },
