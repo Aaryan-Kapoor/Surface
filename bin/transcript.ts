@@ -27,6 +27,8 @@ export interface TranscriptResult {
   video_id: string;
   language: string;
   generated: boolean;
+  /** Set when YouTube machine-translated this from another language. */
+  translated_from: string | null;
   source: "innertube" | "yt-dlp";
   duration: number | null;
   cues: Cue[];
@@ -66,6 +68,7 @@ interface CaptionTrack {
   baseUrl: string;
   languageCode: string;
   kind?: string;
+  isTranslatable?: boolean;
   name?: unknown;
 }
 
@@ -76,11 +79,22 @@ interface CaptionTrack {
  * have no punctuation to speak of and mangle names — so `kind !== "asr"` wins
  * within the requested language before falling back to the ASR track.
  */
-function pickTrack(tracks: CaptionTrack[], lang: string): CaptionTrack | null {
+export function pickTrack(
+  tracks: CaptionTrack[],
+  lang: string,
+): { track: CaptionTrack; translateTo: string | null } | null {
   if (!tracks.length) return null;
   const inLang = tracks.filter((t) => (t.languageCode || "").toLowerCase().startsWith(lang.toLowerCase()));
-  const pool = inLang.length ? inLang : tracks;
-  return pool.find((t) => t.kind !== "asr") ?? pool[0];
+  if (inLang.length) {
+    return { track: inLang.find((t) => t.kind !== "asr") ?? inLang[0], translateTo: null };
+  }
+  // No track in the language asked for. Falling back to whatever happened to be
+  // first is how you hand back English captions labelled as Spanish, so instead
+  // ask YouTube to translate one — and record that it did, because a machine
+  // translation of a machine transcription is two lossy steps and a quote taken
+  // from it should be hedged accordingly.
+  const source = tracks.find((t) => t.kind !== "asr" && t.isTranslatable) ?? tracks.find((t) => t.isTranslatable);
+  return source ? { track: source, translateTo: lang } : null;
 }
 
 /**
@@ -109,48 +123,82 @@ export function parseJson3(body: string): Cue[] {
   return out;
 }
 
-async function fetchJson(url: string, init?: RequestInit): Promise<any> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { "User-Agent": "Mozilla/5.0", ...(init?.headers ?? {}) },
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Why we came back empty-handed.
+ *
+ * This exists so the command cannot tell the user something false. Every
+ * failure here looks identical from the call site — no transcript — but
+ * "this video has captions disabled" and "you have been asked to slow down"
+ * lead to opposite next moves, and an agent that repeats the wrong one sounds
+ * authoritative while being wrong.
+ */
+type Blocked = "rate-limited" | "unplayable" | "no-captions" | "empty-body" | "network";
+let lastBlock: Blocked = "network";
+/** Languages the video did offer, so "not in that language" can name the alternatives. */
+let offered: string[] = [];
+
+/** Fetch with one backoff retry, but only for the throttle case. */
+async function fetchOnce(url: string, init?: RequestInit): Promise<Response | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { ...init, headers: { "User-Agent": "Mozilla/5.0", ...(init?.headers ?? {}) } });
+    } catch {
+      lastBlock = "network";
+      return null;
+    }
+    if (res.status === 429) {
+      lastBlock = "rate-limited";
+      if (attempt === 0) { await sleep(1500); continue; }
+      return null;
+    }
+    if (!res.ok) { lastBlock = "network"; return null; }
+    return res;
+  }
+  return null;
 }
 
 async function viaInnerTube(videoId: string, lang: string): Promise<TranscriptResult | null> {
   for (const client of CLIENTS) {
+    const res = await fetchOnce(`https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context: { client }, videoId }),
+    });
+    if (!res) continue;
     let player: any;
-    try {
-      player = await fetchJson(`https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ context: { client }, videoId }),
-      });
-    } catch { continue; }
+    try { player = await res.json(); } catch { continue; }
 
-    if (player?.playabilityStatus?.status !== "OK") continue;
+    if (player?.playabilityStatus?.status !== "OK") { lastBlock = "unplayable"; continue; }
     const tracks: CaptionTrack[] =
       player?.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-    const track = pickTrack(tracks, lang);
-    if (!track?.baseUrl) continue;
+    const picked = pickTrack(tracks, lang);
+    if (!picked?.track?.baseUrl) {
+      lastBlock = "no-captions";
+      offered = tracks.map((t) => t.languageCode).filter(Boolean);
+      continue;
+    }
+    const { track, translateTo } = picked;
 
-    let body: string;
-    try {
-      const res = await fetch(`${track.baseUrl}&fmt=json3`, { headers: { "User-Agent": "Mozilla/5.0" } });
-      body = await res.text();
-    } catch { continue; }
-    // The empty-200 case. Treat it as a failure, never as an empty transcript.
-    if (!body.trim()) continue;
+    const capRes = await fetchOnce(
+      `${track.baseUrl}&fmt=json3${translateTo ? `&tlang=${encodeURIComponent(translateTo)}` : ""}`,
+    );
+    if (!capRes) continue;
+    const body = await capRes.text();
+    // The empty-200 case. Never mistake it for an empty transcript.
+    if (!body.trim()) { lastBlock = "empty-body"; continue; }
 
     let cues: Cue[];
-    try { cues = parseJson3(body); } catch { continue; }
-    if (!cues.length) continue;
+    try { cues = parseJson3(body); } catch { lastBlock = "empty-body"; continue; }
+    if (!cues.length) { lastBlock = "empty-body"; continue; }
 
     const seconds = Number(player?.videoDetails?.lengthSeconds);
     return {
       video_id: videoId,
-      language: track.languageCode || lang,
+      language: translateTo || track.languageCode || lang,
+      translated_from: translateTo ? (track.languageCode || null) : null,
       generated: track.kind === "asr",
       source: "innertube",
       duration: Number.isFinite(seconds) && seconds > 0 ? seconds : null,
@@ -186,7 +234,8 @@ function viaYtDlp(videoId: string, lang: string): TranscriptResult | null {
     return {
       video_id: videoId,
       language: lang,
-      generated: /\.auto\./.test(file) || true,
+      generated: true,
+      translated_from: null,
       source: "yt-dlp",
       duration: null,
       cues,
@@ -212,17 +261,26 @@ export async function fetchTranscript(input: string, lang = "en"): Promise<Trans
   const direct = await viaInnerTube(videoId, lang);
   if (direct) return direct;
 
+  const blocked = lastBlock;
   const fallback = viaYtDlp(videoId, lang);
   if (fallback) return fallback;
 
-  throw new Error(
-    haveYtDlp()
-      ? `No ${lang} captions available for ${videoId} (tried the direct route and yt-dlp). ` +
-        `The video may have captions disabled, or be private or age-gated.`
-      : `Could not fetch captions for ${videoId}. Either the video has none, or the direct ` +
-        `route has been closed by YouTube — installing yt-dlp (\`pipx install yt-dlp\`) gives ` +
-        `this command a second way in. Do not answer questions about the video without them.`,
-  );
+  // Say the true reason. These lead to opposite next moves: wait and retry,
+  // versus stop asking and tell the user this video has nothing to read.
+  const why: Record<Blocked, string> = {
+    "rate-limited": `Throttled while fetching captions for ${videoId} (HTTP 429). This is temporary — ` +
+      `wait a minute and run it again. Do not conclude the video has no captions.`,
+    unplayable: `${videoId} would not play for an anonymous viewer — it may be private, age-gated, ` +
+      `members-only, or region-blocked.`,
+    "no-captions": offered.length
+      ? `${videoId} has no ${lang} captions and none that could be translated. It offers: ` +
+        `${offered.join(", ")} — pass --lang with one of those.`
+      : `${videoId} has no caption tracks at all.`,
+    "empty-body": `Captions for ${videoId} were offered but served empty. The fetch route has ` +
+      `probably been closed off; this needs a code change, not a retry.`,
+    network: `Could not reach YouTube to fetch captions for ${videoId}.`,
+  };
+  throw new Error(`${why[blocked]} Do not answer questions about the video without them.`);
 }
 
 /** Stitch cues into readable blocks of roughly `seconds` each. */

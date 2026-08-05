@@ -7,7 +7,10 @@
 // where a mistake is invisible: a transcript with smeared offsets still *looks*
 // like a transcript, and the agent quoting it sounds confident and is wrong.
 import assert from "node:assert/strict";
-import { around, blocks, clockText, parseJson3, videoIdOf } from "../bin/transcript.js";
+import { around, blocks, clockText, parseJson3, pickTrack, videoIdOf } from "../bin/transcript.js";
+
+const track = (languageCode: string, kind?: string, isTranslatable = true) =>
+  ({ baseUrl: `https://x/${languageCode}`, languageCode, kind, isTranslatable });
 
 let passed = 0;
 const failures: string[] = [];
@@ -95,6 +98,36 @@ check("a window returns the passage around a moment, inclusive of both edges", (
   assert.deepEqual(around(list, 0, 30).map((b) => b.t), [0]);
   // Asking about a moment past the end is not an error, it is just empty.
   assert.deepEqual(around(list, 9999, 10), []);
+});
+
+check("a human-written track beats a machine-written one in the same language", () => {
+  const picked = pickTrack([track("en", "asr"), track("en")], "en");
+  assert.equal(picked!.track.kind, undefined, "the manual track must win");
+  assert.equal(picked!.translateTo, null, "a native track is never translated");
+});
+
+check("a regional variant satisfies the language asked for", () => {
+  assert.equal(pickTrack([track("pt-BR")], "pt")!.track.languageCode, "pt-BR");
+});
+
+check("a language the video lacks is translated, not quietly substituted", () => {
+  // The bug this replaces: falling back to the first track handed back English
+  // captions for a caller that asked for Spanish, with nothing saying so.
+  const picked = pickTrack([track("en"), track("de")], "es");
+  assert.equal(picked!.translateTo, "es", "it must ask for a translation");
+  assert.equal(picked!.track.languageCode, "en", "translated from the first usable source");
+});
+
+check("translation prefers a human source over a machine one", () => {
+  // Machine-translating a machine transcription is two lossy steps; start from
+  // the better text where there is a choice.
+  const picked = pickTrack([track("en", "asr"), track("de")], "es");
+  assert.equal(picked!.track.languageCode, "de");
+});
+
+check("a track that cannot be translated is not pressed into service", () => {
+  assert.equal(pickTrack([track("en", undefined, false)], "es"), null);
+  assert.equal(pickTrack([], "en"), null);
 });
 
 check("timestamps read the way a person would say them", () => {

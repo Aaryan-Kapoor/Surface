@@ -1096,9 +1096,13 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         }
         // Say which track this is: an auto-generated one has no punctuation to
         // speak of and mangles names, and a quote from it should be hedged.
+        const provenance = [
+          result.generated ? "auto-generated" : null,
+          result.translated_from ? `machine-translated from ${result.translated_from}` : null,
+        ].filter(Boolean).join(", ");
         console.log(
-          `# ${result.video_id} · ${result.language}${result.generated ? " (auto-generated)" : ""}` +
-          `${result.duration ? ` · ${clockText(result.duration)}` : ""} · via ${result.source}`,
+          `# ${result.video_id} · ${result.language}${provenance ? ` (${provenance})` : ""}` +
+          `${result.duration ? ` · ${clockText(result.duration)}` : ""}`,
         );
         for (const b of list) console.log(`${clockText(b.t)}\t${b.text}`);
         return;
