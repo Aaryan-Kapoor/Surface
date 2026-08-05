@@ -688,7 +688,17 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
       const st = b.status(cfg);
       console.log(`surface service installed and healthy`);
       console.log(`  supervisor : ${st.location}`);
-      console.log(`  server     : http://127.0.0.1:${health.port}  (content plane :${health.content_port})`);
+      // Print where it is actually listening, not where we happened to probe it.
+      // A wildcard bind is health-checked over loopback because that is reachable
+      // either way — but printing the loopback URL after the caller explicitly
+      // passed `--bind 0.0.0.0` reads as the flag having been ignored. Two
+      // separate agents flagged it as a likely bug on the strength of this line.
+      const wildcard = !cfg.bind || ["0.0.0.0", "::", "[::]"].includes(cfg.bind);
+      console.log(
+        `  server     : http://127.0.0.1:${health.port}` +
+        `${wildcard && cfg.bind ? " (bound on all interfaces)" : ""}` +
+        `  (content plane :${health.content_port})`,
+      );
       console.log(`  version    : ${health.version}`);
       console.log(`  data       : ${cfg.dataDir}`);
       console.log(`  logs       : ${cfg.logFile}`);

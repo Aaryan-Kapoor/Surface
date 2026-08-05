@@ -64,27 +64,45 @@ continuing.
 
 Set `tutorial: "in_progress"` in `~/.surface/install-state.json`.
 
-### Start the watcher
+### Arrange to hear the clicks
 
-This is the one command that makes the tour feel live. Run it **in the
-background**, once, and keep it for the whole tour:
+This is what makes the tour feel live rather than like a form being filled in.
+How you do it depends on what you are running inside — **do the one that matches
+you and skip the rest.**
 
-```bash
-surface wait --follow
-```
+- **Codex CLI:** you need no watcher at all. Run this once:
 
-It prints one JSON line per action, on every surface, as it happens.
+  ```bash
+  surface codex setup
+  ```
 
-- **Claude Code:** run it with the `Monitor` tool (`persistent: true`), not with
-  `Bash`. Each event wakes you with the action payload. If `Monitor` is not in
-  your tool list, fetch it first — `ToolSearch` with the query
-  `select:Monitor`.
-- **Any other harness:** whatever your equivalent is — a background job you are
-  notified about, a streaming tool call. If you genuinely have none, run the
-  per-step `surface wait --id <id> --action <a> --timeout 900` instead and
-  accept that you are blocked while it runs. That is the fallback, not the plan.
+  It starts the app-server daemon and installs a SessionStart hook, after which
+  actions on surfaces you created arrive straight back in this session. Codex
+  will ask you to trust the new hook — **that prompt is codex's, not Surface's**;
+  say yes and carry on. `surface codex status` diagnoses it. Nothing to stop at
+  the end.
 
-Stop the watcher at the end of the tour.
+  **This is the Codex CLI only. The Codex desktop app cannot listen live yet** —
+  it does not run the SessionStart hook the bridge is built on, so nothing routes
+  a click back into a desktop session. Clicks are not lost: they queue in the
+  inbox and `surface actions` drains them. If you are in the desktop app, say so
+  once, use the "any other harness" row below, and do not promise the user that
+  you will react the moment they click.
+
+- **Claude Code:** run `surface wait --follow` with the **`Monitor` tool**
+  (`persistent: true`) — not with `Bash`. It prints one JSON line per action, on
+  every surface, as it happens, and each line wakes you with the payload. If
+  `Monitor` is not in your tool list, fetch it first: `ToolSearch` with the query
+  `select:Monitor`. Stop it at the end of the tour.
+
+- **Any other harness:** run `surface wait --follow` however you run a background
+  job you get notified about. If you genuinely have no such thing, fall back to a
+  per-step `surface wait --id <id> --action <a> --timeout 900` and accept that
+  you are blocked while each one runs. That is the fallback, not the plan.
+
+Whichever you use, **arm it once, before Step 0** — and never also run a
+foreground `surface wait`. An action goes to exactly one claimant, so the two
+would fight over the same click.
 
 ---
 
