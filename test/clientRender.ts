@@ -704,20 +704,37 @@ try {
   // centres it on the full height its first line lands underneath. Measured in
   // a real browser before this guard existed: 22px of the "Surface is
   // listening" pill hidden at 390px, 4px at 820px.
-  check("the narrow empty state clears the header instead of centring through it", () => {
+  check("the empty state clears the header at every width instead of centring through it", () => {
     const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
-    const blockFor = (query: string) => {
-      const at = css.indexOf(`@media (max-width: ${query})`);
-      assert.ok(at > -1, `no ${query} breakpoint`);
-      return css.slice(at, css.indexOf("@media", at + 10));
-    };
-    for (const width of ["1100px", "760px"]) {
-      const rule = /\.empty-state\s*\{([^}]*)\}/.exec(blockFor(width));
-      assert.ok(rule, `no .empty-state rule at ${width}`);
-      assert.match(
-        rule![1],
-        /padding(-top)?:\s*calc\(var\(--header-h\)/,
-        `.empty-state at ${width} must reserve the header's height`,
+    // Every `.empty-state` rule in the sheet, base and overrides alike. The
+    // reservation belongs in the base rule — it is not a narrow-window problem,
+    // a short window puts the first row under the wordmark at any width — and
+    // no override may quietly shorten it again.
+    const rules = [...css.matchAll(/\.empty-state\s*\{([^}]*)\}/g)].map((m) => m[1]);
+    assert.ok(rules.length, "no .empty-state rule at all");
+    assert.match(rules[0], /padding:\s*calc\(var\(--header-h\)/, "the base .empty-state must reserve the header's height");
+    for (const body of rules.slice(1)) {
+      const pad = /padding(-top)?:\s*([^;]+);/.exec(body);
+      if (!pad) continue;
+      assert.match(pad[2], /calc\(var\(--header-h\)/, `an .empty-state override drops the header reservation: ${pad[0]}`);
+    }
+  });
+
+  check("the empty state keeps its gallery down to a phone", () => {
+    // The gallery is the only thing on a first-run screen that shows what a
+    // surface *is*. It used to be deleted outright the moment the layout went
+    // to one column, leaving a headline on a blank page — which is what the
+    // user reported. It may only go when there is genuinely no room.
+    const css = fs.readFileSync(path.join(REPO_ROOT, "client", "style.css"), "utf8");
+    const hides = [...css.matchAll(/@media ([^{]+)\{[^@]*?\.empty-portal\s*\{[^}]*display:\s*none/g)];
+    assert.ok(hides.length, "nothing hides .empty-portal — expected a small-screen guard");
+    for (const hit of hides) {
+      const query = hit[1];
+      const widths = [...query.matchAll(/max-width:\s*(\d+)px/g)].map((m) => Number(m[1]));
+      const shortOnly = /max-height/.test(query);
+      assert.ok(
+        shortOnly || widths.every((w) => w <= 620),
+        `.empty-portal is hidden too eagerly, at "${query.trim()}"`,
       );
     }
   });

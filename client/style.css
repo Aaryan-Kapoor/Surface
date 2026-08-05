@@ -1038,7 +1038,10 @@ input.card-title::selection {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 56px clamp(28px, 6vw, 88px);
+  /* `inset: 0` spans the strip the sticky header sits on, so a plain 56px top
+     pushes the first row under the wordmark on a short window. Reserve the
+     header instead of centring through it. */
+  padding: calc(var(--header-h) + 18px) clamp(28px, 6vw, 88px) 46px;
   gap: clamp(32px, 6vw, 88px);
   text-align: left;
   background: var(--bg);
@@ -1170,7 +1173,12 @@ input.card-title::selection {
 .empty-portal {
   display: block;
   flex-shrink: 0;
-  height: 86vh;
+  /* Stretch to the content box rather than to a slice of the viewport: 86vh
+     plus the state's own vertical padding is taller than the window at every
+     height, so the last card's caption was always cut off below the fold. */
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
   max-height: 900px;
   width: clamp(340px, 44vw, 620px);
   -webkit-tap-highlight-color: transparent;
@@ -2001,20 +2009,44 @@ iframe.surface-frame.is-loaded { opacity: 1; }
 
 /* ══ Responsive ══ */
 
-@media (max-width: 1100px) {
+/* Two columns for as long as both columns can breathe. Below that the gallery
+   goes under the copy rather than away: it is the only thing on this screen
+   that shows what a surface actually looks like, and a first-run page that
+   deletes its own illustration is a page with nothing on it. */
+@media (max-width: 940px) {
   :root { --gutter: 28px; --card-min: 215px; }
-  /* The empty state is `inset: 0` inside .grid-view, so it spans the full
-     height *including* the strip the sticky header occupies. Centred on the
-     full height, its first element — the "Surface is listening" pill — was
-     printed under the header: 4px lost at this width and 22px on a phone.
-     Reserve the header's height instead of centring through it. */
   .empty-state {
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
-    padding-top: calc(var(--header-h) + 32px);
+    gap: 26px;
   }
-  .empty-portal, .portal-scrollbar { display: none; }
+  /* `flex: 1` on the text was harmless in a row and wrong in a column: the
+     block grew to eat the whole height, so the copy sat pinned to the top of a
+     tall empty box and `justify-content: center` had nothing left to centre.
+     That is the "text pushed to the top with a blank page under it". */
+  .empty-text { flex: 0 0 auto; }
+  .empty-portal {
+    align-self: stretch;
+    width: 100%;
+    /* Narrower than the column it sits in, because the band is now short: a
+       full-width frame is 16:10 and taller than the space left, which crops
+       every caption out of the strip. Smaller card, whole card. */
+    max-width: 440px;
+    /* Takes what is left after the copy, and no more. When the window is too
+       short to give it a usable band it collapses instead of showing a sliver. */
+    flex: 1 1 auto;
+    max-height: 44vh;
+  }
+  /* The rail hangs 14px outside the portal — fine beside a column, off the
+     edge of the screen once the portal is the full width. */
+  .portal-scrollbar { display: none; }
+}
+
+/* Under either of these there is no honest room for a 16:10 frame plus its
+   caption, and half a demo card reads as a rendering fault. */
+@media (max-width: 620px), (max-height: 560px) and (max-width: 940px) {
+  .empty-portal { display: none; }
 }
 
 @media (max-width: 760px) {
