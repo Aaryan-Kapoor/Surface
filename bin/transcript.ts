@@ -1,26 +1,24 @@
 // Timestamped captions for a YouTube video.
 //
 // The `video` surface reports *which video and which second*. This is the other
-// half — turning that second into the words that were said — and it exists as a
-// built-in because the alternative was telling every agent to install `yt-dlp`,
-// which most machines (including a fresh Surface install) do not have.
+// half — turning that second into the words that were said. It is built in, and
+// it has no dependencies, for the same reason: making someone install a separate
+// downloader before their agent can answer a question about a video is more
+// setup than the feature is worth.
 //
 // It fetches through InnerTube's player endpoint rather than the watch page.
 // That is not a stylistic choice: the caption URL scraped out of the watch page
 // is signed in a way that now returns **HTTP 200 with a zero-byte body**, which
 // is the worst possible failure — an agent that checks the status code believes
 // it succeeded and then answers from nothing. The mobile client contexts still
-// hand back a URL that serves. The web ones do not (they answer UNPLAYABLE),
-// so the client list here is load-bearing, not incidental.
+// hand back a URL that serves. The web ones do not (they answer UNPLAYABLE or
+// LOGIN_REQUIRED), so the client list here is load-bearing, not incidental.
 //
-// This is a moving target: YouTube closes these routes one at a time, which is
-// why `yt-dlp` exists and updates constantly. Hence the fallback, and hence the
-// rule that this module never reports success without lines to show for it.
-
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+// This is a moving target — YouTube closes these routes one at a time. The rule
+// that keeps that survivable is below: this module never reports success
+// without lines to show for it, and never reports a reason it has not
+// established. When it does break it will say so, and someone will fix the
+// client list; it will not quietly start answering from nothing.
 
 export interface Cue { t: number; text: string }
 export interface TranscriptResult {
@@ -29,7 +27,6 @@ export interface TranscriptResult {
   generated: boolean;
   /** Set when YouTube machine-translated this from another language. */
   translated_from: string | null;
-  source: "innertube" | "yt-dlp";
   duration: number | null;
   cues: Cue[];
 }
@@ -200,51 +197,11 @@ async function viaInnerTube(videoId: string, lang: string): Promise<TranscriptRe
       language: translateTo || track.languageCode || lang,
       translated_from: translateTo ? (track.languageCode || null) : null,
       generated: track.kind === "asr",
-      source: "innertube",
       duration: Number.isFinite(seconds) && seconds > 0 ? seconds : null,
       cues,
     };
   }
   return null;
-}
-
-function haveYtDlp(): boolean {
-  try {
-    execFileSync("yt-dlp", ["--version"], { stdio: "ignore", timeout: 10_000 });
-    return true;
-  } catch { return false; }
-}
-
-function viaYtDlp(videoId: string, lang: string): TranscriptResult | null {
-  if (!haveYtDlp()) return null;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "surface-cc-"));
-  try {
-    execFileSync("yt-dlp", [
-      "--skip-download", "--no-warnings",
-      // Ask for both; yt-dlp prefers the human track when one exists.
-      "--write-subs", "--write-auto-subs",
-      "--sub-langs", lang, "--sub-format", "json3",
-      "-o", path.join(dir, "cc.%(ext)s"),
-      `https://www.youtube.com/watch?v=${videoId}`,
-    ], { stdio: "ignore", timeout: 120_000 });
-    const file = fs.readdirSync(dir).find((f) => f.endsWith(".json3"));
-    if (!file) return null;
-    const cues = parseJson3(fs.readFileSync(path.join(dir, file), "utf8"));
-    if (!cues.length) return null;
-    return {
-      video_id: videoId,
-      language: lang,
-      generated: true,
-      translated_from: null,
-      source: "yt-dlp",
-      duration: null,
-      cues,
-    };
-  } catch {
-    return null;
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 /**
@@ -257,13 +214,15 @@ function viaYtDlp(videoId: string, lang: string): TranscriptResult | null {
 export async function fetchTranscript(input: string, lang = "en"): Promise<TranscriptResult> {
   const videoId = videoIdOf(input);
   if (!videoId) throw new Error(`Not a YouTube URL or video id: ${input}`);
+  // Reset the why-we-failed state. It is module-level so the attempt loop can
+  // record without threading a result type through every step, which means a
+  // second call in the same process would otherwise inherit the first one's
+  // reason and report a language list belonging to another video.
+  lastBlock = "network";
+  offered = [];
 
   const direct = await viaInnerTube(videoId, lang);
   if (direct) return direct;
-
-  const blocked = lastBlock;
-  const fallback = viaYtDlp(videoId, lang);
-  if (fallback) return fallback;
 
   // Say the true reason. These lead to opposite next moves: wait and retry,
   // versus stop asking and tell the user this video has nothing to read.
@@ -280,7 +239,7 @@ export async function fetchTranscript(input: string, lang = "en"): Promise<Trans
       `probably been closed off; this needs a code change, not a retry.`,
     network: `Could not reach YouTube to fetch captions for ${videoId}.`,
   };
-  throw new Error(`${why[blocked]} Do not answer questions about the video without them.`);
+  throw new Error(`${why[lastBlock]} Do not answer questions about the video without them.`);
 }
 
 /** Stitch cues into readable blocks of roughly `seconds` each. */

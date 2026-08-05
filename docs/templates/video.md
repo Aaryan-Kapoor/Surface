@@ -100,14 +100,37 @@ measured rather than assumed:
    video: 1347 events in, 674 cues out, zero repeats. The same video's WebVTT
    parsed naively gives 2018 lines of which 1344 are repeats.
 
-**This is a moving target.** YouTube closes these routes one at a time — that is
-why `yt-dlp` exists and updates constantly. If `yt-dlp` is on `PATH` it is used
-as a fallback; if neither works the command exits non-zero with a message saying
-so. It will never print an empty transcript and call it success.
+**This is a moving target.** YouTube closes these routes one at a time, and when
+this one closes the fix is the client list above. There is deliberately no
+external downloader to install as a fallback — that is more setup than the
+feature is worth, and it would mask the breakage rather than surface it.
 
-Human-authored subtitles are preferred over auto-generated ones where both exist.
-The header line says which you got: an auto-generated track has almost no
-punctuation and mangles proper nouns, so hedge direct quotes from one.
+What makes that survivable is that the command **cannot fail quietly**. It exits
+non-zero, and it distinguishes the reasons, because they lead to opposite next
+moves:
+
+| Reason | What it means |
+|---|---|
+| throttled (429) | temporary; retried once with backoff, then told to wait. **Not** "no captions" |
+| unplayable | private, age-gated, members-only or region-blocked |
+| no captions | none in that language and none translatable — the message names what the video does offer |
+| offered but empty | the fetch route has closed; needs a code change, not a retry |
+
+## Language and provenance
+
+Human-authored subtitles beat auto-generated ones where both exist. If the video
+has no track in the language you asked for, YouTube is asked to translate one it
+does have — preferring a human source, since machine-translating a machine
+transcription is two lossy steps.
+
+The header line always says what you got:
+
+```
+# jNQXAC9IVRw · es (machine-translated from en) · 0:19
+```
+
+Hedge direct quotes from an auto-generated or translated track: they have almost
+no punctuation and mangle proper nouns.
 
 ## Template contract
 
