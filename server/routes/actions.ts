@@ -13,7 +13,7 @@ import {
   getUnresolvedActionCount,
 } from "../actionsStore.js";
 import { getArtifact } from "../artifacts.js";
-import { patchState } from "../state.js";
+import { appendToStateList, patchState } from "../state.js";
 import { broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
 import { createBinding, deleteBinding, listBindings, projectAllowsBindings, scheduleDelivery, setBindingEnabled } from "../bindings.js";
 import { resolveMatchingNotifications, unreadCount } from "../notifications.js";
@@ -152,6 +152,37 @@ export function dispatchSurfaceAction(
         answer: act.action,
         unread: unreadCount(getDb()),
       });
+    }
+  }
+
+  // A video surface reports where the viewer was every time they do something.
+  // It cannot write its own state — the state route is system-plane only — so
+  // the playhead rides on the action and is folded in here. There is no
+  // heartbeat by design: a tick every second would be an inbox row every
+  // second, waking every waiter on the machine to say nothing happened.
+  if (artifact.template === "video") {
+    const payload = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+    const patch: Record<string, unknown> = {};
+    if (typeof payload.t === "number" && Number.isFinite(payload.t)) {
+      patch.playhead = {
+        t: payload.t,
+        duration: typeof payload.duration === "number" ? payload.duration : null,
+        playing: !!payload.playing,
+        at: new Date().toISOString(),
+      };
+    }
+    if (action === "ask" && typeof payload.text === "string" && payload.text.trim()) {
+      patch.thread = appendToStateList(getDb(), artifact.id, "thread", {
+        role: "user",
+        text: payload.text.trim(),
+        t: typeof payload.t === "number" ? payload.t : null,
+      });
+    }
+    if (Object.keys(patch).length) {
+      const result = patchState(getDb(), artifact.id, patch);
+      const event = { id: artifact.id, patch, state_version: result.state_version };
+      broadcastGlobal("state_patch", event);
+      broadcastToSurface(artifact.id, "state_patch", event);
     }
   }
 

@@ -26,6 +26,7 @@ A live display the user *acts on*, not a chat transcript or file viewer — **tw
 | `ask <question>` | Ask the user — `--options a,b` pick-one, `--freetext` typed answer, `--wait` blocks; `--on <device>` targets one screen (else everywhere). Attach context, don't ask blind. |
 | `append <id>` | Append to a running `stream` surface (pipe with `-`). |
 | `video` · `doc` · `present` | YouTube/web video · repo markdown (`--toc`, hot-reloads) · one-shot snapshot of a **local** PDF/image (web PDF → `/proxy/pdf`). |
+| `video`'s clock | A video surface knows where the viewer is. Questions typed under it arrive as `ask` with `{text, t, duration, video_id}` — `t` is the second they were on — and `state.playhead` keeps the last reading. Answer with `patch '{"reply":"…"}'` (appended as a turn, never clobbers a concurrent answer), pin clickable moments with `markers: [{t,label}]`, or take them there with `seek_to: {t, nonce}`. **You** fetch the transcript; the surface only tells you *which video and which second*. |
 | `link <abs-path>` | Serve a project file live from disk; `touch <id>` after each edit — your hot-reload target. |
 | `set` · `patch` · `state` | Live state — change a value without rewriting HTML (see the two-way loop). |
 | `list` · `read` · `update` · `versions` · `rollback` · `delete` | Artifact lifecycle. `update` revises a card; `rollback <ver>` restores an earlier version (don't re-type old values); `delete` removes one. |

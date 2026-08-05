@@ -11,9 +11,188 @@
   header { min-height: 46px; display: flex; align-items: center; padding: 0 16px; border-bottom: 1px solid rgba(255,255,255,.1); background: rgba(0,0,0,.76); }
   header:empty { display: none; }
   h1 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 750; letter-spacing: 0; }
-  main { flex: 1; min-height: 0; display: grid; place-items: center; background: #000; }
-  iframe { width: 100%; height: 100%; border: 0; background: #000; }
+
+  /* The player keeps the room. Everything below it is sized by its own
+     content, so a video with no conversation under it looks exactly like a
+     video, and the panel grows only once there is something to show. */
+  main { flex: 1; min-height: 0; display: grid; place-items: center; background: #000; position: relative; }
+  iframe.player, video.player { width: 100%; height: 100%; border: 0; background: #000; display: block; }
+  video.player { object-fit: contain; }
   .error { max-width: 58ch; padding: 24px; color: rgba(244,244,241,.72); line-height: 1.5; }
+
+  .below { flex: none; display: flex; flex-direction: column; }
+  .note {
+    padding: 10px 16px 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: rgba(244,244,241,.62);
+  }
+  .note:empty { display: none; }
+
+  /* ── Markers ── */
+  .markers {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .markers::-webkit-scrollbar { display: none; }
+  .markers:empty { display: none; }
+  .marker {
+    flex: none;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    font: inherit;
+    font-size: 12.5px;
+    color: rgba(244,244,241,.8);
+    background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 999px;
+    padding: 6px 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background .15s ease, border-color .15s ease;
+  }
+  .marker:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.26); }
+  .marker:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .marker .at {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    color: rgba(244,244,241,.5);
+  }
+
+  /* ── Thread ── */
+  .thread {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px 0;
+    max-height: 34vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .thread:empty { display: none; }
+  .turn { display: flex; flex-direction: column; gap: 3px; max-width: 74ch; }
+  .turn.user { align-self: flex-end; align-items: flex-end; text-align: right; }
+  .turn-meta {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: rgba(244,244,241,.38);
+  }
+  .turn-meta .stamp { cursor: pointer; text-decoration: underline dotted rgba(244,244,241,.3); }
+  .turn-meta .stamp:hover { color: rgba(244,244,241,.8); }
+  .turn-text {
+    font-size: 14px;
+    line-height: 1.5;
+    color: rgba(244,244,241,.94);
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.09);
+    border-radius: 12px;
+    padding: 9px 13px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .turn.user .turn-text { background: rgba(255,255,255,.11); border-color: rgba(255,255,255,.16); }
+  .turn.pending .turn-text { opacity: .55; }
+
+  .thinking {
+    display: none;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 16px 0;
+    font-size: 12.5px;
+    color: rgba(244,244,241,.44);
+  }
+  .thinking[data-on="1"] { display: flex; }
+  .thinking i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor;
+    animation: blip 1.2s ease-in-out infinite;
+  }
+  .thinking i:nth-child(2) { animation-delay: .16s; }
+  .thinking i:nth-child(3) { animation-delay: .32s; }
+  @keyframes blip { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+
+  /* ── Ask bar ── */
+  .ask {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .ask[hidden] { display: none; }
+  .ask-field {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.13);
+    border-radius: 999px;
+    padding: 0 6px 0 16px;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .ask-field:focus-within { border-color: rgba(255,255,255,.34); background: rgba(255,255,255,.08); }
+  .ask input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 14px;
+    color: #f4f4f1;
+    background: none;
+    border: 0;
+    padding: 12px 0;
+  }
+  .ask input:focus { outline: none; }
+  .ask input::placeholder { color: rgba(244,244,241,.36); }
+  /* The timestamp is the whole point of asking here rather than in a terminal,
+     so it is visible before you send, not attached silently afterwards. */
+  .ask-at {
+    flex: none;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    color: rgba(244,244,241,.44);
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.06);
+  }
+  .ask-at[hidden] { display: none; }
+  .ask-send {
+    flex: none;
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: #0a0a0a;
+    background: #fff;
+    border: 0;
+    border-radius: 999px;
+    padding: 9px 18px;
+    cursor: pointer;
+  }
+  .ask-send:disabled { opacity: .35; cursor: default; }
+  .ask-send:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+  .escape {
+    display: block;
+    padding: 0 16px 12px;
+    text-align: center;
+    font-size: 12.5px;
+    color: rgba(255,255,255,.45);
+    text-decoration: none;
+  }
+  .escape:hover { color: rgba(255,255,255,.85); text-decoration: underline; }
+
+  @media (prefers-color-scheme: light) {
+    .escape { color: rgba(11,12,14,.5); }
+    .escape:hover { color: rgba(11,12,14,.9); }
+  }
+  @media (max-width: 620px) {
+    .thread { max-height: 30vh; }
+    .ask-send { padding: 9px 14px; }
+  }
 
   /* ── Tour rail ──
      Present only while this surface is a step in the guided tour. It is the
@@ -47,34 +226,35 @@
   .tour-next:disabled { opacity: .4; cursor: default; }
   .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
   @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
-  /* The rail floats over the bottom-right corner, which is exactly where a
-     demo puts its own primary action — it was swallowing the clicks on Send.
-     A page that is a tour step yields that corner. */
-  html[data-tour="1"] footer { padding-right: 208px; }
+  /* The rail floats over the bottom-right corner, which is where the ask bar's
+     Send button sits — it was swallowing the clicks. A page that is a tour step
+     yields that corner. */
+  html[data-tour="1"] .ask { padding-right: 208px; }
   @media (max-width: 620px) {
-    html[data-tour="1"] footer { padding-right: 0; padding-bottom: 66px; }
-  }
-  .escape {
-    display: block;
-    padding: 10px 4px 14px;
-    text-align: center;
-    font-size: 12.5px;
-    color: rgba(255,255,255,.45);
-    text-decoration: none;
-  }
-  .escape:hover { color: rgba(255,255,255,.85); text-decoration: underline; }
-  @media (prefers-color-scheme: light) {
-    .escape { color: rgba(11,12,14,.5); }
-    .escape:hover { color: rgba(11,12,14,.9); }
+    html[data-tour="1"] .ask { padding-right: 16px; padding-bottom: 66px; }
   }
 </style>
 </head>
 <body>
 <header><h1>{{title}}</h1></header>
 <main id="player"></main>
+<div class="below">
+  <div class="note" id="note"></div>
+  <div class="markers" id="markers"></div>
+  <div class="thread" id="thread"></div>
+  <div class="thinking" id="thinking"><i></i><i></i><i></i><span>Asking your agent…</span></div>
+  <form class="ask" id="ask" hidden>
+    <label class="ask-field">
+      <input id="ask-input" type="text" autocomplete="off" placeholder="{{placeholder}}" aria-label="Ask about this video">
+      <span class="ask-at" id="ask-at" hidden></span>
+    </label>
+    <button class="ask-send" id="ask-send" type="submit" disabled>Ask</button>
+  </form>
+</div>
+
 <script>
+(function () {
   const params = window.__TEMPLATE_PARAMS || {};
-  const player = document.getElementById("player");
 
   function youtubeId(url) {
     const u = new URL(url);
@@ -87,9 +267,38 @@
     return null;
   }
 
+  // A share link people copy is usually already timestamped — "&t=195", or
+  // "?start=195" from an embed URL. Honour it, so pasting the link someone
+  // sent you plays from where they meant rather than from the top. An explicit
+  // `start` param still wins: the caller is more specific than the URL.
+  function startFromUrl(raw) {
+    try {
+      const u = new URL(raw);
+      const t = u.searchParams.get("t") ?? u.searchParams.get("start");
+      if (t == null) return 0;
+      // YouTube also writes "1h2m3s" in `t`.
+      const clock = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/.exec(t.trim());
+      if (clock && (clock[1] || clock[2] || clock[3])) {
+        return Number(clock[1] || 0) * 3600 + Number(clock[2] || 0) * 60 + Number(clock[3] || 0);
+      }
+      const n = parseInt(t, 10);
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  function isDirectMedia(raw) {
+    try {
+      return /\.(mp4|webm|ogv|ogg|m4v|mov)(\?|#|$)/i.test(new URL(raw).pathname);
+    } catch (err) {
+      return false;
+    }
+  }
+
   function buildSrc(raw) {
     const id = youtubeId(raw);
-    const start = Math.max(0, Number(params.start || 0) || 0);
+    const start = Math.max(0, Number(params.start || 0) || 0) || startFromUrl(raw);
     const autoplay = !!params.autoplay;
     const loop = !!params.loop;
     if (id) {
@@ -97,6 +306,11 @@
       q.set("rel", "0");
       q.set("modestbranding", "1");
       q.set("playsinline", "1");
+      // The player only talks back — current time, duration, play state — when
+      // the JS API is switched on. Without it there is no playhead to report
+      // and no way to seek, which is most of what this surface is for.
+      q.set("enablejsapi", "1");
+      q.set("origin", location.origin);
       if (start) q.set("start", String(start));
       if (autoplay) { q.set("autoplay", "1"); q.set("mute", "1"); }
       if (loop) { q.set("loop", "1"); q.set("playlist", id); }
@@ -105,34 +319,282 @@
     return raw;
   }
 
-  try {
-    const raw = String(params.url || "");
-    const src = buildSrc(raw);
-    const iframe = document.createElement("iframe");
-    iframe.src = src;
-    iframe.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
-    iframe.allowFullscreen = true;
-    player.appendChild(iframe);
+  // ── The playhead ──
+  //
+  // Three kinds of source, one clock. `t` stays null when the source cannot be
+  // read — an arbitrary embedded page is opaque to us, and reporting "second 0"
+  // for it would be a lie the agent then acts on.
+  const clock = { t: null, duration: null, playing: false };
+  let seekFn = null;
+  let videoId = null;
+  let host = null;
+  let raw = "";
 
-    // A refused embed is a cross-origin document: we cannot see that YouTube
-    // decided not to play, so we cannot swap in a fallback. What we can do is
-    // never leave the dead end without an exit — the original link is always
-    // one click away, under the player rather than instead of it.
-    if (youtubeId(raw)) {
-      const out = document.createElement("a");
-      out.className = "escape";
-      out.href = raw;
-      out.target = "_blank";
-      out.rel = "noopener noreferrer";
-      out.textContent = "Won't play here? Watch it on YouTube \u2197";
-      player.parentNode.appendChild(out);
-    }
-  } catch (err) {
-    const div = document.createElement("div");
-    div.className = "error";
-    div.textContent = "Could not render video: " + err.message;
-    player.appendChild(div);
+  function makeYouTube(src) {
+    const frame = document.createElement("iframe");
+    frame.className = "player";
+    frame.src = src;
+    frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    frame.allowFullscreen = true;
+    host.appendChild(frame);
+
+    const post = (msg) => {
+      try { frame.contentWindow.postMessage(JSON.stringify(msg), "*"); } catch (err) { /* not ready yet */ }
+    };
+    // Subscribing is the whole handshake: once the player is listening it
+    // pushes `infoDelivery` frames as time moves, so nothing here polls.
+    const subscribe = () => post({ event: "listening", id: 1, channel: "surface" });
+    frame.addEventListener("load", () => {
+      subscribe();
+      // The first listen can land before the player's own script is up; a
+      // couple of retries costs nothing and saves a dead playhead.
+      setTimeout(subscribe, 400);
+      setTimeout(subscribe, 1400);
+    });
+
+    window.addEventListener("message", (e) => {
+      if (!/^https:\/\/(www\.)?youtube(-nocookie)?\.com$/.test(e.origin)) return;
+      let msg = e.data;
+      if (typeof msg === "string") { try { msg = JSON.parse(msg); } catch (err) { return; } }
+      if (!msg || typeof msg !== "object") return;
+      const info = msg.info || {};
+      if (typeof info.currentTime === "number") clock.t = info.currentTime;
+      if (typeof info.duration === "number" && info.duration > 0) clock.duration = info.duration;
+      // 1 is playing, 0 is ended, everything else is not playing.
+      if (typeof info.playerState === "number") {
+        clock.playing = info.playerState === 1;
+        if (info.playerState === 0) send("ended", {});
+      }
+      paintAt();
+    });
+
+    seekFn = (t) => {
+      post({ event: "command", func: "seekTo", args: [t, true] });
+      post({ event: "command", func: "playVideo", args: [] });
+    };
   }
+
+  function makeMedia(src) {
+    const el = document.createElement("video");
+    el.className = "player";
+    el.src = src;
+    el.controls = true;
+    el.playsInline = true;
+    if (params.autoplay) { el.muted = true; el.autoplay = true; }
+    if (params.loop) el.loop = true;
+    const start = Math.max(0, Number(params.start || 0) || 0) || startFromUrl(src);
+    if (start) el.addEventListener("loadedmetadata", () => { el.currentTime = start; }, { once: true });
+    el.addEventListener("timeupdate", () => {
+      clock.t = el.currentTime;
+      clock.duration = isFinite(el.duration) ? el.duration : null;
+      paintAt();
+    });
+    el.addEventListener("play", () => { clock.playing = true; });
+    el.addEventListener("pause", () => { clock.playing = false; });
+    el.addEventListener("ended", () => { clock.playing = false; send("ended", {}); });
+    host.appendChild(el);
+    seekFn = (t) => { el.currentTime = t; el.play().catch(() => {}); };
+  }
+
+  function makeOpaque(src) {
+    const frame = document.createElement("iframe");
+    frame.className = "player";
+    frame.src = src;
+    frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    frame.allowFullscreen = true;
+    host.appendChild(frame);
+  }
+
+  // ── Ask bar and thread ──
+  //
+  // Everything below runs at DOMContentLoaded, not at parse time: the server
+  // injects /surface.js immediately before </body>, so `window.Surface` does
+  // not exist yet while this script is being parsed. Reading it early captures
+  // a no-op and the surface silently never receives state.
+  let Surface = null;
+  let askForm = null, askInput = null, askSend = null, askAt = null;
+  let threadEl = null, markersEl = null, noteEl = null, thinkingEl = null;
+
+  function clockText(t) {
+    if (t == null || !isFinite(t)) return "";
+    const s = Math.max(0, Math.floor(t));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const two = (n) => (n < 10 ? "0" + n : String(n));
+    return h ? h + ":" + two(m) + ":" + two(sec) : m + ":" + two(sec);
+  }
+
+  function paintAt() {
+    if (!askAt) return;
+    const label = clockText(clock.t);
+    askAt.textContent = label ? "at " + label : "";
+    askAt.hidden = !label;
+  }
+
+  function send(action, data) {
+    if (!Surface) return;
+    return Surface.action(action, Object.assign({
+      t: clock.t,
+      duration: clock.duration,
+      playing: clock.playing,
+      video_id: videoId,
+      url: raw,
+    }, data));
+  }
+
+  let pending = null;
+
+  function turnEl(turn, isPending) {
+    const wrap = document.createElement("div");
+    wrap.className = "turn " + (turn.role === "user" ? "user" : "agent") + (isPending ? " pending" : "");
+    const meta = document.createElement("div");
+    meta.className = "turn-meta";
+    meta.appendChild(document.createTextNode(turn.role === "user" ? "you" : "agent"));
+    const label = clockText(turn.t);
+    if (label) {
+      meta.appendChild(document.createTextNode(" · "));
+      const stamp = document.createElement("span");
+      stamp.className = "stamp";
+      stamp.textContent = label;
+      stamp.title = "Jump here";
+      stamp.addEventListener("click", () => jump(turn.t, "thread"));
+      meta.appendChild(stamp);
+    }
+    wrap.appendChild(meta);
+    const body = document.createElement("div");
+    body.className = "turn-text";
+    body.textContent = String(turn.text == null ? "" : turn.text);
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function jump(t, from) {
+    if (t == null || !isFinite(t)) return;
+    if (seekFn) seekFn(t);
+    clock.t = t;
+    paintAt();
+    send("seek", { to: t, from: from });
+  }
+
+  let lastSeekNonce = null;
+
+  function render() {
+    if (!threadEl) return;
+    const st = (Surface && Surface.state) || {};
+    const thread = Array.isArray(st.thread) ? st.thread : [];
+
+    noteEl.textContent = String(st.note || "");
+
+    // A question the server has taken is no longer pending locally.
+    if (pending && thread.some((x) => x && x.role === "user" && x.text === pending.text)) pending = null;
+    // Stop the dots once the agent has said something after the last question.
+    const last = thread[thread.length - 1];
+    if (last && last.role === "agent") thinkingEl.removeAttribute("data-on");
+
+    const atBottom = threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < 40;
+    threadEl.innerHTML = "";
+    thread.forEach((turn) => { if (turn && typeof turn === "object") threadEl.appendChild(turnEl(turn, false)); });
+    if (pending) threadEl.appendChild(turnEl({ role: "user", text: pending.text, t: pending.t }, true));
+    if (atBottom) threadEl.scrollTop = threadEl.scrollHeight;
+
+    markersEl.innerHTML = "";
+    const markers = Array.isArray(st.markers) ? st.markers : [];
+    markers.forEach((m) => {
+      if (!m || typeof m !== "object") return;
+      const b = document.createElement("button");
+      b.className = "marker";
+      b.type = "button";
+      const at = document.createElement("span");
+      at.className = "at";
+      at.textContent = clockText(Number(m.t));
+      b.appendChild(at);
+      b.appendChild(document.createTextNode(String(m.label == null ? "" : m.label)));
+      b.addEventListener("click", () => jump(Number(m.t), "marker"));
+      markersEl.appendChild(b);
+    });
+
+    // The agent driving the playhead: a nonce rather than a bare number, so
+    // sending the same timestamp twice actually jumps twice.
+    const seek = st.seek_to;
+    if (seek && typeof seek === "object" && isFinite(Number(seek.t))) {
+      const nonce = seek.nonce == null ? String(seek.t) : String(seek.nonce);
+      if (nonce !== lastSeekNonce) {
+        lastSeekNonce = nonce;
+        if (seekFn) seekFn(Number(seek.t));
+      }
+    }
+  }
+
+  function init() {
+    Surface = window.Surface || {
+      state: {},
+      onState: function () { return function () {}; },
+      action: function () { return Promise.resolve(); },
+    };
+    host = document.getElementById("player");
+    askForm = document.getElementById("ask");
+    askInput = document.getElementById("ask-input");
+    askSend = document.getElementById("ask-send");
+    askAt = document.getElementById("ask-at");
+    threadEl = document.getElementById("thread");
+    markersEl = document.getElementById("markers");
+    noteEl = document.getElementById("note");
+    thinkingEl = document.getElementById("thinking");
+
+    raw = String(params.url || "");
+    try {
+      const src = buildSrc(raw);
+      videoId = youtubeId(raw);
+      if (videoId) makeYouTube(src);
+      else if (isDirectMedia(raw)) makeMedia(src);
+      else makeOpaque(src);
+
+      // A refused embed is a cross-origin document: we cannot see that YouTube
+      // decided not to play, so we cannot swap in a fallback. What we can do is
+      // never leave the dead end without an exit — the original link is always
+      // one click away, under the player rather than instead of it.
+      if (videoId) {
+        const out = document.createElement("a");
+        out.className = "escape";
+        out.href = raw;
+        out.target = "_blank";
+        out.rel = "noopener noreferrer";
+        out.textContent = "Won't play here? Watch it on YouTube ↗";
+        document.querySelector(".below").appendChild(out);
+      }
+    } catch (err) {
+      const div = document.createElement("div");
+      div.className = "error";
+      div.textContent = "Could not render video: " + err.message;
+      if (host) host.appendChild(div);
+    }
+
+    if (params.chat !== false) askForm.hidden = false;
+    askInput.addEventListener("input", () => { askSend.disabled = !askInput.value.trim(); });
+    askForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = askInput.value.trim();
+      if (!text) return;
+      askInput.value = "";
+      askSend.disabled = true;
+      // Show the question straight away with the timestamp it was asked at. The
+      // server echoes it back into the thread and this row is replaced when it
+      // does, so a slow round trip never looks like the question was dropped.
+      pending = { text: text, t: clock.t };
+      thinkingEl.setAttribute("data-on", "1");
+      render();
+      send("ask", { text: text });
+    });
+
+    Surface.onState(function () { render(); });
+    render();
+    paintAt();
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+})();
 </script>
   <div class="tour-rail" id="tour-rail">
     <span class="tour-step" id="tour-step"></span>

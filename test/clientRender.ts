@@ -739,6 +739,34 @@ try {
     }
   });
 
+  check("a timestamped video link plays from its timestamp", () => {
+    // The link a person copies out of YouTube carries "&t=195", and the tour
+    // now ships one. The template only ever read its own `start` param, so a
+    // pasted timestamp was silently dropped and the video began at zero.
+    // Run the template's own two functions rather than grepping for them.
+    const tpl = fs.readFileSync(path.join(REPO_ROOT, "templates", "video", "index.html"), "utf8");
+    const from = tpl.indexOf("function youtubeId(");
+    const to = tpl.indexOf("// ── The playhead", from);
+    assert.ok(from > -1 && to > from, "could not find the video template's URL code");
+    const src = (params: Record<string, unknown>) =>
+      new Function("params", "URL", "URLSearchParams", "location", `${tpl.slice(from, to)} return buildSrc(String(params.url));`)(
+        params, URL, URLSearchParams, { origin: "http://127.0.0.1:3000" },
+      ) as string;
+
+    assert.match(src({ url: "https://youtu.be/DWcqbPm_Rn4?si=abc&t=195" }), /[?&]start=195(&|$)/,
+      "a share link's &t= must reach the embed");
+    assert.match(src({ url: "https://www.youtube.com/watch?v=DWcqbPm_Rn4&t=1h2m3s" }), /[?&]start=3723(&|$)/,
+      "YouTube's clock form must be read as seconds");
+    // The caller is more specific than the URL, so an explicit param wins.
+    assert.match(src({ url: "https://youtu.be/DWcqbPm_Rn4?t=195", start: 40 }), /[?&]start=40(&|$)/,
+      "an explicit start param must beat the URL's");
+    assert.doesNotMatch(src({ url: "https://youtu.be/DWcqbPm_Rn4" }), /start=/,
+      "a plain link must not gain a start offset");
+    // A non-YouTube URL is handed to the iframe untouched — no rewriting a URL
+    // whose query string we do not own.
+    assert.equal(src({ url: "https://example.com/clip.mp4?t=195" }), "https://example.com/clip.mp4?t=195");
+  });
+
   check("the empty state shares the header's stacking context instead of covering it", () => {
     // .grid-view is `position: relative; z-index: 1`, i.e. a stacking context.
     // While the empty state lived outside it, the header's z-index:20 could not

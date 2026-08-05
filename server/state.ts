@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
 
 // One JSON state document per surface (docs/state/stateful-surfaces.md).
 // Values live here — never in the repo. Definitions (which keys exist,
@@ -77,6 +78,32 @@ export function patchState(
   });
   tx();
   return getState(db, artifactId);
+}
+
+// The tail of a conversation kept in state. Long enough that nobody scrolls
+// off the top of a session, short enough that a surface's state document stays
+// something you can read.
+const THREAD_LIMIT = 200;
+
+/**
+ * Read an array-valued state key and return it with one entry appended.
+ *
+ * `patchState` deep-merges, which means arrays *replace* — so appending is a
+ * read-modify-write, and doing it in the caller invites two of them racing. It
+ * lives here, next to the store, and the caller passes the result straight back
+ * into the same patch.
+ */
+export function appendToStateList(
+  db: Database.Database,
+  artifactId: string,
+  key: string,
+  entry: Record<string, unknown>,
+  limit = THREAD_LIMIT,
+): Array<Record<string, unknown>> {
+  const current = getState(db, artifactId).state[key];
+  const list = Array.isArray(current) ? (current as Array<Record<string, unknown>>) : [];
+  const next = [...list, { id: randomUUID(), at: new Date().toISOString(), ...entry }];
+  return next.length > limit ? next.slice(next.length - limit) : next;
 }
 
 // Replace the whole document (used by surface sync applying manifest defaults

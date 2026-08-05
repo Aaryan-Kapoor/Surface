@@ -345,16 +345,17 @@ markup — offer that, do not pretend.
 
 ---
 
-## Step 7 — Something to watch
+## Step 7 — Something to watch, that you can talk about
 
-**Agent says:** "And it plays video. This one's for you."
+**Agent says:** "And it plays video — but watch the bar under it. Ask me
+something while it's running and I'll know the second you asked at."
 
 **Agent runs:**
 
 ```bash
 V=$(surface create "For you" --template video --agent tour \
   --metadata '{"demo":true}' \
-  --param url="https://www.youtube.com/watch?v=dQw4w9WgXcQ" \
+  --param url="https://youtu.be/DWcqbPm_Rn4?t=195" \
   --param autoplay=true --param loop=false \
   --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="video" \
   | grep -oE '[0-9a-f-]{36}' | head -1)
@@ -363,7 +364,31 @@ surface open $V --on <device>
 
 Autoplay is muted — browsers require it — so say so:
 
-**Agent says:** "It's muted. Browsers insist. Unmute it, you'll know it."
+**Agent says:** "It's muted. Browsers insist."
+
+An `ask` action carries `{ text, t, duration, video_id }`: `t` is the second
+they were on. **Answer in the surface, not the terminal** — that is the whole
+point of the step:
+
+```bash
+surface patch $V '{"reply":"<your answer>"}'
+```
+
+You know the video id and the second. Fetch the transcript however you normally
+would and answer from the passage at that timestamp — the surface tells you
+*where*, finding out *what* is your job. If you can't get a transcript, say so
+in the reply rather than bluffing.
+
+Two things worth showing off once they've asked something:
+
+```bash
+# pin moments they can click
+surface patch $V '{"markers":[{"t":195,"label":"where you asked"},{"t":236,"label":"the payoff"}]}'
+# or just take them there
+surface patch $V '{"seek_to":{"t":236,"nonce":1}}'
+```
+
+Then hand off:
 
 ```bash
 surface notify "Last one. Next when you've had enough." --id $V --button "Next=next"
