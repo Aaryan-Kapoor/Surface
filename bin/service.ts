@@ -347,6 +347,8 @@ export interface HealthReport {
   port?: number;
   content_port?: number;
   content_plane_ok?: boolean;
+  /** The address a browser on another device should open. */
+  connection_string?: string | null;
   error?: string;
 }
 
@@ -404,6 +406,7 @@ export async function checkHealth(port: number, host = "127.0.0.1"): Promise<Hea
     port: body.port,
     content_port: body.content_port,
     content_plane_ok: contentOk,
+    connection_string: typeof body.connection_string === "string" ? body.connection_string : null,
     error: contentOk ? undefined : `content plane on :${body.content_port} not accepting connections`,
   };
 }
@@ -699,6 +702,13 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         `${wildcard && cfg.bind ? " (bound on all interfaces)" : ""}` +
         `  (content plane :${health.content_port})`,
       );
+      // The address to open from another device. Only the server can work this
+      // out, so print it here rather than leaving the caller to infer one — an
+      // agent asked for "the URL" read it off a network interface and handed
+      // back the container's internal address, which resolved nowhere.
+      if (health.connection_string) {
+        console.log(`  open from  : ${health.connection_string}`);
+      }
       console.log(`  version    : ${health.version}`);
       console.log(`  data       : ${cfg.dataDir}`);
       console.log(`  logs       : ${cfg.logFile}`);
@@ -749,6 +759,7 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         console.log(JSON.stringify({ ...health, cli_version: mine, skill_copy: skill.path, skill_copy_state: skill.state }, null, 2));
       } else if (health.ok) {
         console.log(`healthy: Surface ${health.version} on :${health.port} (content :${health.content_port}), pid ${health.pid}, up ${health.uptime_seconds}s`);
+        if (health.connection_string) console.log(`open from: ${health.connection_string}`);
       } else {
         console.error(`unhealthy: ${health.error} (${health.url})`);
       }

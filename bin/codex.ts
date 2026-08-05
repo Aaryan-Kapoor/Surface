@@ -278,7 +278,13 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     if (service) {
       console.log(`bridge:         ${service.connected ? `connected (codex ${service.daemon_version})` : "not connected yet (connects on first delivery)"}`);
       console.log(`deliveries:     ${service.deliveries_ok} ok, ${service.deliveries_failed} failed${service.last_error ? ` — last error: ${service.last_error}` : ""}`);
-      console.log(`sessions seen:  ${service.registered_sessions}`);
+      console.log(
+        `sessions seen:  ${service.registered_sessions}` +
+        (service.registered_sessions === 0 && local.hook_installed
+          ? "  — none registered yet. The hook only fires at session start, so a codex"
+            + "\n                started before setup is not covered: restart codex."
+          : ""),
+      );
     } else {
       console.log(`service:        unreachable (${serviceError})`);
     }
@@ -326,6 +332,18 @@ export async function runCodex(ctx: Ctx, call: CallFn): Promise<void> {
     console.log(hook.changed
       ? `SessionStart hook installed in ${hooksJsonPath()} — codex will ask you to trust it on its next start.`
       : "SessionStart hook already installed.");
+
+    // The hook fires at SessionStart, so the session that just ran setup is the
+    // one session it cannot cover. Nothing downstream fails loudly when that
+    // happens — clicks quietly take the inbox route instead of arriving as
+    // turns — so say it here, where it can still be acted on.
+    console.log([
+      "",
+      "→ Restart codex before relying on this. THIS session started before the hook",
+      "  existed, so it is not registered and its surfaces will not flow back live;",
+      "  their clicks wait in `surface actions` instead. `surface codex status` shows",
+      "  `sessions seen: 0` until a session started after now creates a surface.",
+    ].join("\n"));
 
     console.log([
       "",
