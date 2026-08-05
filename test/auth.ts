@@ -275,6 +275,20 @@ async function main() {
         sessionCookieFrom(rolled) === sessionCookie,
         { was: sessionCookie, now: sessionCookieFrom(rolled) },
       );
+
+      // The heartbeat is what an untouched wall display actually sends — its
+      // SSE stream is one long-lived response that never re-enters this
+      // middleware — so the roll has to happen on this route in particular.
+      backdateLastSeen(dataDir, bootSessionId);
+      const beat = await req("POST", "/display/presence", {
+        cookie: sessionCookie!,
+        body: { current_view: "grid", viewport_width: 1920, viewport_height: 1080 },
+      });
+      check(
+        "the presence heartbeat rolls the session it rides on",
+        /Max-Age=31536000\b/.test(beat.headers.get("set-cookie") || ""),
+        beat.headers.get("set-cookie"),
+      );
     }
 
     // ── Expired token ──

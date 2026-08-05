@@ -140,6 +140,28 @@ try {
     assert.equal(ttlOf(db, "bearer"), MONTH);
     assert.equal(ttlOf(db, "kiosk-short"), 3600);
   });
+
+  // ── Something has to make the request that rolls it ──
+  //
+  // Rolling expiry only helps a device that keeps asking for things. A wall
+  // display asks for nothing: the SSE stream is a single long-lived response
+  // that never re-enters the auth middleware, so without a heartbeat the one
+  // screen the year-long TTL exists for is the one screen it does not reach.
+  // The wire half of this is asserted in test/auth.ts; here we only insist the
+  // client still arms the timer.
+  const appJs = fs.readFileSync(
+    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "client", "app.js"),
+    "utf8",
+  );
+  check("the display heartbeats rather than going silent", () => {
+    assert.match(appJs, /setInterval\(reportPresence, PRESENCE_HEARTBEAT_MS\)/);
+  });
+  check("the heartbeat stays inside the presence staleness window", () => {
+    const ms = Number(appJs.match(/PRESENCE_HEARTBEAT_MS = ([\d_]+)/)?.[1].replace(/_/g, ""));
+    // PRESENCE_STALE_MS is 60s in server/presence.ts. A heartbeat at or above
+    // that window makes every live screen flicker to "stale" between beats.
+    assert.ok(ms > 0 && ms <= 30_000, `heartbeat is ${ms}ms`);
+  });
 } finally {
   db.close();
   try { fs.rmSync(dbPath, { force: true }); } catch {}
