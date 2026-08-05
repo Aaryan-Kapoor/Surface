@@ -4,12 +4,12 @@
   "params": {
     "heading": {
       "type": "string",
-      "default": "How do you want to try Surface?",
+      "default": "What should I show you first?",
       "description": "The headline"
     },
     "subhead": {
       "type": "string",
-      "default": "Pick one. Whatever you pick, I build it here and react to what you do in it.",
+      "default": "We go through all of them — this just picks where to start. I build each one here and react to what you do in it.",
       "description": "One line under the headline"
     },
     "options": {
