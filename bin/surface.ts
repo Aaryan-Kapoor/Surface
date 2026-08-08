@@ -1592,7 +1592,17 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
         process.exit(3);
       }
-      process.exit(0);
+      // Deliberately NOT process.exit(0).
+      //
+      // Exiting on top of a connection that is still tearing itself down is
+      // what made this command report 3221226505 (0xC0000409) on Windows after
+      // doing its job perfectly — Node fast-fails rather than unwinding, and
+      // every script that checks the exit status reads a crash. waitForAction
+      // has already aborted the stream, and the heartbeat timer is unref'd, so
+      // there is nothing left holding the loop open: returning here lets the
+      // process end by running out of work, which is the one exit that cannot
+      // race anything.
+      return;
     }
 
     case "pair": {
