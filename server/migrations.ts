@@ -15,7 +15,8 @@ interface Migration {
   up: (db: Database.Database) => void;
 }
 
-const migrations: Migration[] = [
+// Exported so tests can assert the ordering invariant the runner depends on.
+export const migrations: Migration[] = [
   {
     version: BASELINE_VERSION,
     description: "fresh artifact-first baseline",
@@ -305,9 +306,39 @@ const migrations: Migration[] = [
   },
 ];
 
+/**
+ * Apply every migration the database has not seen, oldest first.
+ *
+ * The sort is not tidiness. `user_version` only ever moves forward and a
+ * migration at or below it is skipped, so a single out-of-order entry is
+ * silently fatal: run 15, then 17, and 16 is now unreachable forever — no
+ * error, no log line, just a column or a backfill that never happened on every
+ * database that took that path. This is not hypothetical. Three branches were
+ * once in flight numbered 15, 16 and 17, and resolving the merge conflict
+ * between them the obvious way produced the array in the order 15, 17, 16.
+ *
+ * The array itself is authored in order and should stay that way — but the
+ * correctness of every future merge should not depend on whoever resolves it
+ * noticing. Sorting a copy here costs nothing and removes the hazard from the
+ * class of things a human has to get right.
+ */
 export function runMigrations(db: Database.Database): void {
-  const current = db.pragma("user_version", { simple: true }) as number;
+  // Two migrations claiming one number is an authoring mistake that sorting
+  // cannot fix — the second would still be skipped — so it fails loudly, in
+  // development, rather than quietly on a user's machine.
+  const seen = new Set<number>();
   for (const m of migrations) {
+    if (seen.has(m.version)) {
+      throw new Error(
+        `two migrations both claim version ${m.version} ("${m.description}") — ` +
+        `renumber one of them; the later would never run`,
+      );
+    }
+    seen.add(m.version);
+  }
+
+  const current = db.pragma("user_version", { simple: true }) as number;
+  for (const m of [...migrations].sort((a, b) => a.version - b.version)) {
     if (m.version <= current) continue;
     console.log(`[migrations] applying v${m.version}: ${m.description}`);
     db.transaction(() => {

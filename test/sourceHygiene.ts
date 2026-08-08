@@ -133,6 +133,35 @@ check(
   strays.join("; "),
 );
 
+// ── Migrations are numbered in order, and each number is claimed once ──
+//
+// `runMigrations` sorts defensively so a mis-ordered array cannot silently
+// strand a migration at runtime, but the array should still be authored in
+// order — a file that reads 15, 17, 16 is one a reviewer will "fix" back into
+// the broken shape. This is the check that fails in CI when a merge conflict
+// is resolved the obvious way instead of the correct one, which is exactly how
+// three in-flight branches numbered 15/16/17 nearly shipped with 16 unreachable.
+{
+  const { migrations } = await import("../server/migrations.js");
+  const versions = migrations.map((m) => m.version);
+
+  const outOfOrder = versions
+    .map((v, i) => (i > 0 && v <= versions[i - 1] ? `v${versions[i - 1]} is followed by v${v}` : null))
+    .filter(Boolean);
+  check(
+    "migrations are declared in ascending version order",
+    outOfOrder.length === 0,
+    outOfOrder.join("; "),
+  );
+
+  const dupes = versions.filter((v, i) => versions.indexOf(v) !== i);
+  check(
+    "no two migrations claim the same version",
+    dupes.length === 0,
+    `duplicated: ${[...new Set(dupes)].join(", ")}`,
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} source-hygiene check(s) failed`);
   process.exit(1);
