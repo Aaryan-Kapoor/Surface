@@ -8,7 +8,7 @@ import {
   DEFAULT_SYSTEM_SESSION_TTL_SECONDS,
   defaultTtlSeconds,
 } from "../server/auth.js";
-import { cleanupDir, tmpDir } from "./helpers.js";
+import { cleanupDir, REPO_ROOT, tmpDir } from "./helpers.js";
 
 // Session lifetime: the default TTLs, and the migration that carries devices
 // paired under the old thirty-day default onto the one-year one.
@@ -149,10 +149,9 @@ try {
   // screen the year-long TTL exists for is the one screen it does not reach.
   // The wire half of this is asserted in test/auth.ts; here we only insist the
   // client still arms the timer.
-  const appJs = fs.readFileSync(
-    path.join(path.dirname(new URL(import.meta.url).pathname), "..", "client", "app.js"),
-    "utf8",
-  );
+  // REPO_ROOT, not a path built from import.meta.url: on Windows that URL's
+  // `pathname` is `/D:/a/Surface/...`, and joining it produced `D:\D:\a\...`.
+  const appJs = fs.readFileSync(path.join(REPO_ROOT, "client", "app.js"), "utf8");
   check("the display heartbeats rather than going silent", () => {
     assert.match(appJs, /setInterval\(reportPresence, PRESENCE_HEARTBEAT_MS\)/);
   });
