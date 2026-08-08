@@ -138,6 +138,27 @@ Both install scripts take three sources: default = pack the local tree; `--tarba
   carry-over, #87) / 17 (`notifications`, #88) and **must merge to master in
   that order**. Landing #88 before #87 means no already-paired device ever
   moves onto the year-long TTL.
+  - Both merges conflict on `server/migrations.ts` and `CHANGELOG.md`.
+    **Resolving the array the obvious way yields the order 15, 17, 16** —
+    measured against the pre-guard runner, that applied 14, 15, 17 and skipped
+    16 outright. Move the v16 entry above v17; the CHANGELOG side keeps both
+    sections and says v16, not v15.
+  - Since 2026-08-08 that is belt *and* braces: `runMigrations` sorts a copy
+    before walking it (so a mis-ordered array can no longer strand anything at
+    runtime) and throws if two migrations claim one number (which sorting
+    cannot fix). `test/sourceHygiene.ts` asserts the array is authored in
+    ascending order with no duplicates, so a bad resolution fails CI. Verified
+    by resolving the real conflict the wrong way on purpose: the check reports
+    "v17 is followed by v16".
+  - A database that booted a *single* branch is stranded: a #87-only DB sits at
+    v16 with no `content_rev` and throws under merged code; a #88-only DB is at
+    v17 and never ran 16, so its devices keep the 30-day TTL. All three
+    migrations are idempotent, so `PRAGMA user_version = 14` before the first
+    merged boot repairs either — verified.
+  - The fully merged tree (86+87+88, resolved as above) passes all 23 suites,
+    and a fresh database migrates 10 → 17 with `content_rev` and
+    `notifications` both present. No CI job tests that combination; this is the
+    only place it has been run.
 - The lab containers (`~/surface-lab`) are the from-scratch install rig: two
   factory-fresh Debian machines with real systemd, one driven by Claude Code
   (ports 3200/3201) and one by Codex CLI (3300/3301). `/opt/surface-rc.tgz` is
