@@ -612,6 +612,22 @@ async function waitForAction(opts: {
   // retries instead of silently skipping work nobody took.
   const seen = new Set<string>();
 
+  // The stream is closed on the way out rather than left to the process exit.
+  // `wait` ends with process.exit(0) the moment it has an action, and on
+  // Windows tearing a live HTTP socket down inside that exit surfaced as
+  // 3221226505 (0xC0000409) — the command had already printed the right action
+  // and still reported a crash, which anything checking the exit status reads
+  // as failure. `stopped` is what makes the abort mean "we are done" rather
+  // than "the connection dropped", which the reconnect loop would otherwise
+  // answer by dialling straight back.
+  const conn = new AbortController();
+  let stopped = false;
+  const closeStream = () => {
+    stopped = true;
+    disarmUnregisteredWarning();
+    try { conn.abort(); } catch { /* already gone */ }
+  };
+
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   const normalizeData = (d: unknown) => {
@@ -753,14 +769,14 @@ async function waitForAction(opts: {
 
   const work = (async () => {
     let backoff = 1000;
-    while (true) {
+    while (!stopped) {
       // Always listen on the global stream — per-surface streams don't carry
       // surface_action events. Filtering happens in isMatch().
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
       let res: Response;
       try {
-        res = await fetch(streamUrl(), { headers });
+        res = await fetch(streamUrl(), { headers, signal: conn.signal });
       } catch {
         await sleep(backoff);
         backoff = Math.min(backoff * 2, 30000);
@@ -882,9 +898,15 @@ async function waitForAction(opts: {
     });
     const raced = await Promise.race([work.then((action) => ({ action })), timeoutP]);
     clearTimeout(timer!);
+    // Either arm of that race ends the command, including the timeout arm —
+    // which leaves `work` still connected, so the close has to happen here and
+    // not only where an action was found.
+    closeStream();
     return raced as { action?: any; timedOut?: boolean };
   }
-  return { action: await work };
+  const action = await work;
+  closeStream();
+  return { action };
 }
 
 async function main() {
