@@ -160,7 +160,9 @@ export function dispatchSurfaceAction(
   // must not silently decide the other.
   if (!opts?.fromNotificationId) {
     for (const resolved of resolveMatchingNotifications(getDb(), artifact.id, act.action)) {
-      broadcastGlobal("notification_answered", { id: resolved.id, answer: act.action });
+      // Same scoping as the tray press: a question put to one screen stays that
+      // screen's business, right down to the frame saying it has been settled.
+      broadcastGlobal("notification_answered", { id: resolved.id, answer: act.action }, resolved.device ?? undefined);
     }
   }
 

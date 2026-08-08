@@ -342,6 +342,45 @@ try {
   });
   check("the screen it was put to can answer it", mine.status === 200, mine.body);
 
+  // The "it has been settled" frame is scoped like the question was. Otherwise
+  // answering leaks the id and the chosen answer of a targeted question to
+  // every other display — the tray is scoped, and the broadcast walked around it.
+  {
+    const seen: any[] = [];
+    const spy = new AbortController();
+    const listening = (async () => {
+      const res = await fetch(`${base}/stream`, { headers: { Cookie: study }, signal: spy.signal });
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        for (const frame of buffer.split("\n\n").slice(0, -1)) {
+          if (frame.includes("notification_answered")) seen.push(frame);
+        }
+        buffer = buffer.slice(buffer.lastIndexOf("\n\n") + 2);
+      }
+    })().catch(() => {});
+    await sleep(300);
+
+    const q = await call("POST", "/display/notify", {
+      token: SYS,
+      body: {
+        text: "Kitchen only: second question", device: "kitchen", surface_id: id,
+        actions: [{ label: "Yes", action: "confirm-scoped" }],
+      },
+    });
+    await call("POST", `/notifications/${q.body.id}/answer`, { cookie: kitchen, body: { action: "confirm-scoped" } });
+    await sleep(400);
+    spy.abort();
+    await listening;
+
+    check("answering a targeted question is not announced to other screens",
+      !seen.some((f) => f.includes(q.body.id)), seen);
+  }
+
   // The agent side is bookkeeping, not eavesdropping: a read from the system
   // plane still sees the whole log.
   const systemTray = await call("GET", "/notifications", { token: SYS });

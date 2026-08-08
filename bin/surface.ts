@@ -628,7 +628,17 @@ async function waitForAction(opts: {
     try { conn.abort(); } catch { /* already gone */ }
   };
 
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Abort-aware, so closing the stream does not leave a reconnect backoff
+  // holding the event loop for up to thirty seconds after the command is done.
+  const sleep = (ms: number) => new Promise<void>((resolve) => {
+    const t = setTimeout(finish, ms);
+    function finish() {
+      clearTimeout(t);
+      conn.signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    conn.signal.addEventListener("abort", finish, { once: true });
+  });
 
   const normalizeData = (d: unknown) => {
     if (typeof d === "string") {
@@ -1579,7 +1589,7 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         // Only resolves when --timeout was given and elapsed (a lifetime cap).
         if (result.timedOut) {
           console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
-          process.exit(3);
+          process.exitCode = 3;
         }
         return;
       }
@@ -1588,9 +1598,15 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         surfaceId, wantAction, wantEvent, timeoutSec, autoAck, all, projectRoot,
         emit: (a) => writeOut(JSON.stringify(a, null, 2) + "\n"),
       });
+      // exitCode rather than exit(), for the same reason the success path
+      // below returns: a timeout tears the connection down too, and exiting on
+      // top of that is what produced 0xC0000409 on Windows. Fixing only the
+      // path that happened to be under test would have left `wait --timeout`
+      // reporting a crash instead of 3.
       if (result.timedOut) {
         console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
-        process.exit(3);
+        process.exitCode = 3;
+        return;
       }
       // Deliberately NOT process.exit(0).
       //

@@ -404,10 +404,15 @@ displayRouter.post("/notifications/:id/answer", (req: Request, res: Response) =>
   }, deviceNameOf(req), { fromNotificationId: notification.id });
   const updated = markAnswered(getDb(), notification.id, choice.action);
 
+  // Scoped the same way the question was. This frame exists to grey out a
+  // stale toast on whatever screen is showing one, and only the addressed
+  // screen was ever shown it — broadcasting to everyone would hand the other
+  // displays the id and the chosen answer of a question they were deliberately
+  // not asked, which is the leak the tray scoping exists to close.
   broadcastGlobal("notification_answered", {
     id: notification.id,
     answer: choice.action,
-  });
+  }, notification.device ?? undefined);
   res.json({ answered: choice.action, notification: updated, action, unread: unreadCount(getDb(), viewerOf(req)) });
 });
 
