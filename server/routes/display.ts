@@ -401,7 +401,7 @@ displayRouter.post("/notifications/:id/answer", (req: Request, res: Response) =>
     label: choice.label,
     from: "notification",
     notification_id: notification.id,
-  }, deviceNameOf(req), { fromNotificationId: notification.id });
+  }, deviceNameOf(req), { fromNotificationId: notification.id, actor: viewerOf(req) });
   const updated = markAnswered(getDb(), notification.id, choice.action);
 
   // Scoped the same way the question was. This frame exists to grey out a
@@ -423,7 +423,10 @@ displayRouter.post("/notifications/:id/dismiss", (req: Request, res: Response) =
     res.status(404).json({ error: "Notification not found" });
     return;
   }
-  const ok = dismissNotification(getDb(), String(req.params.id));
+  // A device may tidy away what is finished with, never an open question:
+  // `dismissed_at` is one shared column, so dismissing an unaddressed question
+  // would delete it from every screen at once.
+  const ok = dismissNotification(getDb(), String(req.params.id), { protectUnanswered: viewer !== null });
   broadcastGlobal("notification_read", {});
   res.json({ dismissed: ok, unread: unreadCount(getDb(), viewer) });
 });

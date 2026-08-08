@@ -14,7 +14,7 @@ import {
 } from "../actionsStore.js";
 import { getArtifact } from "../artifacts.js";
 import { appendToStateList, patchState } from "../state.js";
-import { broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
+import { broadcastByPlane, broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
 import { createBinding, deleteBinding, listBindings, projectAllowsBindings, scheduleDelivery, setBindingEnabled } from "../bindings.js";
 import { resolveMatchingNotifications } from "../notifications.js";
 import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
@@ -104,7 +104,7 @@ export function dispatchSurfaceAction(
   action: string,
   data: unknown,
   deviceName: string | null,
-  opts?: { fromNotificationId?: string },
+  opts?: { fromNotificationId?: string; actor?: string | null },
 ): SurfaceAction {
   const act = createAction(getDb(), { surface_id: artifact.id, action, data });
 
@@ -158,8 +158,14 @@ export function dispatchSurfaceAction(
   // the question whose button was pressed and nothing else: two unrelated
   // questions can legitimately offer the same action name, and pressing one
   // must not silently decide the other.
+  //
+  // Scoped to whoever acted (`opts.actor`): an unaddressed question is settled
+  // by anyone, but a question put to one screen is that screen's to answer.
+  // Without that, pressing Next here would silently decide another display's
+  // private question and report the wrong person's choice to the agent.
   if (!opts?.fromNotificationId) {
-    for (const resolved of resolveMatchingNotifications(getDb(), artifact.id, act.action)) {
+    const actor = opts?.actor === undefined ? null : opts.actor;
+    for (const resolved of resolveMatchingNotifications(getDb(), artifact.id, act.action, actor)) {
       // Same scoping as the tray press: a question put to one screen stays that
       // screen's business, right down to the frame saying it has been settled.
       broadcastGlobal("notification_answered", { id: resolved.id, answer: act.action }, resolved.device ?? undefined);
@@ -204,7 +210,14 @@ export function dispatchSurfaceAction(
     data: data ?? {},
     created_at: act.created_at,
   });
-  broadcastGlobal("surface_action", {
+  // The agent gets the whole action — that is how `surface wait` receives work.
+  // Displays get everything except `data`, which they never read (the client
+  // uses this only to bump a card's pending count). That difference is not
+  // frugality: a notification-borne action carries the notification's id and the
+  // label of the button pressed, so one frame for both audiences published a
+  // question addressed to one screen to every screen, straight past the tray
+  // scoping.
+  const frame = {
     id: act.id,
     surface_id: artifact.id,
     surface_title: artifact.title,
@@ -212,10 +225,10 @@ export function dispatchSurfaceAction(
     // live actions the same way it filters its inbox drain.
     project_root: artifact.project_root,
     action: act.action,
-    data: act.data,
     status: act.status,
     created_at: act.created_at,
-  });
+  };
+  broadcastByPlane("surface_action", { ...frame, data: act.data }, frame);
 
   // Run the ladder: an eligible live waiter gets a bounded first refusal, then
   // bindings fire, then the action simply waits in the inbox (server/bindings.ts).
@@ -241,7 +254,9 @@ actionsRouter.post("/artifacts/:id/actions", (req, res) => {
     res.status(400).json({ error: "action is required" });
     return;
   }
-  const act = dispatchSurfaceAction(artifact, action, data, deviceNameOf(req));
+  const act = dispatchSurfaceAction(artifact, action, data, deviceNameOf(req), {
+    actor: req.auth?.role === "system" ? null : targetOf(req),
+  });
   res.status(201).json(act);
 });
 

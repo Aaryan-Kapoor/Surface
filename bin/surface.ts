@@ -469,7 +469,7 @@ function agentSessionFromEnv(): { kind: "codex" | "claude"; session_id: string }
 // choke point every command funnels through.
 const AGENT_STAMPED_PATHS = new Set(["/artifacts", "/artifacts/link", "/artifacts/present-file"]);
 
-async function call(method: string, pathname: string, body?: unknown): Promise<any> {
+async function call(method: string, pathname: string, body?: unknown, signal?: AbortSignal): Promise<any> {
   const stampable =
     (method === "POST" && AGENT_STAMPED_PATHS.has(pathname)) ||
     (method === "POST" && /^\/artifacts\/[^/]+\/touch$/.test(pathname)) ||
@@ -494,6 +494,12 @@ async function call(method: string, pathname: string, body?: unknown): Promise<a
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      // Callers that can be cancelled pass a signal. Without one, a server that
+      // accepts a request and then stalls holds the socket — and the process —
+      // open past its own deadline: `wait --timeout` would abort its SSE stream,
+      // return, and still not exit, because an inbox poll or a claim was left
+      // hanging with nothing able to reach it.
+      signal,
     });
   } catch (e: any) {
     const code = e?.cause?.code || e?.code;
@@ -630,8 +636,18 @@ async function waitForAction(opts: {
 
   // Abort-aware, so closing the stream does not leave a reconnect backoff
   // holding the event loop for up to thirty seconds after the command is done.
+  //
+  // The `aborted` check is the whole point and not belt-and-braces: adding an
+  // abort listener to a signal that has ALREADY aborted never fires it, so a
+  // sleep starting in that window would run its full backoff on a ref'd timer —
+  // measured at the full 1200ms in a 1200ms test. That window is reachable:
+  // closeStream() can land between a fetch rejecting and the catch arm calling
+  // sleep. Belt-and-braces is the unref, which keeps even a stray timer from
+  // being the reason the process is still alive.
   const sleep = (ms: number) => new Promise<void>((resolve) => {
+    if (conn.signal.aborted) return resolve();
     const t = setTimeout(finish, ms);
+    t.unref?.();
     function finish() {
       clearTimeout(t);
       conn.signal.removeEventListener("abort", finish);
@@ -673,7 +689,7 @@ async function waitForAction(opts: {
   const claim = async (actionId: string, token: string): Promise<"won" | "gone" | "taken" | "unknown"> => {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await call("POST", `/actions/${encodeURIComponent(actionId)}/claim`, { token, client_id: clientId });
+        await call("POST", `/actions/${encodeURIComponent(actionId)}/claim`, { token, client_id: clientId }, conn.signal);
         return "won";
       } catch (err: any) {
         const status = err?.status;
@@ -707,7 +723,7 @@ async function waitForAction(opts: {
   const complete = async (actionId: string, token: string): Promise<void> => {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await call("POST", `/actions/${encodeURIComponent(actionId)}/ack`, { token });
+        await call("POST", `/actions/${encodeURIComponent(actionId)}/ack`, { token }, conn.signal);
         return;
       } catch (err: any) {
         if (err?.status === 404 || err?.status === 409) return;
@@ -758,7 +774,7 @@ async function waitForAction(opts: {
       const path = projectScoped
         ? `${base}?project=${encodeURIComponent(opts.projectRoot!)}`
         : base;
-      const pending = (await call("GET", path)) as any[];
+      const pending = (await call("GET", path, undefined, conn.signal)) as any[];
       for (const a of pending) {
         const delivered = await deliver(a);
         if (delivered && !opts.follow) return delivered;
@@ -1578,7 +1594,13 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         });
 
       if (flags.follow === true) {
-        installLifetimeGuards(timeoutSec);
+        // Deliberately WITHOUT the timeout. waitForAction races its own, and
+        // arming a second one here armed it *earlier*, so the guard's
+        // process.exit(3) won the race and fired over a live SSE connection —
+        // the exact 0xC0000409 crash the exitCode path below exists to avoid,
+        // which made that path unreachable for `--follow --timeout`. One
+        // timeout, owned by the code that can close the stream first.
+        installLifetimeGuards();
         // The persistent action terminal: one compact JSON line per action,
         // forever. Built for harness watchdogs that pattern-match stdout.
         const result = await waitForAction({

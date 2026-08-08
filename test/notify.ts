@@ -397,6 +397,99 @@ try {
     bothSee.every((r) => r.body?.notifications?.some((n: any) => n.id === broadcast.body.id)),
     bothSee.map((r) => r.body?.notifications?.length));
 
+  // ── acting on a shared surface must not answer someone else's question ──
+  //
+  // The "one decision, one answer" sweep was written when every question was
+  // everyone's. Once --on made a question private, an unscoped sweep was the
+  // way round the tray's own boundary: the study screen pressing Next on a
+  // surface both can see would settle the kitchen's private question, grey out
+  // its toast without anyone touching it, and report the wrong person's choice.
+  const privateQ = await call("POST", "/display/notify", {
+    token: SYS,
+    body: {
+      text: "Kitchen only: start the wash?", device: "kitchen", surface_id: id,
+      actions: [{ label: "Start", action: "wash" }],
+    },
+  });
+  const sharedQ = await call("POST", "/display/notify", {
+    token: SYS,
+    body: { text: "Anyone: start the wash?", surface_id: id, actions: [{ label: "Start", action: "wash" }] },
+  });
+
+  // The study acts on the surface itself — same action name, different screen.
+  await call("POST", `/artifacts/${id}/actions`, { cookie: study, body: { action: "wash", data: {} } });
+
+  const kitchenAfter = await call("GET", "/notifications", { cookie: kitchen });
+  const rowIn = (body: any, nid: string) => body?.notifications?.find((n: any) => n.id === nid);
+  check("another screen's action does not answer a question put to you",
+    !rowIn(kitchenAfter.body, privateQ.body.id)?.answered_at,
+    rowIn(kitchenAfter.body, privateQ.body.id));
+  // The unaddressed one is genuinely everyone's, so it is settled — that is the
+  // case the sweep exists for, and it must keep working.
+  check("a question asked of everyone is still settled by anyone acting",
+    !!rowIn(kitchenAfter.body, sharedQ.body.id)?.answered_at,
+    rowIn(kitchenAfter.body, sharedQ.body.id));
+
+  // ── the action frame must not publish a private answer ──
+  //
+  // notification_answered is scoped, but surface_action carried the whole
+  // payload — notification_id and the pressed label — to every screen.
+  {
+    const frames: string[] = [];
+    const spy = new AbortController();
+    const listening = (async () => {
+      const res = await fetch(`${base}/stream`, { headers: { Cookie: study }, signal: spy.signal });
+      const reader = res.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        for (const f of buf.split("\n\n").slice(0, -1)) if (f.includes("surface_action")) frames.push(f);
+        buf = buf.slice(buf.lastIndexOf("\n\n") + 2);
+      }
+    })().catch(() => {});
+    await sleep(300);
+
+    const secret = await call("POST", "/display/notify", {
+      token: SYS,
+      body: {
+        text: "Kitchen only: deploy?", device: "kitchen", surface_id: id,
+        actions: [{ label: "Ship the thing", action: "deploy-private" }],
+      },
+    });
+    await call("POST", `/notifications/${secret.body.id}/answer`, {
+      cookie: kitchen, body: { action: "deploy-private" },
+    });
+    await sleep(400);
+    spy.abort();
+    await listening;
+
+    check("the action frame does not leak the notification id to other screens",
+      !frames.some((f) => f.includes(secret.body.id)), frames.length);
+    check("nor the label of the button that was pressed",
+      !frames.some((f) => f.includes("Ship the thing")), frames.length);
+  }
+
+  // ── an open question is not something a screen can delete for everyone ──
+  //
+  // dismissed_at is one shared column, so a device dismissing an unaddressed
+  // question removed it from every screen — undoing the one guarantee the tray
+  // makes. dismiss-all always refused; per-id was the hole.
+  const openBroadcast = await call("POST", "/display/notify", {
+    token: SYS,
+    body: { text: "Everyone: deploy?", surface_id: id, actions: [{ label: "Yes", action: "deploy-open" }] },
+  });
+  const tryDismiss = await call("POST", `/notifications/${openBroadcast.body.id}/dismiss`, { cookie: study });
+  check("a device cannot dismiss an unanswered question", tryDismiss.body?.dismissed === false, tryDismiss.body);
+  const stillThere = await call("GET", "/notifications", { cookie: kitchen });
+  check("so it is still on the other screen too",
+    !!rowIn(stillThere.body, openBroadcast.body.id), stillThere.body?.notifications?.length);
+  // The agent may retract its own question.
+  const sysDismiss = await call("POST", `/notifications/${openBroadcast.body.id}/dismiss`, { token: SYS });
+  check("the agent can still retract a question it asked", sysDismiss.body?.dismissed === true, sysDismiss.body);
+
 } finally {
   await killServer(server, port).catch(() => {});
   await sleep(100);

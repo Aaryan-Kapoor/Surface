@@ -193,12 +193,23 @@ export function resolveMatchingNotifications(
   db: Database.Database,
   surfaceId: string,
   action: string,
+  actor: Viewer,
 ): NotificationRow[] {
+  // Scoped to the actor, and that scoping is load-bearing rather than tidy.
+  // "One decision, one answer" was written when every question was everyone's;
+  // once `--on <device>` made a question private, an unscoped sweep became the
+  // way around the tray's own boundary. Device A pressing Next on a shared
+  // surface would answer device B's private question, grey out B's toast
+  // without B touching anything, and hand the agent A's press as B's decision.
+  //
+  // A question with no device is still everyone's, so acting on the surface
+  // settles it — that is the case this sweep exists for.
+  const scope = deviceScope(actor);
   const rows = db.prepare(`
     SELECT * FROM notifications
     WHERE surface_id = ? AND answered_at IS NULL AND dismissed_at IS NULL
-      AND actions_json <> '[]'
-  `).all(surfaceId) as DbRow[];
+      AND actions_json <> '[]'${scope.sql}
+  `).all(surfaceId, ...scope.params) as DbRow[];
   const resolved: NotificationRow[] = [];
   for (const row of rows) {
     const notification = hydrate(row);
@@ -209,10 +220,27 @@ export function resolveMatchingNotifications(
   return resolved;
 }
 
-export function dismissNotification(db: Database.Database, id: string): boolean {
+/**
+ * Dismiss one notification.
+ *
+ * `protectUnanswered` is what a device gets, and it exists because
+ * `dismissed_at` is a single shared column: one screen dismissing an
+ * unaddressed question deleted it from every screen, so the tray's whole
+ * purpose — a question outliving the agent that asked it — could be undone by
+ * anyone brushing a notification away. `dismissAllNotifications` has always
+ * refused to touch an open question; per-id dismissal was the hole in that
+ * rule. The system plane still dismisses anything, because an agent retracting
+ * its own question is a legitimate thing to want.
+ */
+export function dismissNotification(
+  db: Database.Database,
+  id: string,
+  opts: { protectUnanswered: boolean } = { protectUnanswered: false },
+): boolean {
+  const guard = opts.protectUnanswered ? ` AND (actions_json = '[]' OR answered_at IS NOT NULL)` : "";
   return db.prepare(`
     UPDATE notifications SET dismissed_at = datetime('now')
-    WHERE id = ? AND dismissed_at IS NULL
+    WHERE id = ? AND dismissed_at IS NULL${guard}
   `).run(id).changes > 0;
 }
 
