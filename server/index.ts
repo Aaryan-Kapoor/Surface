@@ -8,6 +8,7 @@ import { cleanupActions, recoverCodexActions, releaseOrphanedClaims } from "./ac
 import { router } from "./routes/index.js";
 import { gcArtifactStorage, listArtifactCards } from "./artifacts.js";
 import { SESSION_COOKIE, createPairingToken, readCookie, verifySession } from "./auth.js";
+import { setSessionCookie } from "./routes/helpers.js";
 import { jsonErrorMiddleware, sendError } from "./errors.js";
 import {
   buildPairingUrl,
@@ -261,6 +262,11 @@ app.use((req, res, next) => {
   if (cookieToken) {
     const session = verifySession(cookieToken);
     if (session) {
+      // Rolling expiry is only half-rolling unless the cookie moves too. The
+      // row's deadline advances on use; the browser's copy carries a Max-Age
+      // fixed at pairing time, so without this a device in daily use still
+      // dropped its cookie on the original schedule and had to re-pair.
+      if (session.rolled) setSessionCookie(req, res, cookieToken, session.ttl_seconds);
       req.auth = { role: session.role, sessionId: session.id, label: session.label, via: "cookie" };
       return next();
     }

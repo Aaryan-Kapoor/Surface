@@ -65,7 +65,28 @@ export type Role = "system" | "device";
 
 export const SESSION_COOKIE = "surface_session";
 export const DEFAULT_PAIRING_TTL_SECONDS = 5 * 60;
-export const DEFAULT_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/**
+ * A year, not a month. Re-pairing is the single most annoying thing Surface
+ * asks of a device: it needs the host terminal, a fresh token, and physical
+ * access to the phone at the same moment. The session is rolling and revocable
+ * (`verifySession`, `surface devices revoke`), so a long TTL costs nothing an
+ * idle device wouldn't already cost — it only removes a recurring chore from an
+ * *active* one.
+ */
+export const DEFAULT_SESSION_TTL_SECONDS = 365 * 24 * 60 * 60;
+
+/**
+ * System bearers keep the old month. They are full-power credentials that get
+ * carried off the host (an SSH box, a container), and unlike a phone on the
+ * sofa they are not usually sitting in front of the person who could notice
+ * they went missing. Convenience is the device plane's argument, not this one.
+ */
+export const DEFAULT_SYSTEM_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export function defaultTtlSeconds(role: Role): number {
+  return role === "system" ? DEFAULT_SYSTEM_SESSION_TTL_SECONDS : DEFAULT_SESSION_TTL_SECONDS;
+}
 
 export function readCookie(header: string | undefined, name: string): string {
   const match = (header || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
@@ -191,7 +212,7 @@ export function createSession(params: {
   const id = uuidv4();
   const token = generateSessionToken();
   const role: Role = params.role === "system" ? "system" : "device";
-  const ttl = params.ttlSeconds && params.ttlSeconds > 0 ? params.ttlSeconds : DEFAULT_SESSION_TTL_SECONDS;
+  const ttl = params.ttlSeconds && params.ttlSeconds > 0 ? params.ttlSeconds : defaultTtlSeconds(role);
   getDb()
     .prepare(
       `INSERT INTO auth_sessions (id, token_hash, role, label, client_ip, user_agent, ttl_seconds, last_seen_at, expires_at)
@@ -217,7 +238,15 @@ export function createSession(params: {
 // is unknown, expired, or revoked. Expiry is rolling: every successful use
 // pushes expires_at out by the session's own ttl_seconds, so an active device
 // never falls off while an abandoned one ages out.
-export function verifySession(token: string): SessionRow | null {
+//
+// `rolled` reports whether this call actually moved the deadline. The browser's
+// cookie carries its own independent Max-Age, and a database row that rolls
+// while the cookie does not is a device that re-pairs on the original schedule
+// no matter how much it is used — which is exactly the bug this flag exists to
+// let the caller fix (see the cookie refresh in server/index.ts).
+export type VerifiedSession = SessionRow & { rolled: boolean };
+
+export function verifySession(token: string): VerifiedSession | null {
   if (!token) return null;
   const row = getDb()
     .prepare(
@@ -240,7 +269,7 @@ export function verifySession(token: string): SessionRow | null {
       )
       .run(row.id);
   }
-  return row;
+  return { ...row, rolled: shouldTouch };
 }
 
 export function getSessionById(id: string): Omit<SessionRow, "revoked_at"> | null {

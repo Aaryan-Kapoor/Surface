@@ -47,6 +47,11 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
   --progress-file` writes each phase *before* the step it names and the
   restarted server reconciles the last phase against its own version.
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
+  Device sessions default to a **1-year** rolling TTL (2026-08-04, owner decision — 30 days
+  meant monthly re-pairing, which needs the host terminal and the phone at once). System
+  bearers stay at 30 days: they leave the host. Rolling expiry re-issues the browser cookie
+  as well as advancing the row — a cookie's `Max-Age` is fixed when written, so for two
+  releases a device in daily use still re-paired on its original deadline.
 - Content is served through a dedicated content origin when configured, with Host/Origin validation on the app plane.
 - Built-in templates include ask, stream, video, board, and doc. The report
   template was deliberately removed (2026-07-05, owner decision — do not

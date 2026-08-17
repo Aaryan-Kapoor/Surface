@@ -27,7 +27,11 @@ Pairing tokens default to `role: device` (see the [capability matrix](trust-mode
 
 ### Rolling expiry
 
-Session expiry is rolling: every successful use pushes `expires_at` out by the session's own `ttl_seconds` (default 30 days; `verifySession`, `server/auth.ts`), so an active wall-mounted display never re-pairs and an abandoned session ages out quietly.
+Session expiry is rolling: every successful use pushes `expires_at` out by the session's own `ttl_seconds` (default **1 year** for devices; `verifySession`, `server/auth.ts`), so an active wall-mounted display never re-pairs and an abandoned session ages out quietly.
+
+The roll reaches the browser too. A cookie carries its own `Max-Age`, fixed when it was written, so a session that rolled only in the database still expired on the client at the original deadline — a device in daily use re-paired anyway. The auth middleware (`server/index.ts`) now re-issues the cookie whenever `verifySession` reports it moved the deadline (at most once per 5-minute touch interval).
+
+System sessions keep a 30-day default (`DEFAULT_SYSTEM_SESSION_TTL_SECONDS`). They are full-power credentials that get carried off the host — a bearer on an SSH box is not sitting in front of the person who would notice it went missing. Pass an explicit `ttlSeconds` to `POST /api/auth/sessions` to override either default.
 
 ## Pairing flow (end-to-end)
 

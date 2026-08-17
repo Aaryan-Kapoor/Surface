@@ -1,3 +1,4 @@
+import Database from "better-sqlite3";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
@@ -89,6 +90,20 @@ function sessionCookieFrom(res: Res): string | null {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Reach into the live database to age a session past the touch interval. The
+// alternative is a five-minute sleep in the middle of the suite.
+function backdateLastSeen(dataDir: string, sessionId: string): void {
+  const db = new Database(path.join(dataDir, "db.sqlite"));
+  try {
+    const result = db
+      .prepare(`UPDATE auth_sessions SET last_seen_at = datetime('now', '-1 hour') WHERE id = ?`)
+      .run(sessionId);
+    if (result.changes !== 1) throw new Error(`expected to backdate 1 session, updated ${result.changes}`);
+  } finally {
+    db.close();
+  }
+}
 
 async function waitForReady(req: ReturnType<typeof makeClient>, timeoutMs = 15000) {
   const start = Date.now();
@@ -220,8 +235,61 @@ async function main() {
     check("bootstrap sets surface_session cookie", !!sessionCookie, boot1.headers.get("set-cookie"));
     const bootSessionId = boot1.body?.sessionId as string;
 
+    // The cookie's own lifetime is what a browser actually obeys. A device
+    // session that rolls in the database while the cookie keeps a thirty-day
+    // Max-Age is a phone that re-pairs on the original schedule no matter how
+    // much it is used.
+    const bootCookieHeader = boot1.headers.get("set-cookie") || "";
+    check(
+      "bootstrap cookie carries the one-year Max-Age",
+      /Max-Age=31536000\b/.test(bootCookieHeader),
+      bootCookieHeader,
+    );
+    check("session cookie is HttpOnly and SameSite=Lax", /HttpOnly/i.test(bootCookieHeader) && /SameSite=Lax/i.test(bootCookieHeader), bootCookieHeader);
+
     const boot2 = await req("POST", "/api/auth/bootstrap", { body: { credential } });
     check("reused pairing token fails", boot2.status === 401, boot2.status);
+
+    // ── Rolling expiry reaches the browser ──
+    // The server only re-touches a session every SESSION_TOUCH_INTERVAL_SECONDS
+    // (5 min), so back-date last_seen_at rather than waiting it out. Sessions
+    // are stored hashed, so the row is addressed by the id bootstrap returned.
+    {
+      const noRoll = await req("GET", "/artifacts", { cookie: sessionCookie! });
+      check(
+        "a request inside the touch window does not re-issue the cookie",
+        !noRoll.headers.get("set-cookie"),
+        noRoll.headers.get("set-cookie"),
+      );
+
+      backdateLastSeen(dataDir, bootSessionId);
+      const rolled = await req("GET", "/artifacts", { cookie: sessionCookie! });
+      const rolledHeader = rolled.headers.get("set-cookie") || "";
+      check(
+        "a rolled session re-issues the cookie with a fresh year",
+        /surface_session=/.test(rolledHeader) && /Max-Age=31536000\b/.test(rolledHeader),
+        rolledHeader,
+      );
+      check(
+        "the re-issued cookie keeps the same session token",
+        sessionCookieFrom(rolled) === sessionCookie,
+        { was: sessionCookie, now: sessionCookieFrom(rolled) },
+      );
+
+      // The heartbeat is what an untouched wall display actually sends — its
+      // SSE stream is one long-lived response that never re-enters this
+      // middleware — so the roll has to happen on this route in particular.
+      backdateLastSeen(dataDir, bootSessionId);
+      const beat = await req("POST", "/display/presence", {
+        cookie: sessionCookie!,
+        body: { current_view: "grid", viewport_width: 1920, viewport_height: 1080 },
+      });
+      check(
+        "the presence heartbeat rolls the session it rides on",
+        /Max-Age=31536000\b/.test(beat.headers.get("set-cookie") || ""),
+        beat.headers.get("set-cookie"),
+      );
+    }
 
     // ── Expired token ──
     const mintExp = await req("POST", "/api/auth/pairing-token", { token: SYS, body: { ttlSeconds: 1 } });
