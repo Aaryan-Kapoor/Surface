@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mockups</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --interactive: #121212;
+    --fg: #ffffff;
+    --fg-muted: rgba(255,255,255,.62);
+    --fg-faint: rgba(255,255,255,.40);
+    --line: rgba(255,255,255,.12);
+    --line-strong: rgba(255,255,255,.34);
+    --ok: #34d399;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f6f7; --interactive: #ffffff; --fg: #0b0c0e;
+      --fg-muted: rgba(11,12,14,.62); --fg-faint: rgba(11,12,14,.42);
+      --line: rgba(11,12,14,.12); --line-strong: rgba(11,12,14,.34); --ok: #067647;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 36px 24px 44px; display: flex; flex-direction: column; gap: 22px; }
+  h1 { margin: 0; font-size: clamp(22px, 3.4vw, 30px); font-weight: 620; letter-spacing: -.025em; }
+  .q { margin: -14px 0 0; font-size: 14.5px; color: var(--fg-muted); max-width: 60ch; line-height: 1.5; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+  .variant {
+    display: flex; flex-direction: column;
+    background: var(--interactive);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: border-color .15s ease, transform .12s ease;
+  }
+  .variant:hover { border-color: var(--line-strong); }
+  .variant .frame { position: relative; height: 210px; background: var(--bg); }
+  .variant iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+  .variant .cap { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; }
+  .variant .name { font-size: 13.5px; font-weight: 550; letter-spacing: -.01em; }
+  .variant .sub { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+  .variant .choose {
+    margin: 0 14px 14px;
+    font: inherit; font-size: 13px; font-weight: 550;
+    color: var(--fg); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 9px 14px; cursor: pointer;
+  }
+  .variant .choose:hover:not(:disabled) { border-color: var(--line-strong); }
+  .variant .choose:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .variant .choose:disabled { cursor: default; }
+
+  body.voted .variant { opacity: .4; }
+  body.voted .variant.chosen { opacity: 1; border-color: var(--line-strong); box-shadow: 0 0 0 1px var(--line-strong); }
+
+  .why { display: flex; gap: 10px; flex-wrap: wrap; }
+  .why input {
+    flex: 1 1 280px; min-width: 0; font: inherit; font-size: 14px;
+    color: var(--fg); background: var(--interactive);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; outline: none;
+  }
+  .why input::placeholder { color: var(--fg-faint); }
+  .why input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .send {
+    font: inherit; font-size: 14px; font-weight: 600;
+    color: var(--bg); background: var(--fg);
+    border: 0; border-radius: 10px; padding: 12px 20px; cursor: pointer;
+  }
+  .send:disabled { opacity: .3; cursor: default; }
+  .send:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+
+  .note { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--fg-muted); min-height: 18px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+
+  @media (prefers-reduced-motion: reduce) { .variant { transition: none; } }
+
+  /* ── Tour rail ──
+     Present only while this surface is a step in the guided tour. It is the
+     one control that is the same object on every demo, so moving on never
+     depends on finding a different button in a different place. */
+  .tour-rail {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px 9px 16px;
+    background: var(--interactive, #121212);
+    border: 1px solid var(--line, rgba(255,255,255,.12));
+    border-radius: 999px;
+    box-shadow: 0 12px 34px rgba(0,0,0,.45);
+    z-index: 50;
+  }
+  .tour-rail[data-on="1"] { display: flex; }
+  .tour-step {
+    font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fg-faint, rgba(255,255,255,.4)); white-space: nowrap;
+  }
+  .tour-next {
+    font: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--bg, #0a0a0a); background: var(--fg, #fff);
+    border: 0; border-radius: 999px; padding: 8px 18px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .tour-next:disabled { opacity: .4; cursor: default; }
+  .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
+  @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
+  /* The rail floats over the bottom-right corner, which is exactly where a
+     demo puts its own primary action — it was swallowing the clicks on Send.
+     A page that is a tour step yields that corner. */
+  html[data-tour="1"] footer { padding-right: 208px; }
+  @media (max-width: 620px) {
+    html[data-tour="1"] footer { padding-right: 0; padding-bottom: 66px; }
+  }
+</style>
+</head>
+<body>
+  <main>
+    <h1>{{title}}</h1>
+    <p class="q" id="q">{{question}}</p>
+    <div class="grid" id="grid"></div>
+    <div class="why">
+      <input id="why" type="text" autocomplete="off" placeholder="What made you pick it? (optional)">
+      <button class="send" id="send" type="button">Send</button>
+    </div>
+    <div class="note" id="note"></div>
+  </main>
+
+  <script>
+  (function () {
+    function init() {
+      var Surface = window.Surface || {
+        state: {}, onState: function () { return function () {}; },
+        action: function () { return Promise.resolve(); }
+      };
+      var P = window.__TEMPLATE_PARAMS || {};
+      var variants = Array.isArray(P.variants) ? P.variants : [];
+
+      var grid = document.getElementById("grid");
+      var whyEl = document.getElementById("why");
+      var sendEl = document.getElementById("send");
+      var noteEl = document.getElementById("note");
+      var qEl = document.getElementById("q");
+      if (!String(P.question || "").trim()) qEl.style.display = "none";
+
+      var cards = [];
+      var selected = null;
+      var locked = false;
+
+      variants.forEach(function (v, i) {
+        var label = String(v && v.label != null ? v.label : String.fromCharCode(65 + i));
+        var card = document.createElement("div");
+        card.className = "variant";
+        card.setAttribute("data-label", label);
+
+        var frame = document.createElement("div");
+        frame.className = "frame";
+        var f = document.createElement("iframe");
+        // Each variant is agent-authored markup. Its own frame means one
+        // variant's stylesheet can't quietly restyle the other three — which
+        // would make the comparison a lie.
+        f.setAttribute("sandbox", "allow-scripts");
+        f.setAttribute("loading", "lazy");
+        f.setAttribute("title", label);
+        // A base sheet ahead of the variant's own markup. Without it a variant
+        // that doesn't set html/body height sits jammed against the top-left
+        // of its frame, and four variants centred differently can't be
+        // compared. Everything here is overridable — it only fills in the
+        // stage, never the component.
+        f.srcdoc =
+          "<!doctype html><meta charset=\"utf-8\">" +
+          "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+          "<style>html,body{height:100%;margin:0}" +
+          "body{display:grid;place-items:center;padding:16px;box-sizing:border-box;" +
+          "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;" +
+          "background:transparent;color:inherit}</style>" +
+          String((v && v.html) || "");
+        frame.appendChild(f);
+        card.appendChild(frame);
+
+        var cap = document.createElement("div");
+        cap.className = "cap";
+        var n = document.createElement("span");
+        n.className = "name";
+        n.textContent = label;
+        cap.appendChild(n);
+        if (v && v.caption) {
+          var s = document.createElement("span");
+          s.className = "sub";
+          s.textContent = String(v.caption);
+          cap.appendChild(s);
+        }
+        card.appendChild(cap);
+
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "choose";
+        btn.textContent = "Choose " + label;
+        btn.addEventListener("click", function () {
+          if (locked) return;
+          selected = label;
+          paint();
+        });
+        card.appendChild(btn);
+
+        grid.appendChild(card);
+        cards.push({ label: label, el: card, btn: btn });
+      });
+
+      function paint() {
+        cards.forEach(function (c) {
+          c.btn.disabled = locked;
+          c.btn.textContent = c.label === selected ? "Chosen · " + c.label : "Choose " + c.label;
+          c.el.classList.toggle("chosen", c.label === selected);
+        });
+        document.body.classList.toggle("voted", locked);
+        whyEl.disabled = locked;
+        sendEl.disabled = locked || !selected;
+      }
+
+      sendEl.addEventListener("click", function () {
+        if (locked || !selected) return;
+        Surface.action("vote", { choice: selected, text: whyEl.value.trim() || null });
+        locked = true;
+        paint();
+        say("Got it — " + selected + ".");
+      });
+
+      function say(text) {
+        noteEl.textContent = "";
+        if (!text) return;
+        var d = document.createElement("span");
+        d.className = "dot";
+        noteEl.appendChild(d);
+        noteEl.appendChild(document.createTextNode(text));
+      }
+
+      function render() {
+        var st = Surface.state || {};
+        if (String(st.status || "") === "voted") {
+          selected = String(st.chosen || selected || "");
+          locked = true;
+        }
+        paint();
+      }
+
+      Surface.onState(render);
+      render();
+    }
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  })();
+  </script>
+  <div class="tour-rail" id="tour-rail">
+    <span class="tour-step" id="tour-step"></span>
+    <button class="tour-next" id="tour-next" type="button">Next</button>
+  </div>
+
+  <script>
+  // The tour rail. Every demo carries the identical control so that "move on"
+  // is one gesture in one place, and pressing it is an ordinary action — the
+  // agent is what advances the tour, not the page.
+  (function () {
+    function init() {
+      var P = window.__TEMPLATE_PARAMS || {};
+      if (!P.tour_step && !P.tour_next) return;
+      var rail = document.getElementById("tour-rail");
+      var step = document.getElementById("tour-step");
+      var next = document.getElementById("tour-next");
+      if (!rail || !next) return;
+
+      rail.setAttribute("data-on", "1");
+      document.documentElement.setAttribute("data-tour", "1");
+      step.textContent = String(P.tour_step || "");
+      next.textContent = String(P.tour_next || "Next");
+      next.addEventListener("click", function () {
+        next.disabled = true;
+        next.textContent = "Coming up…";
+        var Surface = window.Surface || { action: function () {} };
+        Surface.action("next", { from: P.tour_id || null });
+      });
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  })();
+  </script>
+</body>
+</html>

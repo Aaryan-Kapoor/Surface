@@ -1,0 +1,58 @@
+{
+  "name": "gauge",
+  "description": "A live number the agent keeps updating — state changes redraw it without touching the page",
+  "params": {
+    "title": {
+      "type": "string",
+      "default": "Live",
+      "description": "Heading"
+    },
+    "unit": {
+      "type": "string",
+      "default": "",
+      "description": "Suffix after the number, e.g. % or ms"
+    },
+    "max": {
+      "type": "number",
+      "default": 100,
+      "description": "Full-scale value for the arc"
+    },
+    "caption": {
+      "type": "string",
+      "default": "",
+      "description": "One line under the number"
+    },
+    "tour_step": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: the step indicator, e.g. \"2 of 7\". Empty hides the tour rail."
+    },
+    "tour_next": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: label for the advance button"
+    },
+    "tour_id": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: which step this is, echoed back on the next action"
+    }
+  },
+  "state": {
+    "value": {
+      "type": "number",
+      "default": 0
+    },
+    "label": {
+      "type": "string",
+      "default": ""
+    },
+    "note": {
+      "type": "string",
+      "default": ""
+    }
+  },
+  "actions": [
+    "next"
+  ]
+}

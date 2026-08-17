@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tic-tac-toe</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --interactive: #121212;
+    --fg: #ffffff;
+    --fg-muted: rgba(255,255,255,.62);
+    --fg-faint: rgba(255,255,255,.40);
+    --line: rgba(255,255,255,.12);
+    --line-strong: rgba(255,255,255,.34);
+    --ok: #34d399;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f6f7; --interactive: #ffffff; --fg: #0b0c0e;
+      --fg-muted: rgba(11,12,14,.62); --fg-faint: rgba(11,12,14,.42);
+      --line: rgba(11,12,14,.12); --line-strong: rgba(11,12,14,.34); --ok: #067647;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; display: flex; overflow-y: auto;
+  }
+  main {
+    margin: auto; padding: 40px 28px;
+    display: flex; flex-direction: column; align-items: center; gap: 22px;
+  }
+  .turn {
+    display: flex; align-items: center; gap: 9px;
+    font-size: 15px; font-weight: 550; letter-spacing: -.01em;
+    min-height: 22px; text-align: center;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .dot.idle { background: var(--fg-faint); animation: none; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+  .cell {
+    width: min(23vw, 104px);
+    height: min(23vw, 104px);
+    display: flex; align-items: center; justify-content: center;
+    font: inherit;
+    font-size: min(11vw, 46px);
+    font-weight: 500;
+    letter-spacing: -.04em;
+    color: var(--fg);
+    background: var(--interactive);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    cursor: pointer;
+    transition: border-color .15s ease, transform .1s ease;
+  }
+  .cell:disabled { cursor: default; }
+  .cell.open:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+  .cell:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  /* The winning line is the only thing that gets to be brighter than the rest. */
+  .cell.win { border-color: var(--line-strong); box-shadow: 0 0 0 1px var(--line-strong); }
+  .cell.dim { color: var(--fg-faint); }
+
+  .note { font-size: 13.5px; color: var(--fg-muted); text-align: center; max-width: 42ch; line-height: 1.5; min-height: 20px; }
+  .again {
+    font: inherit; font-size: 14px; font-weight: 550;
+    color: var(--fg); background: var(--interactive);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 20px; cursor: pointer;
+  }
+  .again:hover { border-color: var(--line-strong); }
+  .again:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .again[hidden] { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cell, .dot { transition: none; animation: none; }
+    .cell.open:hover { transform: none; }
+  }
+
+  /* ── Tour rail ──
+     Present only while this surface is a step in the guided tour. It is the
+     one control that is the same object on every demo, so moving on never
+     depends on finding a different button in a different place. */
+  .tour-rail {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px 9px 16px;
+    background: var(--interactive, #121212);
+    border: 1px solid var(--line, rgba(255,255,255,.12));
+    border-radius: 999px;
+    box-shadow: 0 12px 34px rgba(0,0,0,.45);
+    z-index: 50;
+  }
+  .tour-rail[data-on="1"] { display: flex; }
+  .tour-step {
+    font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--fg-faint, rgba(255,255,255,.4)); white-space: nowrap;
+  }
+  .tour-next {
+    font: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--bg, #0a0a0a); background: var(--fg, #fff);
+    border: 0; border-radius: 999px; padding: 8px 18px; cursor: pointer;
+    white-space: nowrap;
+  }
+  .tour-next:disabled { opacity: .4; cursor: default; }
+  .tour-next:focus-visible { outline: 2px solid var(--fg, #fff); outline-offset: 2px; }
+  @media (max-width: 620px) { .tour-rail { left: 14px; right: 14px; justify-content: space-between; } }
+  /* The rail floats over the bottom-right corner, which is exactly where a
+     demo puts its own primary action — it was swallowing the clicks on Send.
+     A page that is a tour step yields that corner. */
+  html[data-tour="1"] footer { padding-right: 208px; }
+  @media (max-width: 620px) {
+    html[data-tour="1"] footer { padding-right: 0; padding-bottom: 66px; }
+  }
+</style>
+</head>
+<body>
+  <main>
+    <div class="turn" id="turn"></div>
+    <div class="board" id="board"></div>
+    <div class="note" id="note"></div>
+    <button class="again" id="again" type="button" hidden>Play again</button>
+  </main>
+
+  <script>
+  (function () {
+    var LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+    function init() {
+      var Surface = window.Surface || {
+        state: {}, onState: function () { return function () {}; },
+        action: function () { return Promise.resolve(); }
+      };
+      var P = window.__TEMPLATE_PARAMS || {};
+      var MINE = String(P.you || "X");
+      var THEIRS = String(P.agent || "O");
+
+      var boardEl = document.getElementById("board");
+      var turnEl = document.getElementById("turn");
+      var noteEl = document.getElementById("note");
+      var againEl = document.getElementById("again");
+      var cells = [];
+      // Set the instant you tap, cleared by the next state that shows it landed.
+      // Without it the board sits unchanged for a whole round trip and the tap
+      // reads as dropped.
+      var pending = null;
+
+      for (var i = 0; i < 9; i++) {
+        (function (idx) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "cell";
+          b.setAttribute("aria-label", "square " + (idx + 1));
+          b.addEventListener("click", function () {
+            if (b.disabled) return;
+            pending = idx;
+            render();
+            Surface.action("move", { index: idx });
+          });
+          boardEl.appendChild(b);
+          cells.push(b);
+        })(i);
+      }
+
+      againEl.addEventListener("click", function () {
+        pending = null;
+        Surface.action("restart", {});
+      });
+
+      function winningLine(board) {
+        for (var i = 0; i < LINES.length; i++) {
+          var l = LINES[i];
+          var a = board[l[0]];
+          if (a && a !== "." && a === board[l[1]] && a === board[l[2]]) return l;
+        }
+        return null;
+      }
+
+      function render() {
+        var st = Surface.state || {};
+        var raw = String(st.board || ".........");
+        var board = [];
+        for (var i = 0; i < 9; i++) board.push(raw[i] || ".");
+        if (pending != null) {
+          if (board[pending] === ".") board[pending] = MINE;
+          else pending = null; // the real board caught up
+        }
+
+        var status = String(st.status || "playing");
+        var over = status !== "playing";
+        var yourTurn = !over && String(st.turn || "you") === "you";
+        var line = winningLine(board);
+
+        for (var j = 0; j < 9; j++) {
+          var c = cells[j];
+          var mark = board[j];
+          c.textContent = mark === "." ? "" : mark;
+          var open = mark === "." && yourTurn;
+          c.disabled = !open;
+          c.classList.toggle("open", open);
+          c.classList.toggle("win", !!line && line.indexOf(j) !== -1);
+          c.classList.toggle("dim", over && !!line && line.indexOf(j) === -1);
+        }
+
+        turnEl.textContent = "";
+        var dot = document.createElement("span");
+        dot.className = "dot" + (yourTurn || over ? " idle" : "");
+        turnEl.appendChild(dot);
+        var label = over
+          ? (status === "won" ? "You win." : status === "lost" ? "I win." : "Draw.")
+          : (yourTurn ? "Your move — you're " + MINE : "Thinking…");
+        turnEl.appendChild(document.createTextNode(label));
+
+        noteEl.textContent = String(st.note || "");
+        againEl.hidden = !over;
+      }
+
+      Surface.onState(render);
+      render();
+    }
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  })();
+  </script>
+  <div class="tour-rail" id="tour-rail">
+    <span class="tour-step" id="tour-step"></span>
+    <button class="tour-next" id="tour-next" type="button">Next</button>
+  </div>
+
+  <script>
+  // The tour rail. Every demo carries the identical control so that "move on"
+  // is one gesture in one place, and pressing it is an ordinary action — the
+  // agent is what advances the tour, not the page.
+  (function () {
+    function init() {
+      var P = window.__TEMPLATE_PARAMS || {};
+      if (!P.tour_step && !P.tour_next) return;
+      var rail = document.getElementById("tour-rail");
+      var step = document.getElementById("tour-step");
+      var next = document.getElementById("tour-next");
+      if (!rail || !next) return;
+
+      rail.setAttribute("data-on", "1");
+      document.documentElement.setAttribute("data-tour", "1");
+      step.textContent = String(P.tour_step || "");
+      next.textContent = String(P.tour_next || "Next");
+      next.addEventListener("click", function () {
+        next.disabled = true;
+        next.textContent = "Coming up…";
+        var Surface = window.Surface || { action: function () {} };
+        Surface.action("next", { from: P.tour_id || null });
+      });
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+    else init();
+  })();
+  </script>
+</body>
+</html>

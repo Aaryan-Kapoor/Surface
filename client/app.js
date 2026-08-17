@@ -188,17 +188,99 @@ function cycleEmptySuggestions(root) {
 
 // ── Toast notifications ──
 
-function showToast(text, duration = 4000, style = "info") {
+// Notifications stack in one column so a second one slides in under the first
+// instead of landing on top of it.
+function toastStack() {
+  let stack = document.getElementById("toast-stack");
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.id = "toast-stack";
+    stack.className = "toast-stack";
+    stack.setAttribute("role", "status");
+    stack.setAttribute("aria-live", "polite");
+    document.body.appendChild(stack);
+  }
+  return stack;
+}
+
+// Four words and forty words should not get the same time on screen. This is
+// roughly a slow read (~12 chars/second) with a floor, and it replaced a flat
+// 4s that expired mid-sentence.
+function readingTime(text) {
+  return Math.min(14000, Math.max(4200, 1400 + String(text || "").length * 80));
+}
+
+/**
+ * @param {string} text
+ * @param {number}  [duration]  ms on screen; derived from length when omitted
+ * @param {string}  [style]     info | success | warning | error
+ * @param {object}  [options]   { actions: [{label, action, data}], surfaceId, sticky }
+ */
+function showToast(text, duration, style = "info", options = {}) {
+  const actions = Array.isArray(options.actions) ? options.actions.slice(0, 3) : [];
+  const sticky = options.sticky === undefined ? actions.length > 0 : !!options.sticky;
+
   const toast = document.createElement("div");
   toast.className = "toast";
+  if (options.notificationId) toast.setAttribute("data-notification", options.notificationId);
   if (style && style !== "info") toast.classList.add("toast--" + style);
-  toast.textContent = text;
-  document.body.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add("toast--visible"));
-  setTimeout(() => {
+
+  const body = document.createElement("div");
+  body.className = "toast-text";
+  body.textContent = text;
+  toast.appendChild(body);
+
+  let timer = null;
+  let gone = false;
+  const dismiss = () => {
+    if (gone) return;
+    gone = true;
+    if (timer) clearTimeout(timer);
     toast.classList.remove("toast--visible");
-    toast.addEventListener("transitionend", () => toast.remove());
-  }, duration);
+    toast.addEventListener("transitionend", () => toast.remove(), { once: true });
+  };
+
+  if (actions.length) {
+    const row = document.createElement("div");
+    row.className = "toast-actions";
+    for (const entry of actions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-btn";
+      btn.textContent = String(entry.label ?? "");
+      btn.addEventListener("click", async () => {
+        for (const other of row.querySelectorAll(".toast-btn")) other.disabled = true;
+        btn.classList.add("toast-btn--chosen");
+        // One endpoint records the action down the normal ladder and closes the
+        // question, so pressing here and pressing in the tray are the same act.
+        await answerNotification(options.notificationId, entry.action);
+        setTimeout(dismiss, 420);
+      });
+      row.appendChild(btn);
+    }
+    toast.appendChild(row);
+  }
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-close";
+  close.setAttribute("aria-label", "Dismiss");
+  close.textContent = "×";
+  close.addEventListener("click", dismiss);
+  toast.appendChild(close);
+
+  toastStack().appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("toast--visible"));
+
+  if (!sticky) {
+    const ms = duration || readingTime(text);
+    timer = setTimeout(dismiss, ms);
+    // Reading it should not be a race. Hovering holds it; leaving gives you
+    // the time back rather than resuming a countdown you already lost.
+    toast.addEventListener("mouseenter", () => { if (timer) clearTimeout(timer); });
+    toast.addEventListener("mouseleave", () => { if (!gone) timer = setTimeout(dismiss, ms); });
+  }
+  return dismiss;
 }
 
 // ── Release notice + one-click update ──
@@ -401,6 +483,181 @@ async function applyUpdate() {
   }
 }
 
+
+// ── Notification tray ──
+//
+// The toast is the announcement; this is the record. Everything the agent has
+// said is on the server (server/notifications.ts), so an unanswered question
+// survives a reload, a restart, and the agent that asked it — the same argument
+// the delivery ladder makes about clicks. The opener lives in the grid header
+// AND in the in-surface bar, because "you have an unanswered question" is not
+// a fact about which screen you happen to be on.
+
+let notifCache = [];
+let notifUnread = 0;
+
+function notifButtonMarkup(id) {
+  return `<button type="button" class="grid-icon-btn notif-btn" id="${escapeAttr(id)}" title="Notifications" aria-label="Notifications">${ICON_BELL}<span class="notif-badge" hidden></span></button>`;
+}
+
+function paintNotifBadges() {
+  for (const badge of document.querySelectorAll(".notif-badge")) {
+    badge.textContent = notifUnread > 9 ? "9+" : String(notifUnread);
+    badge.hidden = notifUnread === 0;
+  }
+}
+
+function wireNotifButton(root) {
+  const btn = root && root.querySelector(".notif-btn");
+  if (!btn) return;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleNotifPanel(btn);
+  });
+  paintNotifBadges();
+}
+
+// The badge is per-device, so no broadcast can carry the number — a count that
+// is true for the kitchen screen is wrong for the study. Every notification
+// event is therefore a nudge to go and ask for your own.
+async function refreshNotifUnread() {
+  try {
+    const res = await fetch("/notifications");
+    if (!res.ok) return;
+    const body = await res.json();
+    notifUnread = Number(body.unread) || 0;
+    paintNotifBadges();
+  } catch { /* the badge simply stays where it was */ }
+}
+
+async function loadNotifications() {
+  try {
+    const res = await fetch("/notifications");
+    if (!res.ok) return;
+    const body = await res.json();
+    notifCache = Array.isArray(body.notifications) ? body.notifications : [];
+    notifUnread = Number(body.unread) || 0;
+    paintNotifBadges();
+  } catch { /* the badge simply stays where it was */ }
+}
+
+function closeNotifPanel() {
+  const panel = document.getElementById("notif-panel");
+  if (!panel) return;
+  panel.classList.remove("notif-panel--visible");
+  panel.addEventListener("transitionend", () => panel.remove(), { once: true });
+  document.removeEventListener("click", closeNotifPanel);
+}
+
+async function toggleNotifPanel() {
+  if (document.getElementById("notif-panel")) { closeNotifPanel(); return; }
+  await loadNotifications();
+
+  const panel = document.createElement("div");
+  panel.id = "notif-panel";
+  panel.className = "notif-panel";
+  panel.addEventListener("click", (e) => e.stopPropagation());
+
+  const head = document.createElement("div");
+  head.className = "notif-head";
+  const title = document.createElement("span");
+  title.className = "notif-head-title";
+  title.textContent = "Notifications";
+  head.appendChild(title);
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "notif-clear";
+  clear.textContent = "Clear";
+  clear.addEventListener("click", async () => {
+    // Deliberately leaves anything still waiting on an answer — see
+    // dismissAllNotifications(). Clearing must not be how you lose a question.
+    await fetch("/notifications/dismiss-all", { method: "POST" }).catch(() => {});
+    await loadNotifications();
+    closeNotifPanel();
+  });
+  head.appendChild(clear);
+  panel.appendChild(head);
+
+  if (!notifCache.length) {
+    const empty = document.createElement("div");
+    empty.className = "notif-empty";
+    empty.textContent = "Nothing yet. Anything your agent tells you shows up here.";
+    panel.appendChild(empty);
+  } else {
+    for (const item of notifCache) panel.appendChild(notifItem(item));
+  }
+
+  document.body.appendChild(panel);
+  requestAnimationFrame(() => panel.classList.add("notif-panel--visible"));
+  setTimeout(() => document.addEventListener("click", closeNotifPanel), 0);
+
+  // Opening it is reading it — but an unanswered question keeps counting.
+  fetch("/notifications/seen", { method: "POST" })
+    .then((r) => r.json())
+    .then((body) => { notifUnread = Number(body.unread) || 0; paintNotifBadges(); })
+    .catch(() => {});
+}
+
+function notifItem(item) {
+  const open = item.actions && item.actions.length && !item.answered_at;
+  const row = document.createElement("div");
+  row.className = "notif-item" + (open ? "" : " notif-item--done");
+
+  const text = document.createElement("div");
+  text.className = "notif-item-text";
+  text.textContent = item.text;
+  row.appendChild(text);
+
+  if (open) {
+    const actions = document.createElement("div");
+    actions.className = "toast-actions";
+    for (const entry of item.actions) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "toast-btn";
+      btn.textContent = entry.label;
+      btn.addEventListener("click", async () => {
+        for (const other of actions.querySelectorAll(".toast-btn")) other.disabled = true;
+        btn.classList.add("toast-btn--chosen");
+        await answerNotification(item.id, entry.action);
+        row.classList.add("notif-item--done");
+      });
+      actions.appendChild(btn);
+    }
+    row.appendChild(actions);
+  } else if (item.answered_at && item.actions.length) {
+    const chosen = item.actions.find((a) => a.action === item.answer);
+    const answered = document.createElement("div");
+    answered.className = "notif-item-answer";
+    answered.textContent = "You chose: " + (chosen ? chosen.label : item.answer);
+    row.appendChild(answered);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "notif-item-meta";
+  meta.textContent = timeAgo(item.created_at);
+  row.appendChild(meta);
+  return row;
+}
+
+// One endpoint does both halves — records the action down the normal ladder and
+// closes the question — so the two can never disagree.
+async function answerNotification(id, action) {
+  try {
+    const res = await fetch(`/notifications/${encodeURIComponent(id)}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (res.ok) {
+      const body = await res.json();
+      const hit = notifCache.find((n) => n.id === id);
+      if (hit) { hit.answered_at = body.notification?.answered_at || new Date().toISOString(); hit.answer = action; }
+    }
+  } catch { /* the agent re-asks; a stuck button helps nobody */ }
+  await loadNotifications();
+}
+
 // ── Clipboard helper ──
 // async Clipboard API first; falls back to a hidden-textarea +
 // document.execCommand("copy") so non-secure contexts still get a real
@@ -450,6 +707,8 @@ const ICON_GUIDE = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden=
 // the paste string), and route straight at the tour guide (which skips the
 // install routine's own setup). Ask for the tour by name and let the agent find
 // its way in.
+const ICON_BELL = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M4 6.6a4 4 0 0 1 8 0c0 2.5.7 3.7 1.2 4.3.3.3.1.8-.3.8H3.1c-.4 0-.6-.5-.3-.8.5-.6 1.2-1.8 1.2-4.3Z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M6.5 14a1.7 1.7 0 0 0 3 0"/></svg>`;
+
 const TUTORIAL_PROMPT =
   "Give me the Surface tour — the guide is docs/TUTORIAL.md inside the installed surface-display package (`npm root -g`).";
 
@@ -1255,12 +1514,14 @@ function renderGrid() {
       <span class="grid-version" id="grid-version" hidden></span>
     </div>
     <div class="grid-actions">
+      ${notifButtonMarkup("grid-notifs")}
       <button type="button" class="grid-icon-btn" id="grid-guide" title="Hand the tutorial to your agent" aria-label="Hand the tutorial to your agent">${ICON_GUIDE}</button>
       <a class="grid-icon-btn" href="${escapeAttr(REPO_URL)}" target="_blank" rel="noopener noreferrer" title="Surface on GitHub" aria-label="Surface on GitHub">${ICON_GITHUB}</a>
     </div>
   `;
   header.querySelector(".grid-title").textContent = title;
   header.querySelector("#grid-guide").addEventListener("click", () => showTutorialModal());
+  wireNotifButton(header);
   paintVersionChip(header.querySelector("#grid-version"));
   const headerSearch = header.querySelector(".grid-search");
   if (headerSearch) {
@@ -1982,6 +2243,7 @@ async function renderSurface(id) {
       </div>
     </div>
     <div class="surface-nav-actions">
+      ${notifButtonMarkup("surface-notifs")}
       <button type="button" class="nav-action" data-action="copy" title="Copy link" aria-label="Copy link">${ICON_LINK}</button>
       <button type="button" class="nav-action" data-action="open" title="Open raw surface" aria-label="Open raw surface">${ICON_EXTERNAL}</button>
     </div>
@@ -1998,22 +2260,35 @@ async function renderSurface(id) {
   nav.querySelector('[data-action="open"]').addEventListener("click", () => {
     window.open(`/artifacts/${encodeURIComponent(id)}/view`, "_blank", "noopener");
   });
+  wireNotifButton(nav);
   view.appendChild(nav);
 
   const iframe = document.createElement("iframe");
   iframe.className = "surface-frame";
+  const meta = parseMetadata(artifact.metadata);
+  const fromDevicePlane = meta && meta.author_plane === "device";
+
+  // A sandboxed browsing context may not instantiate plugins, and Chrome's PDF
+  // reader is one — so a PDF inside the normal surface frame renders as "this
+  // page has been blocked", while the very same URL opens fine on its own. A
+  // PDF is passive: no script, no DOM, nothing for a sandbox to contain. So an
+  // AGENT-authored PDF loads unsandboxed and gets the browser's real reader.
+  // Device-authored content keeps the sandbox unconditionally — it lives on the
+  // untrusted content origin and its mime is not a promise we should take.
+  const isAgentPdf = !fromDevicePlane && String(artifact.mime || "") === "application/pdf";
+
   // The sandbox attr blocks top-navigation and modal abuse. allow-same-origin
   // lets surface.js use fetch/SSE — but for DEVICE-authored content we load it
   // from the untrusted content origin, so "same-origin" there is the content
   // plane (never system), not this trusted app origin. System content stays on
   // the app origin. (docs/auth/trust-model.md)
-  iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
+  if (!isAgentPdf) {
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-presentation");
+  }
   iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write");
   const rawViewPath = data.view_url || `/artifacts/${id}/view`;
   const revision = artifact.updated_at || artifact.current_version_id || Date.now();
   const viewPath = versionSurfaceViewPath(rawViewPath, revision);
-  const meta = parseMetadata(artifact.metadata);
-  const fromDevicePlane = meta && meta.author_plane === "device";
   const frameSrc = surfaceFrameSrc(fromDevicePlane, contentOrigin, viewPath);
   if (frameSrc === null) {
     // Fail closed (see surfaceFrameSrc): a device-authored surface with no
@@ -2312,6 +2587,23 @@ function connectGlobalSSE() {
 
   // ── Display commands from agent ──
 
+  globalSSE.addEventListener("notification_answered", (e) => {
+    const data = JSON.parse(e.data);
+    refreshNotifUnread();
+    // Another screen answered it; a live toast for the same question is stale.
+    // Matched in JS rather than through a selector: an id is server data, and
+    // building a selector out of server data is the same mistake as building
+    // markup out of it.
+    for (const toast of document.querySelectorAll("[data-notification]")) {
+      if (toast.getAttribute("data-notification") !== data.id) continue;
+      for (const btn of toast.querySelectorAll(".toast-btn")) btn.disabled = true;
+    }
+  });
+
+  globalSSE.addEventListener("notification_read", () => {
+    refreshNotifUnread();
+  });
+
   globalSSE.addEventListener("display_navigate", (e) => {
     const data = JSON.parse(e.data);
     if (data.surface_id) {
@@ -2323,7 +2615,12 @@ function connectGlobalSSE() {
 
   globalSSE.addEventListener("display_notify", (e) => {
     const data = JSON.parse(e.data);
-    showToast(data.text, data.duration || 5000, data.style || "info");
+    refreshNotifUnread();
+    showToast(data.text, data.duration, data.style || "info", {
+      actions: data.actions,
+      notificationId: data.id,
+      sticky: data.sticky,
+    });
     pulseSpace();
   });
 
@@ -2404,6 +2701,9 @@ function startApp() {
       // Fire-and-forget: the status endpoint is cache-only, but the first
       // paint must not wait on it either.
       refreshUpdateStatus();
+      // Same: the badge fills in a beat after the header draws, rather than
+      // holding the whole dashboard for a count.
+      loadNotifications();
       return render();
     })
     .catch(() => render());

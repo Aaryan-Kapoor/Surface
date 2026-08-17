@@ -1,255 +1,503 @@
-# Surface Tutorial
+# The Surface tour
 
-> **For agents:** narrate each step to the user. Run the commands shown. Wait for visual confirmation before advancing. Update the `tutorial` field in `~/.surface/install-state.json` to `in_progress` after Step 1 and `complete` after Step 7. If the user wants to stop, set it to `skipped`. Do not edit `INSTALL_FOR_AGENTS.md` for tutorial state; it documents the state file only.
+> **For agents.** This is a demo, not a smoke test. The person on the other end
+> has just installed something they have never used and has no idea what it is
+> for. Your job is to show them, on their own screen, and to play along.
+>
+> **Read the rules before Step 0. They are the difference between a tour and a
+> CI run.**
 
-This is a five-minute tour. By the end the user has a card on their display, has watched a hot reload, and has clicked a button you reacted to.
+## Rules
 
-Commands are shown for Bash first. When the user's shell is PowerShell, use the PowerShell blocks instead.
+1. **Watch in the background. Never block.** Before Step 0, start one
+   long-running watcher (below) and leave it running for the whole tour. Every
+   click, move, drag and drawing arrives as an event while your terminal stays
+   free. **Do not run `surface wait` in the foreground at any point.** It holds
+   your only terminal for up to fifteen minutes, so the user cannot talk to you
+   and you cannot react to anything else — and because an action goes to exactly
+   one claimant, a foreground `wait` and the watcher will fight over the same
+   click.
+2. **Say the quoted lines verbatim.** Every step has an **Agent says** line.
+   Send it exactly. They are written to be read out; improvising here is how a
+   tour turns into narration of a test plan.
+3. **Never ask a question in the terminal.** Not with a harness question tool,
+   not in chat. You are demonstrating a product whose entire premise is that the
+   question goes on the screen. Use `surface ask`, a notification with buttons,
+   or the demo in front of you. The one exception is Step 8, which is a
+   conversation, not a question.
+4. **Create and open are one move.** A surface you created but did not open is
+   invisible — to them it looks like you stopped. Never end a turn between the
+   two.
+5. **Every step ends with a hand-off notification.** When you are done reacting
+   and are waiting on them, send `surface notify … --button "Next=next"`. They
+   can then move on from the tray or from the **Next** button on the page —
+   either one reaches you as the same `next` action, and answering one closes
+   the other.
+6. **Never advance on your own.** You move on when `next` arrives, and not
+   before. If they linger, let them.
+7. **Never say "step 3 of 7", "this works", "all commands exited 0", or list
+   what you are about to do.** No tables of results. No progress reports. The
+   screen is the report.
+8. **Never run `surface theme`** unless the user asks. It recolours everything
+   they own.
+9. **One surface at a time.** Push the next demo with `surface open --on <device>`
+   so it replaces what is on screen. Do not leave seven cards behind.
+10. **If something errors, say so plainly in one line and carry on** to the next
+    step. A tour that stops at a broken step teaches nothing.
 
----
+## Before you start
 
-## Step 1 — Welcome and ping
-
-**Agent says:** "Surface is your universal display. I push content to it, you click things, I react. Let me check it's running."
-
-**Agent runs:**
+Find the device to drive:
 
 ```bash
 surface status
 ```
 
-**Expect:** a JSON object with a `devices` list (each entry has `current_view`, `viewport_width`, etc. — empty until a browser has loaded the dashboard). If the command errors with `ECONNREFUSED`, the service isn't running — run `surface service install` (works on Linux, macOS, and Windows) and retry.
+Take the `device` of the entry with the most recent `last_activity`; that is
+`<device>` everywhere below. If the list is empty, the user has not opened the
+display yet — give them the URL from `surface pair` and wait.
 
-Set `tutorial: in_progress` in `~/.surface/install-state.json`.
+Everything below assumes `SURFACE_URL` already points at the running service.
+If `surface status` fails with `ECONNREFUSED`, the service is on a non-default
+port — read it from `surface service health` and export `SURFACE_URL` before
+continuing.
+
+Set `tutorial: "in_progress"` in `~/.surface/install-state.json`.
+
+### Arrange to hear the clicks
+
+This is what makes the tour feel live rather than like a form being filled in.
+How you do it depends on what you are running inside — **do the one that matches
+you and skip the rest.**
+
+- **Codex CLI:** you need no watcher at all. Run this once:
+
+  ```bash
+  surface codex setup
+  ```
+
+  It starts the app-server daemon and installs a SessionStart hook, after which
+  actions on surfaces you created arrive straight back in this session. Codex
+  will ask you to trust the new hook — **that prompt is codex's, not Surface's**;
+  say yes and carry on. `surface codex status` diagnoses it. Nothing to stop at
+  the end.
+
+  **This is the Codex CLI only. The Codex desktop app cannot listen live yet** —
+  it does not run the SessionStart hook the bridge is built on, so nothing routes
+  a click back into a desktop session. Clicks are not lost: they queue in the
+  inbox and `surface actions` drains them. If you are in the desktop app, say so
+  once, use the "any other harness" row below, and do not promise the user that
+  you will react the moment they click.
+
+- **Claude Code:** run `surface wait --follow` with the **`Monitor` tool**
+  (`persistent: true`) — not with `Bash`. It prints one JSON line per action, on
+  every surface, as it happens, and each line wakes you with the payload. If
+  `Monitor` is not in your tool list, fetch it first: `ToolSearch` with the query
+  `select:Monitor`. Stop it at the end of the tour.
+
+- **Any other harness:** run `surface wait --follow` however you run a background
+  job you get notified about. If you genuinely have no such thing, fall back to a
+  per-step `surface wait --id <id> --action <a> --timeout 900` and accept that
+  you are blocked while each one runs. That is the fallback, not the plan.
+
+Whichever you use, **arm it once, before Step 0** — and never also run a
+foreground `surface wait`. An action goes to exactly one claimant, so the two
+would fight over the same click.
 
 ---
 
-## Step 2 — Open the display
+## Step 0 — The map
 
-**Agent says:** "Open `http://127.0.0.1:3000` in your browser. You'll see an empty grid with a starfield."
-
-**User does:** opens the URL. Confirms the page loads.
-
----
-
-## Step 3 — Your first artifact
-
-**Agent says:** "I'll push a hello card. It'll appear instantly via SSE — no refresh needed."
+**Agent says:** "Here's everything I could put on your screen. Every one of
+these is a Surface I'd build for you — pick whichever you want to see first and
+we'll go through the rest after."
 
 **Agent runs:**
 
 ```bash
-surface create "Hello" --mime text/html --content - <<'EOF'
-<!doctype html>
-<html><body style="background:#0a0a0a;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-  <h1>Hello from Surface 👋</h1>
-</body></html>
-EOF
+TOUR=$(surface create "Surface tour" --template tour --agent tour \
+  --metadata '{"demo":true}' | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $TOUR --on <device>
 ```
 
-PowerShell:
-
-```powershell
-@'
-<!doctype html>
-<html><body style="background:#0a0a0a;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-  <h1>Hello from Surface 👋</h1>
-</body></html>
-'@ | surface create "Hello" --mime text/html --content -
-```
-
-**Expect:** a new card on the grid within a second. Note the returned `artifact.id` — you'll reuse it.
-
----
-
-## Step 4 — Link a file from the user's project
-
-**Agent says:** "Now let's link a file you own. I'll create a small HTML in your current directory and point Surface at it. You'll be able to edit it with your normal tools and Surface will re-serve it live."
-
-**Agent runs (in the user's chosen project dir):**
+The `pick` action's `data.choice` is one of `whiteboard`, `tictactoe`, `triage`,
+`mockup`, `pdf`, `video`, `dashboard`, or `other` — one per step below, so the
+menu promises exactly what the tour delivers. When it arrives, mark the menu
+answered so it stops looking live:
 
 ```bash
-cat > demo.html <<'EOF'
-<!doctype html>
-<html><body style="background:#101820;color:#fee715;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-  <h1 id="t">Linked demo</h1>
-</body></html>
-EOF
-
-surface link "$(pwd)/demo.html" --title "Demo"
+surface patch $TOUR '{"status":"picked","picked":"<choice>"}'
 ```
 
-PowerShell:
+**Order.** You go through **all seven**. The pick chooses where to start, not
+what they get: begin at the step they picked, then continue down the list,
+wrapping to the top, until every step has been seen once. `other` means they
+typed something — build that first, show it, then start at Step 1.
 
-```powershell
-@'
-<!doctype html>
-<html><body style="background:#101820;color:#fee715;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-  <h1 id="t">Linked demo</h1>
-</body></html>
-'@ | Set-Content -Path .\demo.html -Encoding UTF8
+Each step is: push the surface, say the line, react to the demo's own action,
+send the hand-off notification, wait for `next`.
 
-surface link (Resolve-Path .\demo.html).Path --title "Demo"
+Every `surface create` below carries these four flags. `<n>` is the position in
+*your* running order, counting from 1 — not the step's number in this document.
+A step created without the rail params has no **Next** button, which strands
+them.
+
 ```
-
-**Expect:** a second card titled "Demo". Click it. The page renders from your file on disk, not a copy. Note this artifact's `id` for the next step.
+--metadata '{"demo":true}' \
+--param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="<step-id>"
+```
 
 ---
 
-## Step 5 — Hot reload
+## Step 1 — The whiteboard
 
-**Agent says:** "Watch this. I'll change the page's color, then tell Surface the file changed. No version bump, no diff — just the filesystem and a notification."
+The one that surprises people. Do not explain it before they draw.
+
+**Agent says:** "Draw something. Anything — a box, a face, an arrow. I'll look
+at it properly, then draw on the same canvas."
 
 **Agent runs:**
 
 ```bash
-# Edit demo.html in place — flip yellow text to neon green
-sed -i 's/#fee715/#39ff14/' demo.html
-
-surface touch <id-from-step-4>
+WB=$(surface create "Whiteboard" --template whiteboard --agent tour \
+  --metadata '{"demo":true}' \
+  --param title="Whiteboard" \
+  --param prompt="Draw something and send it over." \
+  --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="whiteboard" \
+  | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $WB --on <device>
 ```
 
-PowerShell:
+The `snapshot` action carries `data.png` — a `data:image/png;base64,…` URL — and
+`data.strokes`, the same drawing as normalised vectors. **Actually look at the
+picture.** Write the base64 payload to a `.png` file (strip the
+`data:image/png;base64,` prefix) and read that file with whatever image-reading
+tool you have.
 
-```powershell
-# Edit demo.html in place - flip yellow text to neon green
-(Get-Content -Raw .\demo.html).Replace('#fee715','#39ff14') |
-  Set-Content -Path .\demo.html -Encoding UTF8
+**Agent says:** one sentence about *what they actually drew*. Not "I received
+your drawing." If it is a house, say it is a house. If it is unrecognisable, say
+so cheerfully. This single sentence is the entire point of the step.
 
-surface touch <id-from-step-4>
+Then draw back. Strokes are `[{ points: [[x, y], …], width, erase }]` with `x`
+and `y` from 0 to 1, origin top-left:
+
+```bash
+surface set $WB agent_strokes '[{"points":[[0.55,0.30],[0.75,0.30],[0.75,0.55],[0.55,0.55],[0.55,0.30]],"width":4}]'
+surface notify "Drew on yours. Next when you've had a look." --id $WB --button "Next=next"
 ```
 
-**Expect:** the open Demo surface (or its grid card) updates to green within a second. If the user is on the grid, the card preview refreshes; if they're inside the surface, the iframe reloads.
+Add something to *their* drawing rather than starting your own in a corner.
 
 ---
 
-## Step 6 — React to a click
+## Step 2 — Tic-tac-toe
 
-**Agent says:** "Surfaces can talk back. I'll add a button, then *wait* for it in the background — when you click, my shell wakes me up automatically. No polling, no webhook server."
+**Agent says:** "Your move. I'm playing along in real time — no refresh, no
+'let me check', I just see it."
 
 **Agent runs:**
 
 ```bash
-cat > demo.html <<'EOF'
-<!doctype html>
-<html><body style="background:#101820;color:#39ff14;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:24px">
-  <h1 data-surface-bind="message">Click me</h1>
-  <button id="ping" style="padding:12px 24px;background:#39ff14;color:#101820;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:bold">Ping the agent</button>
-  <script>
-    document.getElementById("ping").addEventListener("click", () => {
-      Surface.action("pinged", { ts: Date.now() });
-    });
-  </script>
-</body></html>
-EOF
-
-surface touch <id-from-step-4>
-surface set <id-from-step-4> message "Click me"
-
-# In a background shell — exits as soon as the user clicks.
-surface wait --id <id-from-step-4> --action pinged --timeout 600 > /tmp/ping.json &
+TTT=$(surface create "Tic-tac-toe" --template tictactoe --agent tour \
+  --metadata '{"demo":true}' \
+  --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="tictactoe" \
+  | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $TTT --on <device>
 ```
 
-PowerShell:
-
-```powershell
-@'
-<!doctype html>
-<html><body style="background:#101820;color:#39ff14;font-family:ui-monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:24px">
-  <h1 data-surface-bind="message">Click me</h1>
-  <button id="ping" style="padding:12px 24px;background:#39ff14;color:#101820;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:bold">Ping the agent</button>
-  <script>
-    document.getElementById("ping").addEventListener("click", () => {
-      Surface.action("pinged", { ts: Date.now() });
-    });
-  </script>
-</body></html>
-'@ | Set-Content -Path .\demo.html -Encoding UTF8
-
-surface touch <id-from-step-4>
-surface set <id-from-step-4> message "Click me"
-
-$pingPath = Join-Path $env:TEMP "ping.json"
-Start-Process surface.cmd `
-  -ArgumentList @("wait","--id","<id-from-step-4>","--action","pinged","--timeout","600") `
-  -RedirectStandardOutput $pingPath `
-  -WindowStyle Hidden
-```
-
-User clicks the button.
-
-**Expect:** the background `surface wait` exits 0; the agent's harness sees the background task complete. The agent reads `/tmp/ping.json`:
-
-```json
-{
-  "id": "...",
-  "surface_id": "...",
-  "action": "pinged",
-  "data": { "ts": 1747358400000 }
-}
-```
-
-**Agent runs (after waking):**
+Each `move` action carries `data.index`, 0–8, reading left to right, top to
+bottom. Update the board and hand the turn back — `board` is nine characters,
+`.` for empty:
 
 ```bash
-surface reply <id-from-step-4> "Got your ping at $(date +%H:%M:%S)"
-surface set <id-from-step-4> message "Ping received"
+surface set $TTT turn "agent"
+surface set $TTT board "X...O...."
+surface set $TTT turn "you"
 ```
 
-PowerShell:
+Setting `turn` to `agent` first shows the board thinking. Play properly — take
+the win, block the fork. Losing on purpose is obvious and it insults them.
 
-```powershell
-surface reply <id-from-step-4> "Got your ping at $(Get-Date -Format HH:mm:ss)"
-surface set <id-from-step-4> message "Ping received"
+When the game ends set `status` to `won`, `lost` or `draw`, put one line in
+`note`, and hand off:
+
+```bash
+surface notify "Good game. Next when you're ready." --id $TTT --button "Next=next"
 ```
-
-**Expect:** a toast appears at the bottom of the surface, and the heading changes live from the state update without rewriting the HTML file.
-
-Other delivery modes:
-
-- `surface actions [<id>]` + `surface ack <action-id>` — pull when you decide to check.
-- `surface stream` — tail every SSE event as JSONL, never exits on its own.
-
-Use `surface wait` when you want the *user's click* to be the event that wakes you up.
 
 ---
 
-## Step 7 — Customize the look
+## Step 3 — The PR queue
 
-**Agent says:** "You own the display end-to-end. Try a different theme."
+**Agent says:** "Drag these where you think they belong. I'm not reading the
+order you drop them in — I'm reading where on the plane they land."
 
 **Agent runs:**
 
 ```bash
-surface theme '{"background":"linear-gradient(135deg,#0a0012,#1a0028)","colors":{"accent":"#ff0080"}}'
+TRI=$(surface create "PR triage" --template triage --agent tour \
+  --metadata '{"demo":true}' \
+  --param title="PR triage" --param x_label="Effort" --param y_label="Impact" \
+  --param items='[{"id":"pr-1","label":"Session expiry fix","meta":"#87 · +142 −18"},{"id":"pr-2","label":"Dashboard refresh","meta":"#86 · +2.1k −430"},{"id":"pr-3","label":"Bump a dependency","meta":"#82 · dependabot"},{"id":"pr-4","label":"Desktop bridge","meta":"#78 · +1.8k"},{"id":"pr-5","label":"Docs typo","meta":"#81 · +2 −2"}]' \
+  --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="triage" \
+  | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $TRI --on <device>
 ```
 
-PowerShell:
+The `ranked` action fires when they press **Send ranking**, and `data.items` is
+every chip with `x`, `y` and the `quadrant` it landed in. They may send more
+than once — read each one afresh rather than repeating yourself.
 
-```powershell
-@'
-{"background":"linear-gradient(135deg,#0a0012,#1a0028)","colors":{"accent":"#ff0080"}}
-'@ | surface theme -
+**Agent says:** read their layout back as a decision, in one or two sentences.
+Name the specific things — "you'd ship the session fix first and let the
+dependency bump wait" — not "I received five placements." Then:
+
+```bash
+surface set $TRI note "<the same read, one short line>"
+surface notify "Done reading your triage. Next when you want the design review." --id $TRI --button "Next=next"
 ```
-
-**Expect:** the grid background shifts to purple. Reset with `surface theme reset`.
 
 ---
 
-## Wrap-up
+## Step 4 — Pick a design
 
-You've covered:
+**Agent says:** "Same button, four ways. Pick the one you'd actually ship and
+tell me why — this is what a design review looks like when I can just show
+you."
 
-- `surface create` / `surface link` / `surface present` — three ways to put content on the display
-- `surface touch` — the entire "hot reload" story for linked artifacts (no diff tool needed)
-- `surface actions` + `surface ack` + `surface reply` — two-way interaction
-- `surface theme` — display customization
+**Agent runs:** build four genuinely different variants — not four shades of
+one. Each `html` renders in its own frame, so a variant cannot restyle its
+neighbours. Keep each to one component on a transparent background; the frame
+centres it for you.
 
-Where to go next:
+```bash
+MK=$(surface create "Which button?" --template mockup --agent tour \
+  --metadata '{"demo":true}' \
+  --param title="Which button?" \
+  --param question="Same action, four takes." \
+  --param variants='[{"label":"A","caption":"Filled","html":"<button style=\"font:600 14px system-ui;color:#0a0a0a;background:#fff;border:0;border-radius:10px;padding:12px 22px\">Deploy to production</button>"}, …]' \
+  --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="mockup" \
+  | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $MK --on <device>
+```
 
-- `surface --help` and `surface <cmd> --help` for the full command surface
-- `SKILL.md` for when-to-use guidance
-- `docs/architecture.md` for the data model and process shape
-- `SECURITY.md` before exposing Surface beyond `127.0.0.1`
+The `vote` action's `data.choice` is the label; `data.text` is why, if they said.
 
-Set `tutorial: complete` and `installed_at: <ISO timestamp>` in `~/.surface/install-state.json`.
+**Agent says:** one sentence agreeing or pushing back with a reason. A design
+review where the reviewer always agrees is not a review.
+
+```bash
+surface patch $MK '{"status":"voted","chosen":"<label>"}'
+surface notify "Noted. Next when you're ready — a number that moves." --id $MK --button "Next=next"
+```
+
+---
+
+## Step 5 — A number that moves
+
+**Agent says:** "Watch the number. I'm not rebuilding the page — the page is
+already there and I'm just changing what it says."
+
+**Agent runs:**
+
+```bash
+G=$(surface create "Deploy" --template gauge --agent tour \
+  --metadata '{"demo":true}' \
+  --param title="Deploy" --param unit="%" --param max=100 \
+  --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="gauge" \
+  | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $G --on <device>
+```
+
+Then move it, with real pauses — this only lands if they watch it change:
+
+```bash
+surface set $G value 12  && surface set $G label "Building"
+sleep 2
+surface set $G value 48  && surface set $G label "Running tests"
+sleep 2
+surface set $G value 91  && surface set $G label "Uploading"
+sleep 2
+surface set $G value 100 && surface set $G label "Live"
+surface set $G note "The HTML never changed. Only the state did."
+```
+
+**Agent says:** "That's `surface set`. The same three words work on any surface
+you leave up — a build, a queue depth, a countdown, whatever you want to glance
+at."
+
+```bash
+surface notify "Next when you're ready — a document." --id $G --button "Next=next"
+```
+
+---
+
+## Step 6 — A document, not markup
+
+**Agent says:** "Not everything worth showing you is HTML. This is a PDF, opened
+in your own browser's reader."
+
+**Agent runs:** the tour ships one. It is inside the installed package:
+
+```bash
+PDF=$(surface present "$(npm root -g)/surface-display/examples/tour/surface-brief.pdf" \
+  --title "Surface brief" --metadata '{"demo":true}' | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $PDF --on <device>
+```
+
+**Agent says:** "`surface present` takes a PDF, an image, a markdown file —
+anything you'd otherwise have to describe to me or screenshot at me."
+
+A presented document has no rail, so the notification is the *only* way on.
+Send it and then leave them alone — do not ask whether they have finished
+reading:
+
+```bash
+surface notify "Read at your own pace. Next when you want the last one." --id $PDF --button "Next=next"
+```
+
+If they ask whether you can highlight or annotate inside it: no. It is the
+browser's own reader and `surface exec` does not reach into it. What you can do
+is re-render the same document as a `doc` surface, where a highlight is just
+markup — offer that, do not pretend.
+
+---
+
+## Step 7 — Something to watch, that you can talk about
+
+**Agent says:** "And it plays video — but watch the bar under it. Ask me
+something while it's running and I'll know the second you asked at."
+
+**Agent runs:**
+
+```bash
+V=$(surface create "For you" --template video --agent tour \
+  --metadata '{"demo":true}' \
+  --param url="https://youtu.be/DWcqbPm_Rn4?t=195" \
+  --param autoplay=true --param loop=false \
+  --param tour_step="<n> of 7" --param tour_next="Next" --param tour_id="video" \
+  | grep -oE '[0-9a-f-]{36}' | head -1)
+surface open $V --on <device>
+```
+
+Autoplay is muted — browsers require it — so say so:
+
+**Agent says:** "It's muted. Browsers insist."
+
+An `ask` action carries `{ text, t, duration, video_id }`: `t` is the second
+they were on. **Answer in the surface, not the terminal** — that is the whole
+point of the step:
+
+```bash
+surface patch $V '{"reply":"<your answer>"}'
+```
+
+You know the video id and the second. Get the words for that second and answer
+from them:
+
+```bash
+surface video transcript "<url>" --at <the t from the action>
+```
+
+That prints only the passage around that moment. Quote it back to them — "at
+3:28 he's reading the article's first line" — because the whole point of the
+step is that you know *where they are*, not just what the video is about. If the
+command errors, say so in the reply rather than guessing from the title; a
+confident wrong answer about a video they are watching is obviously wrong.
+
+Two things worth showing off once they've asked something:
+
+```bash
+# pin moments they can click
+surface patch $V '{"markers":[{"t":195,"label":"where you asked"},{"t":236,"label":"the payoff"}]}'
+# or just take them there
+surface patch $V '{"seek_to":{"t":236,"nonce":1}}'
+```
+
+Then hand off:
+
+```bash
+surface notify "Last one. Next when you've had enough." --id $V --button "Next=next"
+```
+
+---
+
+## Step 8 — What it's actually for
+
+Now the useful part, and the only step that happens in the terminal.
+
+Send one notification with buttons. This is also a demo: it is the lightest way
+you have to ask for one bit of intent, and it survives a reload in their tray.
+
+```bash
+surface notify "That's the tour. Want the two-minute version of how to use this day to day?" \
+  --id $TOUR --button "Go on=explain" --button "I'm good=skip"
+```
+
+If they press **I'm good**, say: "It's all in the tray icon up top if you want
+it later," and go to cleanup.
+
+If they press **Go on**, say this — in your own words is fine here, but cover
+all four:
+
+**Say it out loud.** Nothing to configure. Say *"surface it"*, *"put that on my
+surface"*, *"show me on the display"*, or *"ask me on my phone"* and the agent
+does the rest. It reads `SKILL.md`, so plain English is the whole interface.
+
+**It works when you are not there.** The agent that asks the question does not
+have to be alive when you answer it. A click waits in the inbox until something
+drains it. That is the difference between this and a chat window.
+
+**Where it fits.** Ask them which of these is them, and mean it:
+
+- *Plans and diffs* — "surface the plan before you write it" beats scrolling a
+  wall of proposed changes in a terminal.
+- *Approvals* — long jobs that need one decision in the middle, answered from a
+  phone instead of blocking a terminal all afternoon.
+- *Documents* — PDFs, reports, images, anything you would otherwise squint at in
+  a pager.
+- *Dashboards* — one card you leave up, that the agent keeps current.
+
+**One thing to try today.** Give them a concrete first move based on what they
+just said, not a menu. If they mentioned reviewing code: "next time I'm about to
+make a big change, tell me to surface the plan first."
+
+### Cleanup
+
+```bash
+surface clear-demos
+surface open --on <device>     # back to the grid
+```
+
+Stop the background watcher. Set `tutorial: "complete"` and `installed_at` to
+the current ISO timestamp in `~/.surface/install-state.json`.
+
+`clear-demos` only finds surfaces tagged `metadata.demo` — that is why every
+create above carries `--metadata '{"demo":true}'`. If you skipped it, the tour
+is still sitting in their grid; delete those ids yourself.
+
+---
+
+## If they want out
+
+At any point, if they say stop: say "Fine — it's all in `surface --help` and the
+tray icon when you want it," run the cleanup above, set `tutorial: "skipped"`,
+and stop. Do not talk them back into it.
+
+## Reference
+
+| Command | What it does |
+|---|---|
+| `surface wait --follow` | stream every action as it happens — run this in the background |
+| `surface create --template <t>` | build from a shipped template |
+| `surface link <abs-path>` | serve a file from the user's project, live |
+| `surface present <abs-path>` | one-shot PDF / image / markdown |
+| `surface set <id> <key> <value>` | change what a surface says without touching its HTML |
+| `surface patch <id> <json>` | change several keys at once |
+| `surface open <id> --on <device>` | put a surface on a specific screen |
+| `surface notify <text> --id <id> --button "L=a"` | a notification they can answer |
+| `surface reply <id> <text>` | a toast on the surface they are looking at |
+| `surface wait --id <id> --action <a>` | block until the user does the thing — fallback only |
+
+Templates that ship with Surface: `ask`, `board`, `doc`, `gauge`, `mockup`,
+`stream`, `tictactoe`, `tour`, `triage`, `video`, `whiteboard`.

@@ -189,6 +189,26 @@ export function broadcastGlobal(event: string, data: unknown, onlyTarget?: strin
   }
 }
 
+/**
+ * One event, two audiences.
+ *
+ * The agent plane needs an action's whole payload — that is how `surface wait`
+ * receives work. A display needs only enough to move a badge. When the two are
+ * the same frame, anything private in the payload is published to every screen
+ * in the house: a notification-borne action carries the notification's id and
+ * the label of the button pressed, so a question addressed to one screen was
+ * legible on all of them however carefully the tray was scoped.
+ *
+ * Splitting by plane rather than by target, because "every device except the
+ * one that acted" is not a target and the agent must never be excluded.
+ */
+export function broadcastByPlane(event: string, forAgent: unknown, forDevices: unknown): void {
+  for (const client of [...globalClients]) {
+    const payload = client.target === LOCAL_TARGET ? forAgent : forDevices;
+    sendEvent(client, event, payload, () => removeGlobalClient(client.id));
+  }
+}
+
 export function broadcastToSurface(
   surfaceId: string,
   event: string,

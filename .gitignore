@@ -16,9 +16,25 @@ screenshots/
 hackathon_packet/
 Hackathon packet.zip
 video/archived/
-video/readme-banner/surface-banner.mp4
 video/readme-banner/snapshots/
-video/readme-banner/node_modules/
+
+# Video is WIP and stays out of git for now.
+#
+# It is also where this repo's two worst accidents came from. Renders are
+# hundreds of MB — every `npm run render` writes another timestamped copy
+# beside the last — and, worse, media tracked on one branch becomes untracked
+# AND un-ignored the moment you check out a branch whose .gitignore doesn't
+# cover it, at which point `git add -A` sweeps the lot into whatever you
+# thought you were committing. Ignoring by extension everywhere under video/
+# means that can't happen again on any branch.
+video/**/renders/
+video/**/node_modules/
+video/**/*.mp4
+video/**/*.mov
+video/**/*.webm
+video/**/*.wav
+video/**/*.m4a
+video/**/*.aac
 structures_symmetry_symbols.*
 planning/
 audit/

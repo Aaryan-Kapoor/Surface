@@ -143,27 +143,37 @@ copy in your agent's instructions file (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
 `.github/copilot-instructions.md`, Aider's `CONVENTIONS.md`), record the path
 in `notes`, and read `SKILL.md` from there on every session.
 
-## Step 3 — Tutorial
+## Step 3 — The tour
 
 Ask the user:
 
-> Want me to walk you through Surface in five minutes? It covers creating content, hot reload from your project, and reacting to clicks.
+> Want me to show you what this does? It takes about five minutes and you drive
+> it from your screen.
 
 If yes:
 
-1. Set `tutorial: "in_progress"`.
-2. Run `surface seed-demos` — links the bundled example surfaces from `examples/demos/` (or unhides them if a previous tour left them archived). Each row is tagged `metadata.demo = true` so it's identifiable.
-3. Walk the user through `docs/TUTORIAL.md` step by step.
-4. At the end, run `surface clear-demos` — flips `metadata.hidden = true` on every demo-tagged row so they vanish from the dashboard. The artifact records are kept; running `surface seed-demos` again revives them in place rather than re-creating. Set `tutorial: "complete"`.
+1. Set `tutorial: "in_progress"` in the state file.
+2. Read `docs/TUTORIAL.md` from the installed package (`npm root -g`, then
+   `surface-display/docs/TUTORIAL.md`) and follow it. **Read its rules section
+   before running anything** — the tour is a demo, and most of the ways it goes
+   wrong are things it explicitly tells you not to do.
+3. The tour builds its own surfaces from shipped templates. Do not improvise
+   markup for it, and do not run `surface seed-demos` — that seeds a different
+   set of example cards, and the tour would then compete with them for the
+   screen. It ends by running `surface clear-demos` itself.
+4. Set `tutorial: "complete"` when it finishes.
 
 If no:
 
-- Don't seed demos. Set `tutorial: "skipped"`.
-- If a previous interrupted run left demos behind, run `surface clear-demos` now to clean up.
+- Set `tutorial: "skipped"`.
+- If an interrupted run left demo cards behind, run `surface clear-demos`.
 
-The tutorial is the single best onboarding mechanism. Skipping is fine, but don't silently bypass it — confirm with the user.
+The tour is the single best onboarding mechanism, and it is the only place the
+user is told what Surface is *for* rather than what it can do. Skipping is
+fine; silently bypassing is not.
 
-Both `seed-demos` and `clear-demos` are idempotent — repeated calls are safe.
+`surface seed-demos` still exists for the gallery of bundled examples
+(`examples/demos/`), and both it and `clear-demos` are idempotent.
 
 ## Step 4 — Stamp the install
 

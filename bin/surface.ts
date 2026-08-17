@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
-import { runService, SERVICE_HELP } from "./service.js";
+import { runService, savedServiceBaseUrl, SERVICE_HELP } from "./service.js";
 import { runSkill, runUpgrade } from "./upgrade.js";
 import { runCodex, CODEX_HELP } from "./codex.js";
 
@@ -20,7 +20,9 @@ function cliVersion(): string {
   }
 }
 
-const BASE = (process.env.SURFACE_URL || "http://127.0.0.1:3000").replace(/\/$/, "");
+// SURFACE_URL wins; otherwise ask the service registry where the service this
+// machine installed actually listens, and only then fall back to the default.
+const BASE = (process.env.SURFACE_URL || savedServiceBaseUrl() || "http://127.0.0.1:3000").replace(/\/$/, "");
 // Loopback callers need no credential. A remote agent (SSH box, container)
 // carries a system bearer minted from the system plane:
 //   surface auth session issue --role system --label devbox
@@ -60,7 +62,7 @@ Commands:
   actions [<id>]             List pending user actions
   ack <action-id>            Acknowledge action
   reply <id> <text>          Send toast to surface
-  notify <text>              Display ephemeral notification
+  notify <text>              Display a notification (--button "Label=action" makes it answerable)
   theme [<json>|-|reset]     Get / set / reset display theme
   slot [<role> <id>|--clear] Show or assign display slots (renderer|home|overlay)
   status                     Get display state
@@ -122,7 +124,16 @@ const COMMANDS: Record<string, CommandSpec> = {
   state: command("surface state <id>"),
   ask: command("surface ask <question> [--options a,b,c] [--freetext] [--context -|<md>] [--context-file <p>] [--wait] [--timeout <s>] [--on <device>] [--id <id>] [--agent <l>] [--title <t>]", { options: STR, freetext: BOOL, context: STR, "context-file": STR, wait: BOOL, timeout: NUM, on: STR, id: STR, agent: STR, title: STR }),
   append: command("surface append <id> [<text>|-] [--md]   (- pipes stdin line by line)", { md: BOOL }),
-  video: command("surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]", { title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR }),
+  video: command([
+    "surface video <url> [--title <t>] [--start <s>] [--autoplay] [--loop] [--id <id>] [--agent <l>]",
+    "surface video transcript <url|video-id> [--lang en] [--at <sec>] [--window <sec>] [--block <sec>] [--json]",
+    "    timestamped captions for the video on screen. --at <sec> returns just the part",
+    "    around a moment — pair it with the `t` on an `ask` action to answer from the",
+    "    passage they were actually watching.",
+  ].join("\n"), {
+    title: STR, start: NUM, autoplay: BOOL, loop: BOOL, id: STR, agent: STR,
+    lang: STR, at: NUM, window: NUM, block: NUM, json: BOOL,
+  }),
   doc: command("surface doc <path> [--title <t>] [--toc] [--width narrow|default|wide] [--agent <l>] [--no-open]", { title: STR, toc: BOOL, width: STR, agent: STR, "no-open": BOOL }),
   template: command([
     "surface template list [--json]",
@@ -145,7 +156,10 @@ const COMMANDS: Record<string, CommandSpec> = {
   actions: command("surface actions [<id>]"),
   ack: command("surface ack <action-id>"),
   reply: command("surface reply <id> <text>"),
-  notify: command("surface notify <text> [--style info|success|warning|error] [--duration <ms>] [--on <device>]", { style: STR, duration: NUM, on: STR }),
+  notify: command(
+    'surface notify <text> [--button "Label=action"]... [--id <surface-id>] [--style info|success|warning|error] [--duration <ms>] [--sticky] [--on <device>]',
+    { style: STR, duration: NUM, on: STR, id: STR, sticky: BOOL, button: MULTI },
+  ),
   theme: command("surface theme [<json>|-|reset]"),
   slot: command([
     "surface slot                          show current slot assignments",
@@ -243,7 +257,7 @@ const BOOLEAN_FLAGS = new Set([
 ]);
 
 // Flags that may repeat (--param a=1 --param b=2); collected in order.
-const MULTI_FLAGS = new Set(["param", "to"]);
+const MULTI_FLAGS = new Set(["param", "to", "button"]);
 
 function parseArgs(argv: string[]): ParsedArgs {
   const positional: string[] = [];
@@ -455,7 +469,7 @@ function agentSessionFromEnv(): { kind: "codex" | "claude"; session_id: string }
 // choke point every command funnels through.
 const AGENT_STAMPED_PATHS = new Set(["/artifacts", "/artifacts/link", "/artifacts/present-file"]);
 
-async function call(method: string, pathname: string, body?: unknown): Promise<any> {
+async function call(method: string, pathname: string, body?: unknown, signal?: AbortSignal): Promise<any> {
   const stampable =
     (method === "POST" && AGENT_STAMPED_PATHS.has(pathname)) ||
     (method === "POST" && /^\/artifacts\/[^/]+\/touch$/.test(pathname)) ||
@@ -480,6 +494,12 @@ async function call(method: string, pathname: string, body?: unknown): Promise<a
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      // Callers that can be cancelled pass a signal. Without one, a server that
+      // accepts a request and then stalls holds the socket — and the process —
+      // open past its own deadline: `wait --timeout` would abort its SSE stream,
+      // return, and still not exit, because an inbox poll or a claim was left
+      // hanging with nothing able to reach it.
+      signal,
     });
   } catch (e: any) {
     const code = e?.cause?.code || e?.code;
@@ -598,7 +618,43 @@ async function waitForAction(opts: {
   // retries instead of silently skipping work nobody took.
   const seen = new Set<string>();
 
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // The stream is closed on the way out rather than left to the process exit.
+  // `wait` ends with process.exit(0) the moment it has an action, and on
+  // Windows tearing a live HTTP socket down inside that exit surfaced as
+  // 3221226505 (0xC0000409) — the command had already printed the right action
+  // and still reported a crash, which anything checking the exit status reads
+  // as failure. `stopped` is what makes the abort mean "we are done" rather
+  // than "the connection dropped", which the reconnect loop would otherwise
+  // answer by dialling straight back.
+  const conn = new AbortController();
+  let stopped = false;
+  const closeStream = () => {
+    stopped = true;
+    disarmUnregisteredWarning();
+    try { conn.abort(); } catch { /* already gone */ }
+  };
+
+  // Abort-aware, so closing the stream does not leave a reconnect backoff
+  // holding the event loop for up to thirty seconds after the command is done.
+  //
+  // The `aborted` check is the whole point and not belt-and-braces: adding an
+  // abort listener to a signal that has ALREADY aborted never fires it, so a
+  // sleep starting in that window would run its full backoff on a ref'd timer —
+  // measured at the full 1200ms in a 1200ms test. That window is reachable:
+  // closeStream() can land between a fetch rejecting and the catch arm calling
+  // sleep. Belt-and-braces is the unref, which keeps even a stray timer from
+  // being the reason the process is still alive.
+  const sleep = (ms: number) => new Promise<void>((resolve) => {
+    if (conn.signal.aborted) return resolve();
+    const t = setTimeout(finish, ms);
+    t.unref?.();
+    function finish() {
+      clearTimeout(t);
+      conn.signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    conn.signal.addEventListener("abort", finish, { once: true });
+  });
 
   const normalizeData = (d: unknown) => {
     if (typeof d === "string") {
@@ -633,7 +689,7 @@ async function waitForAction(opts: {
   const claim = async (actionId: string, token: string): Promise<"won" | "gone" | "taken" | "unknown"> => {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await call("POST", `/actions/${encodeURIComponent(actionId)}/claim`, { token, client_id: clientId });
+        await call("POST", `/actions/${encodeURIComponent(actionId)}/claim`, { token, client_id: clientId }, conn.signal);
         return "won";
       } catch (err: any) {
         const status = err?.status;
@@ -667,7 +723,7 @@ async function waitForAction(opts: {
   const complete = async (actionId: string, token: string): Promise<void> => {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await call("POST", `/actions/${encodeURIComponent(actionId)}/ack`, { token });
+        await call("POST", `/actions/${encodeURIComponent(actionId)}/ack`, { token }, conn.signal);
         return;
       } catch (err: any) {
         if (err?.status === 404 || err?.status === 409) return;
@@ -718,7 +774,7 @@ async function waitForAction(opts: {
       const path = projectScoped
         ? `${base}?project=${encodeURIComponent(opts.projectRoot!)}`
         : base;
-      const pending = (await call("GET", path)) as any[];
+      const pending = (await call("GET", path, undefined, conn.signal)) as any[];
       for (const a of pending) {
         const delivered = await deliver(a);
         if (delivered && !opts.follow) return delivered;
@@ -739,14 +795,14 @@ async function waitForAction(opts: {
 
   const work = (async () => {
     let backoff = 1000;
-    while (true) {
+    while (!stopped) {
       // Always listen on the global stream — per-surface streams don't carry
       // surface_action events. Filtering happens in isMatch().
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (TOKEN) headers["Authorization"] = `Bearer ${TOKEN}`;
       let res: Response;
       try {
-        res = await fetch(streamUrl(), { headers });
+        res = await fetch(streamUrl(), { headers, signal: conn.signal });
       } catch {
         await sleep(backoff);
         backoff = Math.min(backoff * 2, 30000);
@@ -868,9 +924,15 @@ async function waitForAction(opts: {
     });
     const raced = await Promise.race([work.then((action) => ({ action })), timeoutP]);
     clearTimeout(timer!);
+    // Either arm of that race ends the command, including the timeout arm —
+    // which leaves `work` still connected, so the close has to happen here and
+    // not only where an action was found.
+    closeStream();
     return raced as { action?: any; timedOut?: boolean };
   }
-  return { action: await work };
+  const action = await work;
+  closeStream();
+  return { action };
 }
 
 async function main() {
@@ -1064,6 +1126,36 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
     }
 
     case "video": {
+      // `surface video transcript <url>` — the words, not the player. It is a
+      // subcommand of `video` rather than its own verb because it is only ever
+      // useful about a video that is already on someone's screen.
+      if (positional[0] === "transcript") {
+        const target = positional[1];
+        if (!target) usage("usage: surface video transcript <url|video-id> [--lang en] [--at <sec>]");
+        const { fetchTranscript, blocks, around, clockText } = await import("./transcript.js");
+        const result = await fetchTranscript(target, typeof flags.lang === "string" ? flags.lang : "en");
+        const block = parseNumberFlag(flags, "block") ?? 30;
+        let list = blocks(result.cues, block);
+        const at = parseNumberFlag(flags, "at");
+        if (at !== undefined) list = around(list, at, parseNumberFlag(flags, "window") ?? 45);
+        if (flags.json === true) {
+          out({ ...result, cues: undefined, blocks: list });
+          return;
+        }
+        // Say which track this is: an auto-generated one has no punctuation to
+        // speak of and mangles names, and a quote from it should be hedged.
+        const provenance = [
+          result.generated ? "auto-generated" : null,
+          result.translated_from ? `machine-translated from ${result.translated_from}` : null,
+        ].filter(Boolean).join(", ");
+        console.log(
+          `# ${result.video_id} · ${result.language}${provenance ? ` (${provenance})` : ""}` +
+          `${result.duration ? ` · ${clockText(result.duration)}` : ""}`,
+        );
+        for (const b of list) console.log(`${clockText(b.t)}\t${b.text}`);
+        return;
+      }
+
       const url = positional[0];
       if (!url) usage("usage: " + CMD_HELP.video);
       if (!/^https?:\/\//.test(url)) {
@@ -1379,6 +1471,24 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
       const duration = parseNumberFlag(flags, "duration");
       if (duration !== undefined) body.duration = duration;
       if (typeof flags.on === "string") body.device = flags.on;
+      if (flags.sticky) body.sticky = true;
+      if (typeof flags.id === "string") body.surface_id = flags.id;
+
+      // --button "Roll back=rollback" — the label is what the human reads, the
+      // action name is what lands in the inbox. Pressing one records an action
+      // against --id, so `surface wait` sees it exactly like an in-surface
+      // click. Split on the last "=" so a label may contain one.
+      const buttons = multi.button || [];
+      if (buttons.length) {
+        if (typeof flags.id !== "string") {
+          usage("--button needs --id <surface-id>: the action has to land on a surface");
+        }
+        body.actions = buttons.map((raw) => {
+          const eq = raw.lastIndexOf("=");
+          if (eq <= 0) usage(`--button expects "Label=action" (got "${raw}")`);
+          return { label: raw.slice(0, eq).trim(), action: raw.slice(eq + 1).trim() };
+        });
+      }
       out(await call("POST", "/display/notify", body));
       return;
     }
@@ -1484,7 +1594,13 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         });
 
       if (flags.follow === true) {
-        installLifetimeGuards(timeoutSec);
+        // Deliberately WITHOUT the timeout. waitForAction races its own, and
+        // arming a second one here armed it *earlier*, so the guard's
+        // process.exit(3) won the race and fired over a live SSE connection —
+        // the exact 0xC0000409 crash the exitCode path below exists to avoid,
+        // which made that path unreachable for `--follow --timeout`. One
+        // timeout, owned by the code that can close the stream first.
+        installLifetimeGuards();
         // The persistent action terminal: one compact JSON line per action,
         // forever. Built for harness watchdogs that pattern-match stdout.
         const result = await waitForAction({
@@ -1495,7 +1611,7 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         // Only resolves when --timeout was given and elapsed (a lifetime cap).
         if (result.timedOut) {
           console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
-          process.exit(3);
+          process.exitCode = 3;
         }
         return;
       }
@@ -1504,11 +1620,27 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
         surfaceId, wantAction, wantEvent, timeoutSec, autoAck, all, projectRoot,
         emit: (a) => writeOut(JSON.stringify(a, null, 2) + "\n"),
       });
+      // exitCode rather than exit(), for the same reason the success path
+      // below returns: a timeout tears the connection down too, and exiting on
+      // top of that is what produced 0xC0000409 on Windows. Fixing only the
+      // path that happened to be under test would have left `wait --timeout`
+      // reporting a crash instead of 3.
       if (result.timedOut) {
         console.error(JSON.stringify({ error: "timeout", timeout_seconds: timeoutSec }));
-        process.exit(3);
+        process.exitCode = 3;
+        return;
       }
-      process.exit(0);
+      // Deliberately NOT process.exit(0).
+      //
+      // Exiting on top of a connection that is still tearing itself down is
+      // what made this command report 3221226505 (0xC0000409) on Windows after
+      // doing its job perfectly — Node fast-fails rather than unwinding, and
+      // every script that checks the exit status reads a crash. waitForAction
+      // has already aborted the stream, and the heartbeat timer is unref'd, so
+      // there is nothing left holding the loop open: returning here lets the
+      // process end by running out of work, which is the one exit that cannot
+      // race anything.
+      return;
     }
 
     case "pair": {

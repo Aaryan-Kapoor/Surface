@@ -1,0 +1,50 @@
+{
+  "name": "mockup",
+  "description": "Live design variants side by side — the human picks one and says why, and both come back as an action",
+  "params": {
+    "title": {
+      "type": "string",
+      "default": "Which one?",
+      "description": "Heading"
+    },
+    "question": {
+      "type": "string",
+      "default": "",
+      "description": "Optional line under the heading"
+    },
+    "variants": {
+      "type": "list",
+      "default": [],
+      "description": "[{ label, caption, html }] — html renders in its own frame, so a variant cannot restyle the page"
+    },
+    "tour_step": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: the step indicator, e.g. \"2 of 7\". Empty hides the tour rail."
+    },
+    "tour_next": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: label for the advance button"
+    },
+    "tour_id": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: which step this is, echoed back on the next action"
+    }
+  },
+  "state": {
+    "status": {
+      "type": "string",
+      "default": "open"
+    },
+    "chosen": {
+      "type": "string",
+      "default": ""
+    }
+  },
+  "actions": [
+    "vote",
+    "next"
+  ]
+}

@@ -64,6 +64,9 @@
     "test:sessions": "tsx test/sessions.ts",
     "test:upgrade": "tsx test/upgrade.ts",
     "test:updates": "tsx test/updates.ts",
+    "test:notify": "tsx test/notify.ts",
+    "test:video": "tsx test/video.ts",
+    "test:transcript": "tsx test/transcript.ts",
     "test:e2e": "tsx test/e2e.ts"
   },
   "bin": {

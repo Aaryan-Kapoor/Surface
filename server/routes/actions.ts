@@ -1,6 +1,8 @@
 import { Router } from "express";
 import type { Request } from "express";
 import { getDb } from "../db.js";
+import type { Artifact } from "../artifacts.js";
+import type { SurfaceAction } from "../actionsStore.js";
 import {
   ackAction,
   claimActionForWaiter,
@@ -11,9 +13,10 @@ import {
   getUnresolvedActionCount,
 } from "../actionsStore.js";
 import { getArtifact } from "../artifacts.js";
-import { patchState } from "../state.js";
-import { broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
+import { appendToStateList, patchState } from "../state.js";
+import { broadcastByPlane, broadcastGlobal, broadcastToSurface, getLiveWaiter, isWaiterEligible } from "../sse.js";
 import { createBinding, deleteBinding, listBindings, projectAllowsBindings, scheduleDelivery, setBindingEnabled } from "../bindings.js";
+import { resolveMatchingNotifications } from "../notifications.js";
 import { deviceNameOf, requireSystem, targetOf } from "./helpers.js";
 
 export const actionsRouter = Router();
@@ -88,6 +91,151 @@ async function fanOutWebhook(payload: {
   }
 }
 
+/**
+ * Record a user action and run it down the delivery ladder.
+ *
+ * Every route that turns a human gesture into an action goes through here — an
+ * in-surface click, and a press on a notification button. A second copy of this
+ * sequence is how you get an action that never fans out to a webhook, or never
+ * wakes a waiter, in exactly one of the two paths.
+ */
+export function dispatchSurfaceAction(
+  artifact: Artifact,
+  action: string,
+  data: unknown,
+  deviceName: string | null,
+  opts?: { fromNotificationId?: string; actor?: string | null },
+): SurfaceAction {
+  const act = createAction(getDb(), { surface_id: artifact.id, action, data });
+
+  // An ask surface flips to answered server-side the moment the answer action
+  // lands, so the card can never be answered twice — independent of whether a
+  // waiter, binding, or nothing at all is listening (docs/templates/ask.md).
+  if (artifact.template === "ask" && action === "answer") {
+    const answer = {
+      ...(typeof data === "object" && data !== null ? data : {}),
+      answered_at: new Date().toISOString(),
+      device: deviceName,
+    };
+    const result = patchState(getDb(), artifact.id, { status: "answered", answer });
+    const event = { id: artifact.id, patch: { status: "answered", answer }, state_version: result.state_version };
+    broadcastGlobal("state_patch", event);
+    broadcastToSurface(artifact.id, "state_patch", event);
+  }
+
+  // A whiteboard's strokes lived only in the browser that drew them, so a
+  // reload kept the agent's drawing and lost the human's — exactly backwards.
+  // Persist the vectors (not the PNG, which is two orders of magnitude larger
+  // and reconstructible) so the board survives being closed.
+  if (artifact.template === "whiteboard" && action === "snapshot") {
+    const payload = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+    if (Array.isArray(payload.strokes)) {
+      const result = patchState(getDb(), artifact.id, { user_strokes: payload.strokes });
+      const event = { id: artifact.id, patch: { user_strokes: payload.strokes }, state_version: result.state_version };
+      broadcastGlobal("state_patch", event);
+      broadcastToSurface(artifact.id, "state_patch", event);
+    }
+  }
+
+  // Clear has to erase the same thing persisting saved it, or it only looks
+  // like it worked: the canvas goes blank, and the next reload — or the board
+  // opened on a second screen — brings the whole drawing back. Everything the
+  // board renders goes, agent marks and caption included, because that is what
+  // the person watching the canvas empty just saw happen.
+  if (artifact.template === "whiteboard" && action === "cleared") {
+    const patch = { user_strokes: [], agent_strokes: [], note: null };
+    const result = patchState(getDb(), artifact.id, patch);
+    const event = { id: artifact.id, patch, state_version: result.state_version };
+    broadcastGlobal("state_patch", event);
+    broadcastToSurface(artifact.id, "state_patch", event);
+  }
+
+  // The same decision may also be sitting in the tray as a question. Doing it
+  // on the page answers it there too, rather than leaving the badge counting a
+  // question the user has already dealt with.
+  //
+  // Only for actions that came *from* the surface. A tray press answers exactly
+  // the question whose button was pressed and nothing else: two unrelated
+  // questions can legitimately offer the same action name, and pressing one
+  // must not silently decide the other.
+  //
+  // Scoped to whoever acted (`opts.actor`): an unaddressed question is settled
+  // by anyone, but a question put to one screen is that screen's to answer.
+  // Without that, pressing Next here would silently decide another display's
+  // private question and report the wrong person's choice to the agent.
+  if (!opts?.fromNotificationId) {
+    const actor = opts?.actor === undefined ? null : opts.actor;
+    for (const resolved of resolveMatchingNotifications(getDb(), artifact.id, act.action, actor)) {
+      // Same scoping as the tray press: a question put to one screen stays that
+      // screen's business, right down to the frame saying it has been settled.
+      broadcastGlobal("notification_answered", { id: resolved.id, answer: act.action }, resolved.device ?? undefined);
+    }
+  }
+
+  // A video surface reports where the viewer was every time they do something.
+  // It cannot write its own state — the state route is system-plane only — so
+  // the playhead rides on the action and is folded in here. There is no
+  // heartbeat by design: a tick every second would be an inbox row every
+  // second, waking every waiter on the machine to say nothing happened.
+  if (artifact.template === "video") {
+    const payload = typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
+    const patch: Record<string, unknown> = {};
+    if (typeof payload.t === "number" && Number.isFinite(payload.t)) {
+      patch.playhead = {
+        t: payload.t,
+        duration: typeof payload.duration === "number" ? payload.duration : null,
+        playing: !!payload.playing,
+        at: new Date().toISOString(),
+      };
+    }
+    if (action === "ask" && typeof payload.text === "string" && payload.text.trim()) {
+      patch.thread = appendToStateList(getDb(), artifact.id, "thread", {
+        role: "user",
+        text: payload.text.trim(),
+        t: typeof payload.t === "number" ? payload.t : null,
+      });
+    }
+    if (Object.keys(patch).length) {
+      const result = patchState(getDb(), artifact.id, patch);
+      const event = { id: artifact.id, patch, state_version: result.state_version };
+      broadcastGlobal("state_patch", event);
+      broadcastToSurface(artifact.id, "state_patch", event);
+    }
+  }
+
+  fanOutWebhook({
+    surface_id: artifact.id,
+    surface_title: artifact.title,
+    action: act.action,
+    data: data ?? {},
+    created_at: act.created_at,
+  });
+  // The agent gets the whole action — that is how `surface wait` receives work.
+  // Displays get everything except `data`, which they never read (the client
+  // uses this only to bump a card's pending count). That difference is not
+  // frugality: a notification-borne action carries the notification's id and the
+  // label of the button pressed, so one frame for both audiences published a
+  // question addressed to one screen to every screen, straight past the tray
+  // scoping.
+  const frame = {
+    id: act.id,
+    surface_id: artifact.id,
+    surface_title: artifact.title,
+    // Project ownership rides on the event so a project-scoped waiter can filter
+    // live actions the same way it filters its inbox drain.
+    project_root: artifact.project_root,
+    action: act.action,
+    status: act.status,
+    created_at: act.created_at,
+  };
+  broadcastByPlane("surface_action", { ...frame, data: act.data }, frame);
+
+  // Run the ladder: an eligible live waiter gets a bounded first refusal, then
+  // bindings fire, then the action simply waits in the inbox (server/bindings.ts).
+  scheduleDelivery(artifact.id, act.action);
+  return act;
+}
+
 // Display posts a user action (iframe postMessage → PWA → here).
 actionsRouter.post("/artifacts/:id/actions", (req, res) => {
   const artifact = getArtifact(getDb(), req.params.id);
@@ -106,48 +254,12 @@ actionsRouter.post("/artifacts/:id/actions", (req, res) => {
     res.status(400).json({ error: "action is required" });
     return;
   }
-  const act = createAction(getDb(), { surface_id: req.params.id, action, data });
-
-  // An ask surface flips to answered server-side the moment the answer action
-  // lands, so the card can never be answered twice — independent of whether a
-  // waiter, binding, or nothing at all is listening (docs/templates/ask.md).
-  if (artifact.template === "ask" && action === "answer") {
-    const answer = {
-      ...(typeof data === "object" && data !== null ? data : {}),
-      answered_at: new Date().toISOString(),
-      device: deviceNameOf(req),
-    };
-    const result = patchState(getDb(), req.params.id, { status: "answered", answer });
-    const event = { id: req.params.id, patch: { status: "answered", answer }, state_version: result.state_version };
-    broadcastGlobal("state_patch", event);
-    broadcastToSurface(req.params.id, "state_patch", event);
-  }
-  fanOutWebhook({
-    surface_id: req.params.id,
-    surface_title: artifact.title,
-    action: act.action,
-    data: data ?? {},
-    created_at: act.created_at,
+  const act = dispatchSurfaceAction(artifact, action, data, deviceNameOf(req), {
+    actor: req.auth?.role === "system" ? null : targetOf(req),
   });
-  broadcastGlobal("surface_action", {
-    id: act.id,
-    surface_id: req.params.id,
-    surface_title: artifact.title,
-    // Project ownership rides on the event so a project-scoped waiter can filter
-    // live actions the same way it filters its inbox drain.
-    project_root: artifact.project_root,
-    action: act.action,
-    data: act.data,
-    status: act.status,
-    created_at: act.created_at,
-  });
-
-  // Run the ladder: an eligible live waiter gets a bounded first refusal, then
-  // bindings fire, then the action simply waits in the inbox (server/bindings.ts).
-  scheduleDelivery(req.params.id, act.action);
-
   res.status(201).json(act);
 });
+
 
 // ── Bindings (layer 2 registration — system plane only) ──
 

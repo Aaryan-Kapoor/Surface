@@ -1,13 +1,95 @@
 {
   "name": "video",
-  "description": "Responsive YouTube/privacy-nocookie or generic web video embed",
+  "description": "Video with a playhead the agent can read and drive — YouTube, direct media, or any embeddable page, plus a timestamped ask bar",
   "params": {
-    "url": { "type": "url", "required": true, "description": "HTTP(S) video or embeddable page URL" },
-    "title": { "type": "string", "required": false, "default": "", "description": "Optional title shown above the player" },
-    "start": { "type": "number", "required": false, "default": 0, "description": "Start offset in seconds" },
-    "autoplay": { "type": "boolean", "required": false, "default": false, "description": "Autoplay the video muted when supported" },
-    "loop": { "type": "boolean", "required": false, "default": false, "description": "Loop the video when supported" }
+    "url": {
+      "type": "url",
+      "required": true,
+      "description": "HTTP(S) video or embeddable page URL"
+    },
+    "title": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Optional title shown above the player"
+    },
+    "start": {
+      "type": "number",
+      "required": false,
+      "default": 0,
+      "description": "Start offset in seconds. A ?t= or ?start= on the URL is used when this is 0."
+    },
+    "autoplay": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "Autoplay the video muted when supported"
+    },
+    "loop": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "Loop the video when supported"
+    },
+    "chat": {
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "description": "Show the ask bar. Questions arrive as an `ask` action carrying the playhead."
+    },
+    "placeholder": {
+      "type": "string",
+      "required": false,
+      "default": "Ask about this video…",
+      "description": "Ask bar placeholder"
+    },
+    "tour_step": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: the step indicator, e.g. \"2 of 7\". Empty hides the tour rail."
+    },
+    "tour_next": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: label for the advance button"
+    },
+    "tour_id": {
+      "type": "string",
+      "default": "",
+      "description": "Tour only: which step this is, echoed back on the next action"
+    }
   },
-  "state": {},
-  "actions": []
+  "state": {
+    "thread": {
+      "type": "array",
+      "default": [],
+      "description": "Q&A turns, appended server-side: { id, role: user|agent, text, t, at }. Answer with a `reply` patch."
+    },
+    "playhead": {
+      "type": "object",
+      "default": {},
+      "description": "Where the viewer last was: { t, duration, playing, at }. Written by the server from the actions the surface sends."
+    },
+    "markers": {
+      "type": "array",
+      "default": [],
+      "description": "Agent-pinned timestamps: [{ t, label }]. Rendered under the player; clicking one seeks and reports a `seek` action."
+    },
+    "seek_to": {
+      "type": "object",
+      "default": {},
+      "description": "Drive the playhead: { t, nonce }. Bump the nonce to replay the same jump."
+    },
+    "note": {
+      "type": "string",
+      "default": "",
+      "description": "One line under the player"
+    }
+  },
+  "actions": [
+    "ask",
+    "seek",
+    "ended",
+    "next"
+  ]
 }
