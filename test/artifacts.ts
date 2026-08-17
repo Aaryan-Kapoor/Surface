@@ -1,12 +1,22 @@
 import fs from "fs";
+import http from "http";
 import path from "path";
-import { cleanupDir, isolatedPorts, killServer, makeClient, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import { cleanupDir, isolatedPorts, killServer, makeClient, sleep, spawnServer, tmpDir, waitForReady } from "./helpers.js";
+import { thumbGenerationFor } from "../server/thumbs.js";
 import type { ChildProcess } from "node:child_process";
 
 let SURFACE_URL = "";
 let server: ChildProcess | null = null;
 let serverPort = 0;
-const dataDir = tmpDir("surface-artifacts-data-");
+// A dot component on purpose. Surface's default data directory is `~/.surface`,
+// and `res.sendFile` defaults to `dotfiles: "ignore"` — with no `root` set, that
+// check runs over the whole absolute path, so every cached thumbnail and every
+// stored non-HTML file 404ed on a default install. This suite already asserts
+// that captures and stored bytes come back; running it from a dotted directory
+// is what makes those assertions cover the case that actually ships.
+const dataRoot = tmpDir("surface-artifacts-data-");
+const dataDir = path.join(dataRoot, ".surface");
+fs.mkdirSync(dataDir, { recursive: true });
 const req = () => makeClient(SURFACE_URL);
 
 async function api(method: string, path: string, body?: unknown): Promise<any> {
@@ -32,6 +42,39 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+// A minimal global-SSE reader. There is no helper for this yet and the
+// passthrough-readiness assertion below needs the real event, not a proxy for
+// it: the whole point is that the dashboard is told, over the wire, that the
+// picture it is not showing has become available.
+function openGlobalStream(): { events: Array<{ event: string; data: any }>; close: () => void } {
+  const events: Array<{ event: string; data: any }> = [];
+  const request = http.request(
+    { host: "127.0.0.1", port: serverPort, path: "/stream", headers: { Accept: "text/event-stream" } },
+    (res) => {
+      let buffer = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        buffer += chunk;
+        let split: number;
+        while ((split = buffer.indexOf("\n\n")) !== -1) {
+          const frame = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          const name = /^event: (.+)$/m.exec(frame)?.[1];
+          const payload = /^data: (.*)$/m.exec(frame)?.[1];
+          if (!name) continue;
+          let data: any = payload;
+          try { data = payload ? JSON.parse(payload) : undefined; } catch {}
+          events.push({ event: name, data });
+        }
+      });
+      res.on("error", () => {});
+    },
+  );
+  request.on("error", () => {});
+  request.end();
+  return { events, close: () => request.destroy() };
+}
+
 let tmpRoot2Cache: string | null = null;
 function tmpRoot2(): string {
   if (!tmpRoot2Cache) tmpRoot2Cache = tmpDir("surface-doc-test-");
@@ -42,7 +85,12 @@ async function main() {
   const ports = await isolatedPorts();
   serverPort = ports.port;
   SURFACE_URL = `http://127.0.0.1:${serverPort}`;
-  server = spawnServer(serverPort, dataDir, {}, ports.contentPort);
+  // A binary that cannot start: thumbnail behaviour here is about the cache
+  // keys and the card flags, and a real capture landing mid-assertion would
+  // rewrite the files these tests place by hand.
+  server = spawnServer(serverPort, dataDir, {
+    SURFACE_CHROME: path.join(dataDir, "no-such-chrome"),
+  }, ports.contentPort);
   await waitForReady(SURFACE_URL, "/artifacts");
 
   const suffix = Date.now().toString(36);
@@ -398,11 +446,323 @@ async function main() {
   assert(chunkDoc.chunks[2].kind === "md" && chunkDoc.chunks[2].content === "### done", "md chunk mangled");
   await optionalDelete(`/artifacts/${streamId}`);
 
+  // ── Thumbnails: what the dashboard grid reads ──
+
+  const thumbId = `artifact-test-thumb-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: thumbId,
+    title: "Thumbnail Test Surface",
+    mime: "text/html",
+    content: "<!doctype html><html><body><h1>thumb</h1></body></html>",
+  });
+
+  // With no cached capture the route answers with the generated cover, and the
+  // card list says so — that flag is what stops the grid fetching a placeholder
+  // it would replace seconds later.
+  const thumbRes = await req()("GET", `/artifacts/${thumbId}/thumb`);
+  assert(thumbRes.status === 200, `thumb route should answer 200, got ${thumbRes.status}`);
+  const thumbType = thumbRes.headers.get("content-type") || "";
+  assert(thumbType.includes("image/svg+xml"), `uncaptured thumb should be SVG, got ${thumbType}`);
+  const svg = typeof thumbRes.body === "string" ? thumbRes.body : String(thumbRes.body);
+  assert(svg.includes("Thumbnail Test"), "cover must carry the surface title");
+  assert(!/>HTML<\/text>\s*$/.test(svg), "cover must not be a bare file-extension chip");
+
+  // A placeholder is transient — it must never be cached like a real capture.
+  const phCache = thumbRes.headers.get("cache-control") || "";
+  assert(!phCache.includes("immutable"), `placeholder must not be immutable, got ${phCache}`);
+
+  const thumbCards = await api("GET", "/artifacts");
+  const thumbCard = thumbCards.find((c: any) => c.id === thumbId);
+  assert(thumbCard, "thumb test surface missing from card list");
+  assert(thumbCard.has_thumb === false, "has_thumb must be false before a capture exists");
+
+  // Image artifacts always have a real preview: the route passes the bytes
+  // through even with no capture on disk.
+  const imgId = `artifact-test-thumb-img-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: imgId,
+    title: "Thumbnail Test Image",
+    mime: "image/svg+xml",
+    files: [{ path: "image.svg", mime: "image/svg+xml", content: "<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8'></svg>" }],
+  });
+  const imgCard = (await api("GET", "/artifacts")).find((c: any) => c.id === imgId);
+  assert(imgCard && imgCard.has_thumb === true, "image artifacts must report has_thumb");
+  const imgThumb = await req()("GET", `/artifacts/${imgId}/thumb`);
+  const imgType = imgThumb.headers.get("content-type") || "";
+  assert(imgType.includes("image/svg+xml"), `image thumb should pass the bytes through, got ${imgType}`);
+  assert(String(imgThumb.body).includes("<svg"), "image thumb must be the artifact's own file");
+
+  // …and an image whose bytes have gone (a workspace half-restored, a linked
+  // file deleted under us) must fall through to the cover. `res.sendFile`
+  // reports a missing file asynchronously, so the route's try/catch never saw
+  // it and Express's error handler answered 500 for a request that had a
+  // perfectly good fallback waiting two lines below.
+  const goneId = `artifact-test-thumb-gone-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: goneId,
+    title: "Vanished Image",
+    mime: "image/png",
+    files: [{ path: "image.png", mime: "image/png", content_base64: "iVBORw0KGgo=" }],
+  });
+  const goneOk = await req()("GET", `/artifacts/${goneId}/thumb`);
+  assert(goneOk.status === 200, `passthrough should work before the file goes, got ${goneOk.status}`);
+  assert(
+    (goneOk.headers.get("content-type") || "").includes("image/png"),
+    "the image's own bytes are what a present passthrough serves",
+  );
+
+  const goneFiles = path.join(dataDir, "artifacts", goneId, "versions", "1", "files");
+  // Both lines below pass on a path that was never right: rmSync with
+  // `force` succeeds on a file that does not exist, and the absence check then
+  // agrees. Assert the file is there first, so a change to the storage layout
+  // reports itself here instead of leaving the test asserting nothing.
+  assert(
+    fs.existsSync(path.join(goneFiles, "image.png")),
+    `the fixture expects the stored file at ${goneFiles}; the storage layout moved`,
+  );
+  fs.rmSync(path.join(goneFiles, "image.png"), { force: true });
+  assert(!fs.existsSync(path.join(goneFiles, "image.png")), "the fixture must really remove the file");
+
+  const goneThumb = await req()("GET", `/artifacts/${goneId}/thumb`);
+  assert(goneThumb.status === 200, `a missing passthrough file must fall through, not 500 (got ${goneThumb.status})`);
+  assert(
+    (goneThumb.headers.get("content-type") || "").includes("image/svg+xml"),
+    `expected the cover, got ${goneThumb.headers.get("content-type")}`,
+  );
+  assert(String(goneThumb.body).includes("Vanished Image"), "the cover must carry the surface title");
+  await optionalDelete(`/artifacts/${goneId}`);
+
+  // ── an update that makes the passthrough available has to say so ──
+  //
+  // A card showing its own cover has `has_thumb: false` and deliberately never
+  // calls the thumb route again, and `surface_updated` patches text, not the
+  // preview. `enqueueThumb` returned early for a passthrough image without
+  // queueing a capture OR emitting a readiness event, so a surface that BECAME
+  // an image kept its cover until a full reload even though /thumb could serve
+  // the picture.
+  const becomesId = `artifact-test-becomes-image-${suffix}`;
+  await api("POST", "/artifacts", {
+    id: becomesId,
+    title: "Becomes An Image",
+    mime: "text/html",
+    files: [{ path: "index.html", mime: "text/html", content: "<!doctype html><h1>not yet</h1>" }],
+  });
+  const beforeCard = (await api("GET", "/artifacts")).find((c: any) => c.id === becomesId);
+  assert(beforeCard && beforeCard.has_thumb === false, "the card starts on its own cover");
+
+  const stream = openGlobalStream();
+  try {
+    await sleep(150); // let the stream attach before the update that must be announced
+    await api("PUT", `/artifacts/${becomesId}`, {
+      mime: "image/png",
+      files: [{ path: "image.png", mime: "image/png", content_base64: "iVBORw0KGgo=" }],
+    });
+    let ready: { event: string; data: any } | undefined;
+    for (let i = 0; i < 40 && !ready; i++) {
+      ready = stream.events.find((e) => e.event === "thumb_ready" && e.data?.id === becomesId);
+      if (!ready) await sleep(50);
+    }
+    assert(ready, "becoming a passthrough image must announce thumb_ready, or the card keeps its cover");
+  } finally {
+    stream.close();
+  }
+  const afterCard = (await api("GET", "/artifacts")).find((c: any) => c.id === becomesId);
+  assert(afterCard && afterCard.has_thumb === true, "…and the route really can serve it now");
+  await optionalDelete(`/artifacts/${becomesId}`);
+
+  // ── The immutable cache key must mean exactly one picture ──
+  //
+  // `?v=<updated_at>` buys a one-year `immutable` response, and every revision
+  // used to be served from the same `<id>.png`. Right after an update the old
+  // PNG was still the only file on disk, so a request carrying the NEW key was
+  // answered with the OLD image — and cached under that key for a year. These
+  // assertions are about the bytes, not the header: the URL has to name the
+  // picture it returns.
+
+  const thumbsPath = path.join(dataDir, "thumbs");
+  fs.mkdirSync(thumbsPath, { recursive: true });
+  const cacheId = `artifact-test-thumbcache-${suffix}`;
+  const bytesA = Buffer.from("PNG-BYTES-REVISION-A");
+  const bytesB = Buffer.from("PNG-BYTES-REVISION-B");
+  const bytesC = Buffer.from("PNG-BYTES-REVISION-C");
+
+  async function fetchThumb(version: string): Promise<{ cacheControl: string; body: Buffer }> {
+    const res = await fetch(
+      `${SURFACE_URL}/artifacts/${cacheId}/thumb?v=${encodeURIComponent(version)}`,
+      { signal: AbortSignal.timeout(10000) },
+    );
+    return { cacheControl: res.headers.get("cache-control") || "", body: Buffer.from(await res.arrayBuffer()) };
+  }
+  async function currentArtifact(): Promise<any> {
+    return (await api("GET", `/artifacts/${cacheId}`)).artifact;
+  }
+  function placeCapture(artifact: any, bytes: Buffer): string {
+    const generation = thumbGenerationFor(artifact);
+    assert(generation, "an artifact must have a thumbnail generation");
+    fs.writeFileSync(path.join(thumbsPath, `${cacheId}.${generation}.png`), bytes);
+    return generation!;
+  }
+
+  await api("POST", "/artifacts", {
+    id: cacheId,
+    title: "Cache Key Surface",
+    mime: "text/html",
+    content: "<!doctype html><html><body><h1>revision A</h1></body></html>",
+  });
+  const revA = await currentArtifact();
+  const genA = placeCapture(revA, bytesA);
+
+  // `updated_at` has one-second resolution, so its key is only safe to pin once
+  // that second has closed and no further update can reuse the string.
+  await sleep(2300);
+  const servedA = await fetchThumb(revA.updated_at);
+  assert(servedA.cacheControl.includes("immutable"), `a captured revision should cache hard, got ${servedA.cacheControl}`);
+  assert(servedA.body.equals(bytesA), "the immutable response must be the revision its key names");
+
+  // Publish a new revision. The only capture on disk is still revision A's.
+  await api("PUT", `/artifacts/${cacheId}`, {
+    content: "<!doctype html><html><body><h1>revision B</h1></body></html>",
+  });
+  const revB = await currentArtifact();
+  assert(thumbGenerationFor(revB) !== genA, "a new version must be a new generation");
+  await sleep(2300);
+  const staleForB = await fetchThumb(revB.updated_at);
+  assert(
+    !staleForB.cacheControl.includes("immutable"),
+    `an older capture must never be pinned under the new revision's key, got ${staleForB.cacheControl}`,
+  );
+  assert(staleForB.body.equals(bytesA), "…it is still shown, just on a revalidating window");
+
+  // Now the capture for revision B lands: the same URL becomes immutable AND
+  // starts resolving to revision B's bytes.
+  placeCapture(revB, bytesB);
+  const servedB = await fetchThumb(revB.updated_at);
+  assert(servedB.cacheControl.includes("immutable"), `the captured revision should cache hard, got ${servedB.cacheControl}`);
+  assert(servedB.body.equals(bytesB), "the key must now mean revision B, not the picture cached before it");
+
+  // Rapid updates: `updated_at` is second-resolution, so two updates inside one
+  // second share a key. Until that second closes, pinning it would let revision
+  // C's key be claimed by a revision D nobody has photographed yet.
+  await api("PUT", `/artifacts/${cacheId}`, {
+    content: "<!doctype html><html><body><h1>revision C</h1></body></html>",
+  });
+  const revC = await currentArtifact();
+  placeCapture(revC, bytesC);
+  const freshC = await fetchThumb(revC.updated_at);
+  assert(freshC.body.equals(bytesC), "the current capture is served immediately");
+  assert(
+    !freshC.cacheControl.includes("immutable"),
+    `a version key whose second is still open must not be pinned, got ${freshC.cacheControl}`,
+  );
+  await sleep(2300);
+  const settledC = await fetchThumb(revC.updated_at);
+  assert(settledC.cacheControl.includes("immutable"), "once the second has closed the key is safe to pin");
+  assert(settledC.body.equals(bytesC), "and it still means revision C");
+
+  // The dashboard treats a card event as a whole card: surface_created unshifts
+  // it into the list and builds a card from it, and surface_updated does the
+  // same for a row it has never seen. A payload carrying only `{ id }` — which
+  // is what a row deleted between the write and the broadcast used to produce —
+  // becomes a titleless ghost that sits on every connected display until
+  // someone reloads.
+  {
+    const cardStream = openGlobalStream();
+    await sleep(150);
+    const ghostId = `artifact-test-ghost-${suffix}`;
+    await api("POST", "/artifacts", {
+      id: ghostId,
+      title: "Ghost check",
+      files: [{ path: "index.html", content: "<h1>Ghost check</h1>", mime: "text/html" }],
+    });
+    await api("PUT", `/artifacts/${ghostId}`, { title: "Ghost check, renamed" });
+    await sleep(400);
+    cardStream.close();
+
+    const cardEvents = cardStream.events.filter(
+      (e) => e.event === "surface_created" || e.event === "surface_updated",
+    );
+    assert(cardEvents.length >= 2, `expected create and update events, saw ${cardEvents.length}`);
+    for (const e of cardEvents) {
+      assert(
+        typeof e.data?.title === "string" && e.data.title.length > 0,
+        `${e.event} carried no title — a stub payload renders as an empty card: ${JSON.stringify(e.data)}`,
+      );
+      assert(
+        "has_thumb" in e.data && "preview" in e.data,
+        `${e.event} must carry the same fields the card list does: ${JSON.stringify(Object.keys(e.data || {}))}`,
+      );
+    }
+    await optionalDelete(`/artifacts/${ghostId}`);
+  }
+
+  // Deleting a surface must take every generation with it, not just one.
+  await optionalDelete(`/artifacts/${cacheId}`);
+  const leftBehind = fs.readdirSync(thumbsPath).filter((n) => n.startsWith(`${cacheId}.`));
+  assert(leftBehind.length === 0, `deleting a surface must remove every cached capture, found ${leftBehind.join(", ")}`);
+
+  await optionalDelete(`/artifacts/${thumbId}`);
+  await optionalDelete(`/artifacts/${imgId}`);
+
   await optionalDelete(`/artifacts/${htmlId}`);
   await optionalDelete(`/artifacts/${mdId}`);
   await optionalDelete(`/artifacts/${binaryId}`);
 
+  await gracefulShutdownWithWarmChrome();
+
   console.log("Artifact HTTP tests passed");
+}
+
+// SIGTERM with a live headless Chrome must still be an ordinary, successful
+// shutdown. The thumbnailer used to install its own SIGINT/SIGTERM handlers the
+// moment Chrome launched; both listeners fired and the thumbs one called
+// process.exit(143) before the async HTTP close callback and closeDb() had run.
+// This is a separate, short-lived server because it needs a REAL browser, which
+// the rest of the suite deliberately denies itself.
+async function gracefulShutdownWithWarmChrome(): Promise<void> {
+  const { findChromeBin } = await import("../server/thumbs.js");
+  if (!findChromeBin()) {
+    console.log("  SKIP  graceful shutdown with a warm chrome (no chrome binary)");
+    return;
+  }
+  const ports = await isolatedPorts();
+  const shutdownDataDir = tmpDir("surface-artifacts-shutdown-data-");
+  const base = `http://127.0.0.1:${ports.port}`;
+  const child = spawnServer(ports.port, shutdownDataDir, {}, ports.contentPort);
+  try {
+    await waitForReady(base, "/artifacts");
+    const shutdownReq = makeClient(base);
+    await shutdownReq("POST", "/artifacts", {
+      body: {
+        id: "shutdown-warm-chrome",
+        title: "Shutdown Surface",
+        mime: "text/html",
+        content: "<!doctype html><html><body><h1>warm</h1></body></html>",
+      },
+    });
+    // Wait for the capture, which is what proves Chrome is actually running.
+    const thumbsPath = path.join(shutdownDataDir, "thumbs");
+    const captureDeadline = Date.now() + 60000;
+    let captured = false;
+    while (Date.now() < captureDeadline) {
+      try {
+        if (fs.readdirSync(thumbsPath).some((n) => n.endsWith(".png"))) { captured = true; break; }
+      } catch {}
+      await sleep(200);
+    }
+    assert(captured, "a capture must land before this can test shutting down with a warm chrome");
+
+    const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+    process.kill(child.pid!, "SIGTERM");
+    const code = await Promise.race([exited, sleep(15000).then(() => -1 as number | null)]);
+    assert(code === 0, `SIGTERM with a warm chrome must be a clean exit, got ${code}`);
+
+    await sleep(300);
+    const scratch = fs.readdirSync(shutdownDataDir).filter((n) => n.startsWith(".chrome-"));
+    assert(scratch.length === 0, `chrome's profile dir must be removed on shutdown, found ${scratch.join(", ")}`);
+  } finally {
+    await killServer(child, ports.port).catch(() => {});
+    cleanupDir(shutdownDataDir);
+  }
 }
 
 main().then(async () => {
@@ -416,6 +776,6 @@ main().then(async () => {
 
 async function cleanup() {
   await killServer(server, serverPort).catch(() => {});
-  cleanupDir(dataDir);
+  cleanupDir(dataRoot);
   if (tmpRoot2Cache) cleanupDir(tmpRoot2Cache);
 }

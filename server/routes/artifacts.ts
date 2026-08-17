@@ -13,6 +13,7 @@ import {
   getArtifactFile,
   getCurrentArtifactVersion,
   artifactAuthorPlane,
+  imageThumbPassthrough,
   inferMime,
   isLinkedArtifact,
   linkArtifact,
@@ -27,8 +28,9 @@ import {
   updateArtifact,
 } from "../artifacts.js";
 import { addSurfaceClient, broadcastGlobal, broadcastToSurface, hasWaiter } from "../sse.js";
-import { enqueueThumb, hasThumb, getThumbPath } from "../thumbs.js";
+import { enqueueThumb, hasAnyThumb, removeThumbs, resolveThumbFile, thumbGenerationFor } from "../thumbs.js";
 import { defaultPathForMime, injectSurfaceRuntime, pickRenderableFile, renderArtifactShell, renderThumbPlaceholder } from "../render.js";
+import { previewForCard } from "../preview.js";
 import { getState, patchState, setStateIfEmpty } from "../state.js";
 import { appendChunks, getChunks, DEFAULT_STREAM_CAP } from "../streams.js";
 import { listTemplates, renderTemplate, resolveTemplate, templateAssetFiles } from "../templates.js";
@@ -51,12 +53,61 @@ function canMutateArtifact(req: Request, res: Response, existing: { metadata: st
 
 export const artifactsRouter = Router();
 
+// `updated_at` is SQLite `datetime('now')`: UTC, one-second resolution. A key
+// is only safe to cache forever once its second has closed — a second update
+// inside the same second would reuse the string.
+const VERSION_KEY_SETTLE_MS = 2000;
+function versionKeySettled(updatedAt: string | null | undefined): boolean {
+  if (!updatedAt) return false;
+  const ms = Date.parse(`${updatedAt.replace(" ", "T")}Z`);
+  if (!Number.isFinite(ms)) return false;
+  return Date.now() - ms >= VERSION_KEY_SETTLE_MS;
+}
+
+// True when GET /artifacts/:id/thumb has a real picture to serve — a cached
+// capture, or an image artifact it can pass through. False means the route
+// would fall back to the generated placeholder.
+export function hasRealThumb(
+  id: string,
+  mime: string | null | undefined,
+  generation?: string | null,
+): boolean {
+  if (mime && mime.startsWith("image/") && imageThumbPassthrough(getDb(), id)) return true;
+  // Any generation counts: an older capture is still a real picture, and the
+  // route serves it (short-cached) while the fresh one is taken. Saying `false`
+  // here would make the card paint its own cover and never call the route at
+  // all — see the `has_thumb` note in docs/core/thumbnails.md.
+  try { return hasAnyThumb(id, generation); } catch { return false; }
+}
+
 // Full card payload for SSE listeners. Includes hidden rows so clients can see
 // a hidden=true update and remove the card themselves (the default list
-// filters them out).
+// filters them out). Null when the row is gone — see broadcastCard.
 export function cardPayload(id: string) {
   const card = getArtifactCard(getDb(), id);
-  return card || { id };
+  if (!card) return null;
+  return {
+    ...card,
+    has_thumb: hasRealThumb(card.id, card.artifact_mime, thumbGenerationFor(card)),
+    preview: previewForCard(getDb(), card),
+  };
+}
+
+/**
+ * Announce a card, or say nothing at all.
+ *
+ * The dashboard treats these payloads as whole cards: `surface_created`
+ * unshifts one into the list and builds a card from it, and `surface_updated`
+ * does the same for a row it has never seen. A stub carrying only `{ id }` —
+ * which is what a row deleted between the write and the broadcast used to
+ * produce — becomes a card with no title, no kind and no preview, and it stays
+ * on every connected display until someone reloads. Not broadcasting is the
+ * honest answer: the row is gone, and a `surface_deleted` is already on its way.
+ */
+function broadcastCard(event: string, id: string): void {
+  const payload = cardPayload(id);
+  if (!payload) return;
+  broadcastGlobal(event, payload);
 }
 
 // Remember which agent session created (or re-rendered) a surface, so the
@@ -73,7 +124,29 @@ function captureAgentLink(req: Request, surfaceId: string): void {
   recordAgentLink(getDb(), surfaceId, session);
 }
 
-function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string): void {
+/**
+ * Options every `res.sendFile` in this file needs.
+ *
+ * `send` defaults `dotfiles` to "ignore", and with no `root` the whole absolute
+ * path is checked for dot segments. Surface's default data directory is
+ * `~/.surface`, so every file under it — every cached thumbnail, every stored
+ * image — answered 404 on a default install. Nothing was missing and nothing was
+ * unreadable; the path had a dot in it. HTML surfaces are sent with `res.send`
+ * and so were never affected, which is why the dashboard looked like it worked.
+ */
+const SEND_FILE_OPTS = { dotfiles: "allow" } as const;
+
+// `onError` is for callers that have a fallback. `res.sendFile` reports
+// failures asynchronously — to its callback, or to `next()` when there isn't
+// one — so a caller's try/catch only ever sees a synchronous throw, and a
+// missing or unreadable file becomes a 500 from the error handler instead of
+// whatever the caller would rather have sent.
+function sendArtifactFile(
+  res: Response,
+  file: ArtifactFile,
+  artifactId: string,
+  onError?: (err: unknown) => void,
+): void {
   const contentType = file.mime || inferMime(file.path);
   const charset = contentType.startsWith("text/") || contentType === "application/json" || contentType === "image/svg+xml";
   res.setHeader("Content-Type", charset ? `${contentType}; charset=utf-8` : contentType);
@@ -84,7 +157,11 @@ function sendArtifactFile(res: Response, file: ArtifactFile, artifactId: string)
     res.send(bytes);
     return;
   }
-  res.sendFile(file.storage_path);
+  if (onError) {
+    res.sendFile(file.storage_path, SEND_FILE_OPTS, (err) => { if (err) onError(err); });
+    return;
+  }
+  res.sendFile(file.storage_path, SEND_FILE_OPTS);
 }
 
 // Per-surface SSE stream
@@ -105,6 +182,14 @@ artifactsRouter.get("/artifacts", (req, res) => {
   res.json(listArtifactCards(getDb(), { includeHidden, project, agent }).map((card) => ({
     ...card,
     listening: hasWaiter(card.id, undefined, card.project_root),
+    // Whether /thumb would answer with a real picture. The dashboard uses this
+    // to paint its own cover for a not-yet-captured surface instead of
+    // fetching a placeholder it will replace seconds later.
+    has_thumb: hasRealThumb(card.id, card.artifact_mime, thumbGenerationFor(card)),
+    // The opening lines of the surface's own content, so a card with no capture
+    // yet shows what it holds instead of its title a second time. Cached on
+    // version + file mtime, so a warm list costs one stat per card.
+    preview: previewForCard(getDb(), card),
   })));
 });
 
@@ -118,7 +203,7 @@ artifactsRouter.post("/artifacts/present-file", (req, res) => {
   try {
     const result = presentFile(getDb(), { filePath, title, metadata, copy, open, project_root });
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    broadcastCard("surface_created", result.artifact.id);
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
@@ -145,7 +230,7 @@ artifactsRouter.post("/artifacts/link", (req, res) => {
       : metadata;
     const result = linkArtifact(getDb(), { path: linkPath, entry, title, metadata: mergedMetadata, project_root, template });
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    broadcastCard("surface_created", result.artifact.id);
     if (open !== false) broadcastGlobal("display_navigate", { surface_id: result.artifact.id });
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
@@ -162,7 +247,7 @@ artifactsRouter.post("/artifacts/:id/touch", (req, res) => {
   }
   captureAgentLink(req, req.params.id);
   const artifact = getArtifact(getDb(), req.params.id);
-  broadcastGlobal("surface_updated", cardPayload(req.params.id));
+  broadcastCard("surface_updated", req.params.id);
   broadcastToSurface(req.params.id, "surface_updated", {
     id: req.params.id,
     title: artifact?.title,
@@ -226,7 +311,7 @@ function instantiateTemplate(req: Request, res: Response): void {
         files: inputFiles,
         reason: "template_rerender",
       })!;
-      broadcastGlobal("surface_updated", cardPayload(id));
+      broadcastCard("surface_updated", id);
       broadcastToSurface(id, "surface_updated", { id, reload: true, updated_at: result.artifact.updated_at });
     } else {
       result = createArtifact(db, {
@@ -244,7 +329,7 @@ function instantiateTemplate(req: Request, res: Response): void {
       if (Object.keys(rendered.stateDefaults).length) {
         setStateIfEmpty(db, result.artifact.id, rendered.stateDefaults);
       }
-      broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+      broadcastCard("surface_created", result.artifact.id);
     }
     // Re-renders re-stamp the link: `surface sync` runs at session start, so
     // the freshest session becomes the flowback target.
@@ -291,7 +376,7 @@ artifactsRouter.post("/artifacts", (req, res) => {
       author_plane: planeOf(req),
     });
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_created", cardPayload(result.artifact.id));
+    broadcastCard("surface_created", result.artifact.id);
     enqueueThumb(result.artifact.id);
     res.status(201).json(result);
   } catch (err: any) {
@@ -378,7 +463,7 @@ artifactsRouter.post("/artifacts/:id/rollback", (req, res) => {
     res.status(404).json({ error: "Artifact version not found" });
     return;
   }
-  broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+  broadcastCard("surface_updated", result.artifact.id);
   broadcastToSurface(result.artifact.id, "surface_updated", {
     id: result.artifact.id,
     title: result.artifact.title,
@@ -436,7 +521,7 @@ artifactsRouter.put("/artifacts/:id", (req, res) => {
     // Updates re-stamp too: the session that just rewrote a surface is the
     // freshest flowback target.
     captureAgentLink(req, result.artifact.id);
-    broadcastGlobal("surface_updated", cardPayload(result.artifact.id));
+    broadcastCard("surface_updated", result.artifact.id);
     broadcastToSurface(result.artifact.id, "surface_updated", {
       id: result.artifact.id,
       title: result.artifact.title,
@@ -460,7 +545,7 @@ artifactsRouter.delete("/artifacts/:id", (req, res) => {
     res.status(404).json({ error: "Artifact not found" });
     return;
   }
-  try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+  removeThumbs(req.params.id);
   broadcastGlobal("surface_deleted", { id: req.params.id });
   res.json({ deleted: true });
 });
@@ -499,7 +584,7 @@ artifactsRouter.patch("/artifacts/:id/state", (req, res) => {
           ],
           reason: "board_first_write",
         });
-        broadcastGlobal("surface_created", cardPayload("board"));
+        broadcastCard("surface_created", "board");
         enqueueThumb("board");
       } catch (err: any) {
         res.status(400).json({ error: `Could not create the board: ${err.message}` });
@@ -610,46 +695,92 @@ artifactsRouter.get("/artifacts/:id/thumb", (req, res) => {
     return;
   }
   const mime = result.artifact.mime || "";
-  res.setHeader("Cache-Control", "public, max-age=60, stale-while-revalidate=600");
+  const immutableCache = "public, max-age=31536000, immutable";
+  const shortCache = "public, max-age=30, stale-while-revalidate=300";
+  res.setHeader("Cache-Control", shortCache);
 
   if (req.query.regenerate === "1") {
     if (!requireSystem(req, res)) return; // re-renders artifact content in headless Chrome
-    try { fs.rmSync(getThumbPath(req.params.id), { force: true }); } catch {}
+    removeThumbs(req.params.id);
     enqueueThumb(req.params.id);
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
     res.send(renderThumbPlaceholder({
+      id: req.params.id,
       title: result.artifact.title || "Untitled",
       mime,
+      preview: previewForCard(getDb(), { id: req.params.id, current_version_id: result.artifact.current_version_id, artifact_mime: mime }),
     }));
     return;
   }
 
-  if (hasThumb(req.params.id)) {
+  // An image surface is served as itself, ahead of any capture — a screenshot
+  // of the viewer is a crop of the picture, and the card crops it again.
+  //
+  // The file has to be there. `res.sendFile` reports a missing or unreadable
+  // file asynchronously — the try/catch below only ever caught a synchronous
+  // throw — so an image whose bytes have gone (a linked file deleted under us,
+  // a half-restored workspace) answered with a 500 from Express's error handler
+  // instead of falling through to the cached capture or the cover. Stat first,
+  // which is the case that actually happens, and pass a callback for the rest:
+  // once the stream has started there is nothing to fall back to, so the most
+  // honest thing left is to end the response rather than hand Express an error
+  // for a request that is already half-answered.
+  const passthrough = imageThumbPassthrough(getDb(), req.params.id);
+  if (passthrough && fs.existsSync(passthrough.storage_path)) {
     try {
-      res.setHeader("Content-Type", "image/png");
-      res.sendFile(getThumbPath(req.params.id));
+      sendArtifactFile(res, passthrough, req.params.id, () => {
+        if (!res.headersSent) res.status(500).end();
+        else if (!res.writableEnded) res.end();
+      });
       return;
     } catch {}
   }
 
-  if (mime.startsWith("image/")) {
-    const preferred =
-      result.files.find((f) => f.path === "index.html") ||
-      result.files.find((f) => f.mime === mime) ||
-      result.files[0];
-    if (preferred) {
-      try {
-        sendArtifactFile(res, preferred, req.params.id);
-        return;
-      } catch {}
+  // `immutable` is a promise that this exact URL will always mean these exact
+  // bytes, for a year. Three things must hold before we are allowed to make it:
+  //
+  //  1. the request's `v` is the artifact's current revision key. The PWA sends
+  //     `?v=<updated_at>`; anything else (e.g. the `?v=<epoch>` one-shot after a
+  //     `thumb_ready`) is a cache-buster, not a revision.
+  //  2. the capture on disk is of *that* revision — the generation baked into
+  //     the filename, not merely "some file for this id exists". Right after an
+  //     update the previous revision's PNG is still there, and pinning it under
+  //     the new key was the year-long staleness bug.
+  //  3. the revision key can no longer be reused. `updated_at` has one-second
+  //     resolution, so two updates inside the same second share a key; until
+  //     that second has closed we could pin revision A's picture under a key
+  //     revision B is about to claim.
+  //
+  // Anything short of all three gets the short revalidating window — which is
+  // also how an older capture keeps the card looking alive while the fresh one
+  // is being taken.
+  const requestedVersion = typeof req.query.v === "string" ? req.query.v : "";
+  const generation = thumbGenerationFor(result.artifact);
+  const cached = resolveThumbFile(req.params.id, generation);
+  if (cached) {
+    if (
+      cached.exact &&
+      requestedVersion &&
+      requestedVersion === result.artifact.updated_at &&
+      versionKeySettled(result.artifact.updated_at)
+    ) {
+      res.setHeader("Cache-Control", immutableCache);
     }
+    res.setHeader("Content-Type", "image/png");
+    res.sendFile(cached.path, SEND_FILE_OPTS);
+    // A capture of an older revision is a stand-in: ask for the current one.
+    if (!cached.exact) enqueueThumb(req.params.id);
+    return;
   }
 
   enqueueThumb(req.params.id);
   res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
   res.send(renderThumbPlaceholder({
+    id: req.params.id,
     title: result.artifact.title || "Untitled",
     mime,
+    preview: previewForCard(getDb(), { id: req.params.id, current_version_id: result.artifact.current_version_id, artifact_mime: mime }),
   }));
 });
 
@@ -706,7 +837,7 @@ artifactsRouter.get(/^\/artifacts\/([^/]+)\/files\/(.+)$/, (req, res) => {
         res.setHeader("Cache-Control", "no-cache");
         res.send(injectSurfaceRuntime(fs.readFileSync(realAbs), artifactId));
       } else {
-        res.sendFile(realAbs);
+        res.sendFile(realAbs, SEND_FILE_OPTS);
       }
       return;
     }

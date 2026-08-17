@@ -100,6 +100,9 @@ These endpoints exist by design and exist for agent control. They are powerful e
 - `POST /artifacts/:id/bindings` registers a command Surface will execute when a user clicks (system-plane only; the command is argv-tokenized — never run through a shell — and click data only ever reaches it on stdin). Captured output lands in `~/.surface/logs/bindings/`.
 - `GET /proxy/pdf?url=...` is a server-side fetch; it refuses URLs resolving to loopback/private/metadata addresses but is still an outbound fetch on your behalf.
 - `POST /api/chat` proxies to OpenRouter using the host's `OPENROUTER_API_KEY`. Anyone with API access can spend that quota (rate-limited per minute).
+- `POST /api/update/apply` installs `surface-display@latest` from npm and restarts the service — new code fetched from the network and executed on the host. **System-plane only**, and only on a global npm install; repo clones and project-local installs are refused with advice instead. The version string it installs is resolved by `surface upgrade` itself and semver-gated before it reaches npm, so nothing a caller sends chooses what gets installed. See "Why the update button is system-only" in `docs/auth/trust-model.md`.
+
+Paired devices *can* read `GET /api/update/status` (the running version is already visible in the UI) but cannot apply an update. The notice is information; the install is authority. What a device is told about a *failure* is projected: `check_error` and `run.error` collapse to a generic sentence, and every URL is stripped of userinfo/query/fragment before it can reach an error string at all — `SURFACE_NPM_REGISTRY` often carries a private-registry token, and Node quotes the whole URL back when it rejects one.
 
 These are not bugs; they are why the system/device split exists and why non-loopback access requires pairing.
 

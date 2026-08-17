@@ -108,6 +108,33 @@ export async function waitForReady(base: string, pathName = "/api/auth/session",
   throw new Error(`server did not become ready at ${base}`);
 }
 
+/**
+ * Is anything accepting connections on this port? A bare TCP connect, not an
+ * HTTP request.
+ *
+ * Teardown used to probe with `fetch`, which on macOS + Node 24 can throw
+ * `setTypeOfService EINVAL` from inside undici's socket write path as the
+ * listener goes away underneath it. That is an uncaught exception, not a
+ * rejected promise, so the caller's `.catch()` never sees it and the whole
+ * suite dies after its last assertion has already passed. Liveness here only
+ * ever meant "is the port open", which is a connect.
+ */
+function portAccepting(port: number, timeoutMs = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    let settled = false;
+    const done = (open: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
+}
+
 export async function killServer(child: ChildProcess | null, port: number): Promise<void> {
   if (!child) return;
   try {
@@ -117,11 +144,7 @@ export async function killServer(child: ChildProcess | null, port: number): Prom
   }
   const start = Date.now();
   while (Date.now() - start < 10000) {
-    try {
-      await fetch(`http://127.0.0.1:${port}/api/auth/session`, { signal: AbortSignal.timeout(500) });
-    } catch {
-      return;
-    }
+    if (!(await portAccepting(port))) return;
     await sleep(150);
   }
   throw new Error("old server still answering after kill");
@@ -131,8 +154,31 @@ export function tmpDir(prefix: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+// Retry, then complain. A scratch dir is routinely still held the instant a
+// suite tears down — a detached server keeping sqlite handles open, or a
+// Chrome profile whose renderer children go on touching lock files after the
+// parent dies (server/thumbs.ts retries for exactly that reason). The old
+// version swallowed the failure, so `finally { cleanupDir(dir) }` read as
+// proof of cleanup while quietly leaving the directory behind: correct
+// structure, silent leak, nothing anywhere saying so.
+//
+// This warns rather than throws: a suite that passed should not be reported
+// as failed because /tmp is untidy, but a leak should never again be silent.
 export function cleanupDir(dir: string): void {
-  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      lastErr = err;
+      // synchronous backoff: teardown runs on the way out, with no event loop
+      // left to await on, and the holder usually releases within a few ms
+      const until = Date.now() + 25;
+      while (Date.now() < until) { /* spin briefly */ }
+    }
+  }
+  console.warn(`[cleanup] could not remove ${dir}: ${(lastErr as Error)?.message ?? lastErr}`);
 }
 
 export async function assertNoLeakedTestServers(): Promise<void> {

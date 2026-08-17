@@ -25,9 +25,13 @@ vm.runInContext(
     extractFunction("surfaceFrameSrc"),
     extractFunction("versionSurfaceViewPath"),
     extractFunction("shouldRenderSurfaceCreated"),
+    extractFunction("hueForId"),
+    extractFunction("cardThumbUrl"),
     "this.surfaceFrameSrc = surfaceFrameSrc;",
     "this.versionSurfaceViewPath = versionSurfaceViewPath;",
     "this.shouldRenderSurfaceCreated = shouldRenderSurfaceCreated;",
+    "this.hueForId = hueForId;",
+    "this.cardThumbUrl = cardThumbUrl;",
   ].join("\n"),
   sandbox,
 );
@@ -37,6 +41,10 @@ const versionSurfaceViewPath: (viewPath: string, version: string) => string =
   sandbox.versionSurfaceViewPath;
 const shouldRenderSurfaceCreated: (routeView: string, hasGrid: boolean) => boolean =
   sandbox.shouldRenderSurfaceCreated;
+const hueForId: (id: string) => number = sandbox.hueForId;
+const cardThumbUrl: (s: { id: string; updated_at?: string; created_at?: string }) => string =
+  sandbox.cardThumbUrl;
+const { renderThumbPlaceholder } = await import("../server/render.js");
 
 function test(name: string, fn: () => void) {
   try { fn(); console.log(`  PASS  ${name}`); }
@@ -87,6 +95,58 @@ test("an unrelated surface_created event never rerenders an open detail view", (
 test("the PWA owns exactly one EventSource connection", () => {
   const eventSources = appSrc.match(/new EventSource\(/g) || [];
   assert.equal(eventSources.length, 1, "app.js must multiplex live events over its global stream");
+});
+
+// A surface's cover is drawn twice — client-side in the grid (`hueForId`) and
+// server-side as the SVG placeholder (`hueForSeed`). They have to be the same
+// picture, or a card visibly changes colour the moment anything falls back to
+// the server route.
+test("client and server derive the same cover hue for a surface", () => {
+  for (const id of ["surface-one", "675c2133-b321-4f71-ad32-0a3b97cb09c6", "a", "z"]) {
+    const svg = renderThumbPlaceholder({ id, title: "t", mime: "text/html" });
+    const serverHue = Number((svg.match(/hsl\((\d+),/) || [])[1]);
+    assert.equal(hueForId(id), serverHue, `hue mismatch for id ${JSON.stringify(id)}`);
+  }
+});
+
+// The version key is what makes the route's immutable cache safe, and the two
+// sides have to agree on what it *is*: the server only answers `immutable` when
+// `?v=` is byte-for-byte the artifact's current `updated_at` (server/routes/
+// artifacts.ts). A card that sent anything else — a rounded timestamp, an
+// epoch, a version number — would silently drop off the hard cache, so assert
+// the exact string rather than "a parameter is present".
+test("card thumbnails are keyed on the exact revision string the server pins", () => {
+  const updatedAt = "2026-07-23 13:46:03";
+  const url = cardThumbUrl({ id: "abc", updated_at: updatedAt });
+  assert.equal(url, `/artifacts/abc/thumb?v=${encodeURIComponent(updatedAt)}`);
+  // …and it round-trips back to that revision, which is the value the route
+  // compares against.
+  assert.equal(new URLSearchParams(url.split("?")[1]).get("v"), updatedAt);
+
+  // updated_at wins over created_at: a capture must follow the latest revision,
+  // not the surface's birthday.
+  assert.equal(
+    cardThumbUrl({ id: "abc", updated_at: updatedAt, created_at: "2020-01-01 00:00:00" }),
+    `/artifacts/abc/thumb?v=${encodeURIComponent(updatedAt)}`,
+  );
+  assert.equal(cardThumbUrl({ id: "a b", created_at: "x" }), "/artifacts/a%20b/thumb?v=x");
+  // No revision to name means no cache key to pin — the route must revalidate.
+  assert.equal(cardThumbUrl({ id: "abc" }), "/artifacts/abc/thumb");
+});
+
+// Documentation drift is a real defect here: pwa.md described a per-surface
+// EventSource the app has not opened for some time, which is exactly the kind
+// of claim a reader trusts over the code.
+test("pwa.md does not claim the detail view opens its own EventSource", () => {
+  const pwaDoc = fs.readFileSync(path.join(__dirname, "..", "docs", "display", "pwa.md"), "utf8");
+  assert.ok(
+    !/opens a per-surface `EventSource`/.test(pwaDoc),
+    "the detail view multiplexes over the global stream; pwa.md must not describe a second connection",
+  );
+  assert.ok(
+    /multiplexed over the global stream/i.test(pwaDoc),
+    "pwa.md must say where detail-view events actually come from",
+  );
 });
 
 console.log("\nsurfaceFrameSrc tests passed\n");
