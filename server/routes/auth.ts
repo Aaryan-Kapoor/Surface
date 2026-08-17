@@ -1,9 +1,9 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import {
-  DEFAULT_SESSION_TTL_SECONDS,
   SESSION_COOKIE,
   consumePairingToken,
+  defaultTtlSeconds,
   createPairingToken,
   createSession,
   getSessionById,
@@ -16,7 +16,13 @@ import {
 } from "../auth.js";
 import { getPresence } from "../presence.js";
 import { connectedTargets } from "../sse.js";
-import { baseUrlFor, clientIp, isSecureRequest, requireSystem } from "./helpers.js";
+import {
+  baseUrlFor,
+  clearSessionCookie,
+  clientIp,
+  requireSystem,
+  setSessionCookie,
+} from "./helpers.js";
 
 export const authRouter = Router();
 
@@ -27,24 +33,6 @@ function cleanLabel(value: unknown): string | null {
   if (label.length > 80) throw new Error("label must be 80 characters or fewer");
   if (/[\u0000-\u001f\u007f]/.test(label)) throw new Error("label contains control characters");
   return label;
-}
-
-function setSessionCookie(req: Request, res: Response, token: string, ttlSeconds: number) {
-  const parts = [
-    `${SESSION_COOKIE}=${token}`,
-    "Path=/",
-    "HttpOnly",
-    "SameSite=Lax",
-    `Max-Age=${ttlSeconds}`,
-  ];
-  if (isSecureRequest(req)) parts.push("Secure");
-  res.append("Set-Cookie", parts.join("; "));
-}
-
-function clearSessionCookie(req: Request, res: Response) {
-  const parts = [`${SESSION_COOKIE}=`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
-  if (isSecureRequest(req)) parts.push("Secure");
-  res.append("Set-Cookie", parts.join("; "));
 }
 
 function sessionPayload(sessionId: string) {
@@ -108,14 +96,18 @@ authRouter.post("/api/auth/bootstrap", (req, res) => {
     res.status(401).json({ error: "Invalid, expired, or already-used pairing token" });
     return;
   }
+  // A pairing token may carry either role, and the two planes have different
+  // default lifetimes — derive the TTL from what was actually consumed rather
+  // than assuming the device default.
+  const ttlSeconds = defaultTtlSeconds(consumed.role);
   const session = createSession({
     role: consumed.role,
     label: label || consumed.label,
     clientIp: clientIp(req),
     userAgent: req.headers["user-agent"] || null,
-    ttlSeconds: DEFAULT_SESSION_TTL_SECONDS,
+    ttlSeconds,
   });
-  setSessionCookie(req, res, session.token, DEFAULT_SESSION_TTL_SECONDS);
+  setSessionCookie(req, res, session.token, ttlSeconds);
   res.json(sessionPayload(session.id));
 });
 

@@ -11,6 +11,7 @@ const suites = [
   "test:preview",
   "test:thumbs",
   "test:auth",
+  "test:sessions",
   "test:content-origin",
   "test:service",
   "test:upgrade",

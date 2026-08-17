@@ -15,7 +15,11 @@ interface Migration {
   up: (db: Database.Database) => void;
 }
 
-const migrations: Migration[] = [
+// Exported so tests can assert the ordering invariant the runner depends on,
+// and so they can address a migration by description rather than by a
+// hard-coded version number — three branches in flight had to renumber, and a
+// test that pins the number breaks on a rename that is otherwise correct.
+export const migrations: Migration[] = [
   {
     version: BASELINE_VERSION,
     description: "fresh artifact-first baseline",
@@ -304,6 +308,39 @@ const migrations: Migration[] = [
     },
   },
   {
+    // 16, not 15. The UI-refresh branch claims 15 (artifacts.content_rev) and
+    // the tour branch claims 17, and runMigrations SILENTLY SKIPS any version
+    // at or below the database's current one — so these three have to land in
+    // numeric order, 15 → 16 → 17, or the ones that land later never run on a
+    // database that has already seen a higher number.
+    version: 16,
+    description: "auth_sessions: carry already-paired devices to the one-year TTL",
+    up: (db) => {
+      // Rolling expiry reads each session's *own* ttl_seconds, frozen at the
+      // moment it was created. Raising the default alone would therefore fix
+      // nothing for anyone already paired: their phone would still hit the
+      // thirty-day wall and get sent back to the host terminal for a fresh
+      // token, which is the entire complaint.
+      //
+      // Only rows still sitting on the old default move. An operator who
+      // deliberately asked for a short-lived session keeps it, and system
+      // bearers keep the month by design (DEFAULT_SYSTEM_SESSION_TTL_SECONDS),
+      // so the role filter is load-bearing rather than incidental. A device
+      // that explicitly requested exactly 2592000 is indistinguishable from one
+      // that took the default and is swept along; that is a benign coincidence,
+      // not a setting silently overridden.
+      db.prepare(
+        `UPDATE auth_sessions
+         SET ttl_seconds = 31536000,
+             expires_at = datetime('now', '+31536000 seconds')
+         WHERE role = 'device'
+           AND ttl_seconds = 2592000
+           AND revoked_at IS NULL
+           AND expires_at > datetime('now')`,
+      ).run();
+    },
+  },
+  {
     // 17, not 15, on purpose. Two branches in flight each claim a version below
     // this one (year-long sessions, and the UI refresh), and runMigrations
     // SILENTLY SKIPS any version at or below the database's current one — so
@@ -345,9 +382,39 @@ const migrations: Migration[] = [
   },
 ];
 
+/**
+ * Apply every migration the database has not seen, oldest first.
+ *
+ * The sort is not tidiness. `user_version` only ever moves forward and a
+ * migration at or below it is skipped, so a single out-of-order entry is
+ * silently fatal: run 15, then 17, and 16 is now unreachable forever — no
+ * error, no log line, just a column or a backfill that never happened on every
+ * database that took that path. This is not hypothetical. Three branches were
+ * once in flight numbered 15, 16 and 17, and resolving the merge conflict
+ * between them the obvious way produced the array in the order 15, 17, 16.
+ *
+ * The array itself is authored in order and should stay that way — but the
+ * correctness of every future merge should not depend on whoever resolves it
+ * noticing. Sorting a copy here costs nothing and removes the hazard from the
+ * class of things a human has to get right.
+ */
 export function runMigrations(db: Database.Database): void {
-  const current = db.pragma("user_version", { simple: true }) as number;
+  // Two migrations claiming one number is an authoring mistake that sorting
+  // cannot fix — the second would still be skipped — so it fails loudly, in
+  // development, rather than quietly on a user's machine.
+  const seen = new Set<number>();
   for (const m of migrations) {
+    if (seen.has(m.version)) {
+      throw new Error(
+        `two migrations both claim version ${m.version} ("${m.description}") — ` +
+        `renumber one of them; the later would never run`,
+      );
+    }
+    seen.add(m.version);
+  }
+
+  const current = db.pragma("user_version", { simple: true }) as number;
+  for (const m of [...migrations].sort((a, b) => a.version - b.version)) {
     if (m.version <= current) continue;
     console.log(`[migrations] applying v${m.version}: ${m.description}`);
     db.transaction(() => {

@@ -2725,3 +2725,18 @@ fetch("/api/auth/session")
   .catch(() => startApp());
 
 window.addEventListener("resize", () => reportPresence());
+
+// A wall display that nobody touches makes no requests at all: the SSE stream
+// is one long-lived response that never re-enters the auth middleware, so the
+// session it rides on never rolls its deadline and the screen could be logged
+// out mid-use after sitting there behaving perfectly. The same silence made it
+// report itself stale after a minute (PRESENCE_STALE_MS) while plainly still
+// on the wall. One heartbeat fixes both, at half the staleness window so a
+// single dropped request is not enough to look absent.
+const PRESENCE_HEARTBEAT_MS = 30_000;
+setInterval(reportPresence, PRESENCE_HEARTBEAT_MS);
+// A backgrounded tab has its timers throttled, so say so immediately on return
+// rather than waiting out an interval that may have been stretched to minutes.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) reportPresence();
+});
