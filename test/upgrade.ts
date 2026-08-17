@@ -374,14 +374,32 @@ try {
   const fakeGlobalRoot = path.dirname(fakePkgRoot);
   const fakeBin = path.join(home, "fake-bin");
   fs.mkdirSync(fakeBin, { recursive: true });
-  if (process.platform === "win32") {
-    fs.writeFileSync(path.join(fakeBin, "npm.cmd"),
-      `@echo off\r\nif "%1"=="root" (\r\necho ${fakeGlobalRoot}\r\nexit /b 0\r\n)\r\necho added 1 package in 1s\r\nexit /b 0\r\n`);
-  } else {
-    fs.writeFileSync(path.join(fakeBin, "npm"),
-      `#!/bin/sh\nif [ "$1" = "root" ]; then\n  echo "${fakeGlobalRoot}"\n  exit 0\nfi\necho "added 1 package in 1s"\nexit 0\n`,
-      { mode: 0o755 });
-  }
+  const fakePkgJson = path.join(fakePkgRoot, "package.json");
+  const repoVersion = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).version as string;
+  // A real `npm install -g` REPLACES the package on disk. A fake that only
+  // exits 0 is a fake of a *broken* npm, and asserting success against it is
+  // how "installed === current, phase: done" got written down as correct.
+  const bumpScript = path.join(fakeBin, "bump-version.mjs");
+  fs.writeFileSync(bumpScript,
+    `import fs from "node:fs";\n` +
+    `const [, , file, version] = process.argv;\n` +
+    `const pkg = JSON.parse(fs.readFileSync(file, "utf8"));\n` +
+    `pkg.version = version;\n` +
+    `fs.writeFileSync(file, JSON.stringify(pkg, null, 2) + "\\n");\n`);
+  const writeFakeNpm = (installs: string | null) => {
+    const bump = installs ? `"${process.execPath}" "${bumpScript}" "${fakePkgJson}" "${installs}"` : "";
+    if (process.platform === "win32") {
+      fs.writeFileSync(path.join(fakeBin, "npm.cmd"),
+        `@echo off\r\nif "%1"=="root" (\r\necho ${fakeGlobalRoot}\r\nexit /b 0\r\n)\r\n` +
+        `echo added 1 package in 1s\r\n${bump ? `${bump}\r\n` : ""}exit /b 0\r\n`);
+    } else {
+      fs.writeFileSync(path.join(fakeBin, "npm"),
+        `#!/bin/sh\nif [ "$1" = "root" ]; then\n  echo "${fakeGlobalRoot}"\n  exit 0\nfi\n` +
+        `echo "added 1 package in 1s"\n${bump ? `${bump}\n` : ""}exit 0\n`,
+        { mode: 0o755 });
+    }
+  };
+  writeFakeNpm("99.0.0");
   const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const globalEnv = {
     [pathKey]: `${fakeBin}${path.delimiter}${process.env[pathKey] || ""}`,
@@ -395,10 +413,183 @@ try {
     const g = JSON.parse(globalUp.stdout); // throws if npm output leaked into stdout
     assert.equal(g.context, "global", "a copy under the npm global root is detected as global");
     assert.match(g.package, /^updated /, "npm install ran");
+    assert.equal(g.installed, "99.0.0", "the reported version is the one now on disk");
+    assert.equal(JSON.parse(fs.readFileSync(fakePkgJson, "utf8")).version, "99.0.0",
+      "the fixture must really replace the package, or success proves nothing");
     assert.ok(!globalUp.stdout.includes("added 1 package"), "npm chatter stays out of --json stdout");
+
+    // ── npm exit 0 is not proof the version landed ──
+    // A cached tarball, a prefix other than the one `npm root -g` reported, or
+    // a dist-tag that resolved elsewhere all exit 0 while leaving the old
+    // package in place. Reporting that as a successful upgrade is a lie the
+    // one-click update in the PWA then repeats as "Updated to 99.0.0".
+    writeFakeNpm(null);
+    fs.writeFileSync(fakePkgJson, JSON.stringify(
+      { ...JSON.parse(fs.readFileSync(fakePkgJson, "utf8")), version: repoVersion }, null, 2) + "\n");
+    const lying = await run(["upgrade", "--json", "--name", upgName],
+      { ...globalEnv, SURFACE_NPM_REGISTRY: globalReg.url }, fakeCli);
+    assert.equal(lying.code, 1, "an npm that changed nothing must not exit 0");
+    assert.match(lying.stderr, /exited 0 but/, lying.stderr);
+    assert.match(lying.stderr, new RegExp(repoVersion.replace(/\./g, "\\.")),
+      "the error must name the version still installed");
   } finally {
     globalReg.close();
   }
+
+  // ── version precedence ──
+  // `newerThan` decides three things: whether an update exists, whether npm
+  // actually installed it, and (below) whether the restarted service is running
+  // it. Dropping the prerelease tag made a prerelease compare EQUAL to its own
+  // stable release, so `1.2.3-rc.1` never saw `1.2.3`, and a service still on
+  // the rc would have been reported as running the stable build.
+  const upgrade = await import("../bin/upgrade.js");
+  assert.equal(upgrade.newerThan("1.2.4", "1.2.3"), true, "patch bump is newer");
+  assert.equal(upgrade.newerThan("1.3.0", "1.2.9"), true, "minor bump is newer");
+  assert.equal(upgrade.newerThan("2.0.0", "1.99.99"), true, "major bump is newer");
+  assert.equal(upgrade.newerThan("1.2.3", "1.2.3"), false, "equal is not newer");
+  assert.equal(upgrade.newerThan("1.2.3", "1.2.4"), false, "older is not newer");
+  assert.equal(upgrade.newerThan("1.2.3", "1.2.3-rc.1"), true,
+    "a stable release is newer than its own prerelease");
+  assert.equal(upgrade.newerThan("1.2.3-rc.1", "1.2.3"), false,
+    "…and the prerelease is never newer than the stable release");
+  assert.equal(upgrade.newerThan("1.2.3-rc.2", "1.2.3-rc.1"), true, "numeric prerelease fields compare numerically");
+  assert.equal(upgrade.newerThan("1.2.3-rc.10", "1.2.3-rc.9"), true, "…numerically, not as strings");
+  assert.equal(upgrade.newerThan("1.2.3-alpha", "1.2.3-1"), true, "alphanumeric outranks numeric");
+  assert.equal(upgrade.newerThan("1.2.3-rc.1.1", "1.2.3-rc.1"), true, "a longer identifier set outranks its prefix");
+  assert.equal(upgrade.newerThan("1.2.3+build.9", "1.2.3+build.1"), false, "build metadata is not precedence");
+  assert.equal(upgrade.newerThan("1.2.4+build", "1.2.3"), true, "…but the core still is");
+  assert.equal(upgrade.newerThan("1.2.3", "unknown"), true, "an unreadable version never blocks an update");
+  assert.equal(upgrade.newerThan("unknown", "1.2.3"), false, "…and never claims to be one");
+
+  // ── a restart that comes back healthy on the OLD version is not a success ──
+  // `waitHealthy` only proves something is answering the port. If the
+  // supervisor's ExecStart still points at an older installation, the old
+  // server comes back green — and writing `done` there is the same lie as
+  // "npm exited 0 so the version landed", one layer down. The PWA repeats it
+  // as "Updated to X" while X is not what is running.
+  const landed = { installed: true, restarted: true, version: "99.0.0" };
+  assert.equal(upgrade.staleServiceError(landed, "99.0.0"), null, "a service on the installed version is done");
+  assert.equal(upgrade.staleServiceError({ ...landed, version: "99.1.0" }, "99.0.0"), null,
+    "a service NEWER than the package on disk still counts as done");
+  const stillOld = upgrade.staleServiceError({ ...landed, version: repoVersion }, "99.0.0");
+  assert.ok(stillOld, "a healthy restart on the old version must not be reported as done");
+  assert.match(stillOld!, new RegExp(repoVersion.replace(/\./g, "\\.")),
+    "the failure must name the version actually running");
+  assert.match(stillOld!, /99\.0\.0/, "…and the version it should have been");
+  assert.ok(upgrade.staleServiceError({ ...landed, version: "99.0.0-rc.1" }, "99.0.0"),
+    "a prerelease still answering is not the stable release");
+  assert.ok(upgrade.staleServiceError({ ...landed, version: undefined }, "99.0.0"),
+    "a restart that reported no version at all is not evidence the update landed");
+  assert.equal(upgrade.staleServiceError({ installed: true, restarted: false, version: repoVersion }, "99.0.0"), null,
+    "a service that was never restarted makes no claim to resolve");
+  assert.equal(upgrade.staleServiceError({ installed: false, restarted: false }, "99.0.0"), null,
+    "no service here, nothing to check");
+  assert.equal(upgrade.staleServiceError({ ...landed, version: repoVersion }, "unknown"), null,
+    "with no readable local version there is nothing to compare against");
+  assert.equal(upgrade.staleServiceError({ installed: true, restarted: true, error: "timeout" }, "99.0.0"), null,
+    "an unhealthy restart is already reported as unhealthy — do not double-report it");
+
+  // ── the CLI and the boot-time reconciler resolve the same claim ──
+  // Two routes to "the update is done": this CLI writing a terminal phase, and
+  // the restarted server reconciling the `restarting` record its killed child
+  // left behind. They must agree, and both must compare against what was
+  // actually put on disk — `to` alone fails a dev/local install, which
+  // legitimately converges without moving the package.
+  process.env.SURFACE_DATA_DIR = dataDir;
+  const updates = await import("../server/updates.js");
+  const nowMs = Date.now();
+  const restarting = {
+    phase: "restarting" as const,
+    started_at: new Date(nowMs - 5000).toISOString(),
+    updated_at: new Date(nowMs - 5000).toISOString(),
+    pid: 1,
+    from: "0.2.3",
+    to: "99.0.0",
+    installed: "99.0.0",
+  };
+  for (const running of ["99.0.0", "99.1.0"]) {
+    assert.equal(updates.reconcileRun(restarting, { version: running, now: nowMs, booted: true })?.phase, "done");
+    assert.equal(upgrade.staleServiceError({ installed: true, restarted: true, version: running }, "99.0.0"), null,
+      `the two routes must agree that ${running} is done`);
+  }
+  for (const running of ["0.2.3", "99.0.0-rc.1"]) {
+    assert.equal(updates.reconcileRun(restarting, { version: running, now: nowMs, booted: true })?.phase, "failed",
+      `the boot reconciler must fail a service still running ${running}`);
+    assert.ok(upgrade.staleServiceError({ installed: true, restarted: true, version: running }, "99.0.0"),
+      `and so must the CLI, for ${running}`);
+  }
+  // A dev/local install never moves the package: `to` is the release on npm,
+  // `installed` is what is really on disk, and only the second is a promise.
+  const devRun = { ...restarting, installed: "0.2.3" };
+  assert.equal(updates.reconcileRun(devRun, { version: "0.2.3", now: nowMs, booted: true })?.phase, "done",
+    "a run that installed nothing (dev clone) must not be failed for not reaching the npm latest");
+  assert.equal(upgrade.staleServiceError({ installed: true, restarted: true, version: "0.2.3" }, "0.2.3"), null,
+    "…and the CLI says the same");
+
+  // ── the blocking install-context probe never runs on a request ──
+  // installContext() spawns `npm root -g` and waits, with no timeout. The apply
+  // endpoint called it, so `POST /api/update/apply` blocked an Express worker on
+  // npm whenever the cache was empty — reachable with SURFACE_UPDATE_CHECK=0, or
+  // by any POST inside the 30s first-check delay. It also made the two endpoints
+  // disagree: the status endpoint reads the cache and falls back to "dev", so it
+  // advertised `can_apply: false` with repo-clone advice while apply probed and
+  // could start a real update on the same host. The comment above the probe
+  // asserted the invariant the code had already broken, which is how it drifted;
+  // this is the assertion that keeps it true.
+  // Normalise line endings before parsing. git checks this repo out with CRLF
+  // on Windows, and the `\n}\n` boundary search below can never match there —
+  // the byte after the closing brace is `\r`. It cost a red Windows CI run.
+  const updatesSrc = fs
+    .readFileSync(path.join(REPO_ROOT, "server", "updates.ts"), "utf8")
+    .replace(/\r\n/g, "\n");
+  const updatesCode = updatesSrc
+    .split("\n")
+    .filter((line) => {
+      const t = line.trim();
+      return !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*");
+    })
+    .join("\n");
+  const bodyOf = (name: string): string => {
+    const start = updatesCode.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `${name} not found in server/updates.ts`);
+    const end = updatesCode.indexOf("\n}\n", start);
+    assert.ok(end !== -1, `could not find the end of ${name}`);
+    return updatesCode.slice(start, end);
+  };
+  assert.equal(
+    (updatesCode.match(/\binstallContext\(/g) || []).length, 1,
+    "resolveContext() must be the only thing in the module that runs the probe",
+  );
+  assert.match(bodyOf("resolveContext"), /installContext\(/, "…and it is the one that memoizes it");
+  assert.match(bodyOf("startUpdateChecks"), /resolveContext\(/,
+    "boot must resolve the context even when the background check is disabled");
+  for (const onARequest of ["applyUpdate", "applyBlockedReason", "updateStatus"]) {
+    assert.ok(
+      !/\bresolveContext\(/.test(bodyOf(onARequest)),
+      `${onARequest} runs on a request and must read the cache, never spawn npm`,
+    );
+    assert.ok(
+      !/\binstallContext\(/.test(bodyOf(onARequest)),
+      `${onARequest} must not reach past the cache to the probe either`,
+    );
+  }
+  // …and the two endpoints answer as one: whatever the status endpoint says
+  // about a one-click update is what the apply endpoint will actually do.
+  const savedEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "test"; // no timer, no registry
+  updates.resetUpdateStateForTests();
+  updates.startUpdateChecks();
+  const blocked = updates.applyBlockedReason("system");
+  const applied = updates.applyUpdate("system");
+  // Assigning `undefined` stores the string "undefined", which is not the
+  // same thing as unset — any later `NODE_ENV === "test"` or absence check
+  // in this process then reads a value that was never there.
+  if (savedEnv === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = savedEnv;
+  assert.ok(blocked, "a repo clone must not offer a one-click update");
+  assert.equal(applied.started, false, "…and must not start one either");
+  assert.equal(applied.error, blocked,
+    "the status endpoint and the apply endpoint must give one answer, not two");
 
   console.log("Upgrade/skill tests passed");
 } finally {

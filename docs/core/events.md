@@ -40,7 +40,8 @@ Two properties of global connections matter for delivery:
 | `display_navigate` | `{surface_id}` (null = grid/home) | `POST /display/navigate`, or auto on present/link when `open !== false`; optionally directed at one device |
 | `display_notify` | `{text, duration, style}` | `POST /display/notify` (optionally directed), or a throttled webhook-failure warning |
 | `display_theme` | merged theme config (or `{}` on reset) | `PUT /display/config`, `POST /display/reset` |
-| `thumb_ready` | `{id}` | a thumbnail capture finishes (`server/thumbs.ts`) |
+| `thumb_ready` | `{id}` | a thumbnail capture finishes, or an update makes an image surface's passthrough available (`server/thumbs.ts`) |
+| `update_status` | `{current, latest, update_available, checked_at, check_error, context, advice, run}` | a cached release check completes, or a one-click update changes phase (`server/updates.ts`). Carries no per-plane fields — the PWA keeps `can_apply` from its own `GET /api/update/status`. |
 
 ### Per-surface stream (`/artifacts/:id/stream`)
 
@@ -58,7 +59,7 @@ Note the per-surface `surface_updated` payload differs from the global one (it c
 ## Consumption
 
 ### PWA (`client/app.js`)
-- Grid view opens the **global** stream (`connectGlobalSSE`). `surface_created`/`updated`/`deleted` mutate the card grid in place; a `surface_updated` carrying `metadata.hidden===true` removes the card without deleting the row; `surface_action`/`actions_acked` and `waiter_status` keep the pending badge and "● listening" pill live; `thumb_ready` cache-busts the card image with `?v=Date.now()`. `display_navigate`/`display_notify`/`display_theme` drive routing, toasts, and theme.
+- Grid view opens the **global** stream (`connectGlobalSSE`). `surface_created`/`updated`/`deleted` mutate the card grid in place; a `surface_updated` carrying `metadata.hidden===true` removes the card without deleting the row; `surface_action`/`actions_acked` and `waiter_status` keep the pending badge and "● listening" pill live; `thumb_ready` cache-busts the card image with `?v=Date.now()`. `display_navigate`/`display_notify`/`display_theme` drive routing, toasts, and theme; `update_status` repaints the release notice in the grid header. Note that `update_status` is the one event whose delivery cannot be relied on end-to-end: an update restarts the process pushing it, so the PWA also polls `GET /api/update/status` while (and only while) a run is in flight.
 - Surface view opens the **per-surface** stream. `surface_updated` with `reload`/`version_id` reloads the iframe via a cache-busting `?v=`; `agent_reply` shows a toast; `surface_exec` attempts a best-effort eval inside accessible iframes. The injected `surface.js` runtime consumes `state_patch` and `stream_append` to update bound elements without a reload.
 
 ### CLI

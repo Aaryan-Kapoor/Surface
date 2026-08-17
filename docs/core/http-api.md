@@ -121,6 +121,19 @@ See [../display/theming.md](../display/theming.md) and [../display/devices.md](.
 
 Full event catalog: [events.md](events.md).
 
+## Self-update (`server/routes/updates.ts`)
+
+| Method | Path | Body | Response | Effect |
+| --- | --- | --- | --- | --- |
+| GET | `/api/update/status` | — | `{current, latest, update_available, checked_at, check_error, context, advice, run, can_apply, apply_blocked_reason}` | **cache-only** — never contacts the npm registry, so it cannot delay a response. `can_apply`/`apply_blocked_reason` are computed for the calling plane. Readable by `device`, which sees a projected view: `check_error` and `run.error` collapse to a generic sentence, because a host-side diagnostic can name the configured npm registry. The SSE broadcast carries that same device-safe view. |
+| POST | `/api/update/apply` | — | `202` + status | **system only** (403 on the device/content plane). Claims `<data-dir>/update-state.json` by exclusive create (with a `run_id`) and then starts `surface upgrade --json --name <service> --progress-file <…> --run-id <…>` detached — the claim exists before the child does, so a second POST arriving before the child's first write is still refused. `409` when a run is already in flight or the install is a repo clone / project-local (with the same advice `surface upgrade` prints). Also **cache-only**: it reads the same resolved install context `GET /api/update/status` reports (probed once at boot in `startUpdateChecks()`), so the two endpoints cannot disagree about whether an update is on offer, and neither ever blocks a request on `npm root -g`. |
+
+The background check that fills the cache is described in
+[../operations/install.md](../operations/install.md#update-notification-and-one-click-update);
+the reason `apply` is system-only is in
+[../auth/trust-model.md](../auth/trust-model.md#why-the-update-button-is-system-only).
+Progress is pushed as the `update_status` SSE event.
+
 ## Proxies (`server/routes/integrations.ts`)
 
 | Method | Path | Body / Query | Notes |

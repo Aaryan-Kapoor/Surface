@@ -32,6 +32,20 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
   return their batch to the inbox; 60s daemon backoff; single delivery
   channel per surface across bindings/codex; pid-reuse-safe liveness; bridge
   disabled on Windows (control socket is unix-only upstream).
+- Release awareness + one-click update (2026-08, `docs/operations/install.md`):
+  the PWA home shows `Surface X available` with an **Update** button that runs
+  the existing `surface upgrade` converger (no second upgrade path, no
+  improvised daemon — the sanctioned supervisor restart). The npm check is
+  cached (6h TTL, memory + `<data-dir>/update-check.json`), timer-driven rather
+  than polled, backs off on failure, degrades silently offline, and is off under
+  `NODE_ENV=test`/CI; `GET /api/update/status` is cache-only. **Locked decision:
+  `POST /api/update/apply` is system-plane only** — installing and running code
+  on the host is what the trust model reserves for loopback/system bearers, so a
+  paired device sees the notice and is told to update from the host. Repo clones
+  and project-local installs get honest advice instead of a button. The upgrade
+  child is killed by the restart it triggers on systemd, so `surface upgrade
+  --progress-file` writes each phase *before* the step it names and the
+  restarted server reconciles the last phase against its own version.
 - Auth is two-plane: loopback/system sessions for agents, paired device sessions for displays.
   Device sessions default to a **1-year** rolling TTL (2026-08-04, owner decision — 30 days
   meant monthly re-pairing, which needs the host terminal and the phone at once). System
@@ -55,6 +69,8 @@ bash scripts/check-leaks.sh
 ```
 
 `npm test` builds the CLI + server bundles and runs the isolated regression suites. The OpenRouter e2e loop is opt-in with `SURFACE_TEST_E2E=1` and is skipped by default to avoid touching a live service or requiring credentials.
+
+**Known gap in `check-leaks.sh` (measured 2026-08-04):** its stale-scratch-dir sweep globs `surface-*-data-*`, which matches only **7 of the 28** scratch-dir prefixes the suites actually create — `surface-auth-`, `surface-updates-`, `surface-guard-` and 16 others are invisible to it, and `test/codexBridge.ts` uses `sfcx-*`, which has no `surface-` prefix at all. The orphaned-*process* half of the script is doing nearly all the work. Widening the glob to `surface-*` was tried and reverted: it flags unrelated working directories in `/tmp` (`surface-issues`, `surface-design-frames`…), and a leak check that reports a developer's own files is one people learn to ignore. A name alone can't separate a `mkdtemp` scratch dir from a working dir, so the fix is to route every suite through a shared `tmpDir()` helper with one distinctive prefix the sweep can match. Nothing leaks today — this is a hole in the safety net, not a defect.
 
 `bash scripts/test-fresh-install.sh` (needs Docker) is the fresh-machine gate: it global-installs the packed tarball in toolchain-free `node:22/24/25-slim` containers and drives the CLI against a booted server. Added 2026-08-04 after every fresh install on Node 24/25 failed for a month (better-sqlite3 11.x had no prebuilds there; dev machines and CI runners have compilers, so nothing caught it). CI runs it per Node version and `publish` depends on it. Supported Node floor is 22 (Node 20 is EOL, no prebuilds in the better-sqlite3 v12 line). **better-sqlite3 stays on v12** (2026-08-04): v13 publishes zero prebuilt binaries (no release assets on 13.0.0–13.0.2) and ships no install script, so npm's default `node-gyp rebuild` compiles it from source. Verified directly: a plain `npm ci` of better-sqlite3 v13 fails for want of a compiler on Node 22 *and* 24 in toolchain-free Linux containers — it is not a Windows quirk; Windows merely had no compiler to hide it, which is why CI went red there first while every toolchain-carrying runner stayed green. v13's bundled Node-API prebuilds are only reached when install scripts are skipped, which is why the global-install smoke passed and `npm ci` did not. Any future bump must be checked for real published prebuild coverage across every ABI × platform pair we ship to — and checked through both install paths (`npm ci` and `npm install -g <tarball>`), because they disagree.
 

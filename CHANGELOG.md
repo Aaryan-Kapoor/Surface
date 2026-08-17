@@ -4,6 +4,34 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- New update notification on the Surface home: when a newer `surface-display`
+  release exists on npm, the grid header shows `Surface X available` with an
+  **Update** button that runs the existing `surface upgrade` converger and
+  brings the service back health-gated (`docs/operations/install.md`). The
+  release check is cached (6h TTL, in memory + `<data-dir>/update-check.json`),
+  runs on a self-rearming timer rather than a poll loop, backs off on failure
+  instead of retrying, degrades silently offline, and is **off by default under
+  `NODE_ENV=test` and in CI**. `GET /api/update/status` serves the cache only
+  and never touches the network.
+- `POST /api/update/apply` is **system-plane only** — installing and running new
+  code on the host is exactly what the trust model reserves for loopback/system
+  bearers. Paired devices and the content plane see the notice and are told
+  where to update; they cannot press the button
+  (`docs/auth/trust-model.md`, `SECURITY.md`).
+- Repo clones and project-local installs are detected (by the same
+  `installContext()` `surface upgrade` uses) and shown honest advice —
+  `git pull …` / `npm update surface-display` — instead of a one-click button.
+- Failures are reported, never assumed away: a failed `npm install` (a
+  dependency with no prebuilds, a registry error) ends the run as `failed` with
+  npm's exit status; a service that restarts without landing the new version
+  reports "restarted but is still running X"; a run that stops reporting for ten
+  minutes fails instead of spinning. The PWA gives up on a restart after two
+  minutes and points at `surface service health`.
+- `surface upgrade --progress-file <file>` writes each phase as it happens. The
+  converger is killed by the very restart it triggers on systemd, so phases are
+  written *before* the step they name and the restarted server reconciles the
+  last one against the version it is now running.
+
 - **Paired devices now last a year, and stop re-pairing while in use.** The
   device session TTL went from 30 days to 365. More importantly, rolling
   expiry only ever rolled the database row: the `surface_session` cookie
@@ -48,6 +76,38 @@ All notable changes to Surface are recorded here.
   releases gain a CHANGELOG gate and an auto-created GitHub Release; all
   jobs have timeouts and SHA-pinned actions. The paid OpenRouter e2e is
   now runnable on demand via workflow_dispatch.
+- Dashboard redesign (`docs/display/pwa.md`). The homepage is a grid of framed
+  16:10 previews cropped from the top, with a left-aligned caption underneath —
+  the circular portholes are gone; they cropped titles at both edges and threw
+  away most of the screenshot. Header, search and filters collapse into a sticky
+  60px bar plus a filter row that only offers filters with members. The shell
+  now derives everything from two tokens (`--bg` / `--fg`, everything else via
+  `color-mix`) and ships a real light scheme via `prefers-color-scheme`; agent
+  themes map onto those tokens instead of unused legacy names.
+- The in-surface topbar is a single 40px row (was ~56px of stacked title and
+  screaming-caps meta): chevron back, title, kind · age · live, and copy-link /
+  open-raw actions. Escape leaves the surface; under 760px the meta collapses so
+  the title keeps the width.
+- A surface with no capture yet wears a designed cover — a tinted field keyed to
+  its id with the title set large — instead of a file-extension chip. The
+  dashboard paints its own equivalent client-side (`has_thumb` on
+  `GET /artifacts`) rather than fetching a placeholder it would replace seconds
+  later.
+- Thumbnails are ~50x faster to backfill (`docs/core/thumbnails.md`). Every
+  capture used to spawn its own Chrome against a throwaway profile dir, paying a
+  full cold start each time — ~30s per capture, so a fresh Surface sat on
+  placeholders for minutes. The queue now holds one browser across a burst and
+  drains it with three workers, each capture in its own throwaway browser
+  context, and waits for load + fonts + two frames instead of a flat 6.5s sleep.
+  Cold backfill of ten surfaces: ~300s -> ~9.6s. Tunable via
+  `SURFACE_THUMB_SETTLE_MS` / `_CONCURRENCY` / `_TIMEOUT_MS` / `_IDLE_MS`.
+- Grid performance: thumbnails load through an `IntersectionObserver`, cards use
+  `content-visibility` and containment, previews declare their aspect ratio so
+  nothing jumps as images land, and a versioned capture is now cached
+  `immutable` instead of `max-age=60`. The starfield/nebula/comet substrate is
+  retired (~180 hidden DOM nodes per grid render plus a mousemove listener), and
+  the artifact shell no longer tries to pull Inter from Google Fonts — a display
+  has to render offline.
 
 ## 0.2.3 - 2026-07-31
 

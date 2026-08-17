@@ -16,11 +16,12 @@ import {
   resolveConnectionString,
   resolveListeningPort,
 } from "./startupAccess.js";
-import { setThumbServerPort, enqueueThumb, hasThumb, findChromeBin } from "./thumbs.js";
+import { setThumbServerPort, enqueueThumb, needsThumbCapture, findChromeBin, shutdownThumbnails } from "./thumbs.js";
 import { closeSSEClients } from "./sse.js";
 import { closeCodexBridge } from "./codexBridge.js";
 import { setupFileLogging } from "./logging.js";
 import { startClaimReaper } from "./bindings.js";
+import { serverVersion, startUpdateChecks, stopUpdateWatchers } from "./updates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -289,17 +290,6 @@ app.use((req, res, next) => {
 // System plane only: the content port resolves to `device` and gets 403,
 // so a TCP connect on that port is the (sufficient) content-plane probe.
 const STARTED_AT = Date.now();
-let versionCache: string | null = null;
-function serverVersion(): string {
-  if (versionCache) return versionCache;
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-    versionCache = String(pkg.version || "unknown");
-  } catch {
-    versionCache = "unknown";
-  }
-  return versionCache;
-}
 app.get("/healthz", (req, res) => {
   if (req.auth?.role !== "system") {
     sendError(res, 403, "healthz requires the system plane");
@@ -328,6 +318,11 @@ const httpServer = app.listen(PORT, BIND, () => {
   console.log(`Surface server running on http://${BIND}:${PORT}`);
   setThumbServerPort(PORT);
 
+  // Release awareness: resolves any update that was in flight across this
+  // restart, then arms the cached (TTL'd, opt-out-able, off in tests/CI)
+  // registry check. Never blocks a request — see server/updates.ts.
+  startUpdateChecks();
+
   // Print a one-time pairing token when reachable beyond loopback (or when
   // explicitly requested) so a fresh browser can pair without a prior session.
   const shouldPair = !isLoopbackBind || process.env.SURFACE_PAIR_ON_START === "1";
@@ -355,7 +350,7 @@ const httpServer = app.listen(PORT, BIND, () => {
     const cards = listArtifactCards(getDb(), { includeHidden: true });
     let queued = 0;
     for (const card of cards) {
-      if (!hasThumb(card.id)) {
+      if (needsThumbCapture(card.id)) {
         enqueueThumb(card.id);
         queued++;
       }
@@ -387,6 +382,14 @@ contentServer.on("error", (err: any) => {
   process.exit(1);
 });
 
+// This process owns SIGINT and SIGTERM, and nothing else may. The thumbnailer
+// used to install its own handlers the moment Chrome launched; both listeners
+// fired, and the thumbs one called process.exit(130/143) while this sequence
+// was still mid-flight — before the async HTTP close callback and closeDb()
+// had run. Every ordinary restart with a warm Chrome became an abrupt,
+// failure-coded shutdown with a possibly unclean database close. Chrome is now
+// reaped from inside this sequence instead (shutdownThumbnails, which is
+// idempotent and self-bounding).
 let shuttingDown = false;
 function shutdown(signal: string) {
   if (shuttingDown) return;
@@ -394,9 +397,11 @@ function shutdown(signal: string) {
   console.log(`[startup] ${signal} received; shutting down`);
   closeSSEClients();
   closeCodexBridge();
+  stopUpdateWatchers();
   contentServer.close(() => {});
-  httpServer.close(() => {
-    closeDb();
+  const httpClosed = new Promise<void>((resolve) => httpServer.close(() => resolve()));
+  Promise.allSettled([httpClosed, shutdownThumbnails()]).then(() => {
+    try { closeDb(); } catch {}
     process.exit(0);
   });
   setTimeout(() => {

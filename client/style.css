@@ -1,83 +1,164 @@
-/* Surface — minimal, machined.
-   One palette: black void, white signal. Circular portholes for content,
-   square instruments for controls. Every state is monochrome; attention is
-   carried by contrast, motion, and light — never by color. */
+/* Surface — the display shell.
+   One token set, two schemes (dark default, light via prefers-color-scheme),
+   themable by agents through --bg / --fg. Previews are the star: every card is
+   a real screenshot of the surface, framed and cropped so the content reads.
+   Chrome is deliberately thin — a slim header on the grid, a 40px bar inside a
+   surface — so the artifact owns the screen. */
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
-  --bg: #000000;
+  color-scheme: dark;
+
+  /* The two tokens an agent theme overrides. Everything else derives. */
+  --bg: #0a0a0a;
   --fg: #ffffff;
-  --fg-muted: rgba(255, 255, 255, 0.52);
-  --fg-faint: rgba(255, 255, 255, 0.30);
-  --fg-ghost: rgba(255, 255, 255, 0.16);
-  --hairline: rgba(255, 255, 255, 0.14);
-  --hairline-strong: rgba(255, 255, 255, 0.40);
-  --surface-1: rgba(255, 255, 255, 0.035);
-  --surface-2: rgba(255, 255, 255, 0.07);
-  --danger: #ff453a;
-  --font: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  /* Elevation is tone, not shadow. Three planes, ranked by where attention
+     should land: overlays sink away from the page, the page sits at rest, and
+     anything you can click lifts toward you. Neutral greys throughout — the
+     old set leaned blue (#0a0b0d, #131417) and read as cold slate rather than
+     black. */
+  --overlay: #020202;      /* modals, toasts, menus, the tray over a preview */
+  --interactive: #121212;  /* cards, inputs, buttons — anything you click */
+
+  /* Derived ink. color-mix keeps them correct when a theme swaps --bg/--fg;
+     the preceding declaration is the fallback for engines without it. */
+  --fg-muted: rgba(255, 255, 255, 0.62);
+  --fg-muted: color-mix(in oklab, var(--fg) 62%, var(--bg));
+  --fg-faint: rgba(255, 255, 255, 0.40);
+  --fg-faint: color-mix(in oklab, var(--fg) 40%, var(--bg));
+  --fg-ghost: rgba(255, 255, 255, 0.22);
+  --fg-ghost: color-mix(in oklab, var(--fg) 22%, var(--bg));
+
+  /* Surfaces & lines */
+  --panel: rgba(255, 255, 255, 0.038);
+  --panel-2: rgba(255, 255, 255, 0.075);
+  /* Kept as the name an agent theme writes (`glass` → --panel-solid, see
+     docs/display/pwa.md); it is the interactive plane under another name. */
+  --panel-solid: var(--interactive);
+  --line: rgba(255, 255, 255, 0.10);
+  --line-strong: rgba(255, 255, 255, 0.20);
+  --scrim: rgba(2, 2, 2, 0.62);
+
+  --accent: var(--fg);
+  --danger: #ff4d4a;
+  --ok: #34d399;
+
+  /* Chrome that floats *on* a preview — the hover tray, the state pills. It
+     cannot use --panel, because it sits over a picture the app did not choose:
+     a screenshot, or an excerpt on the card's own paper. So it is a scrim in
+     the scheme's own direction, opaque enough to sit on text, with a shadow in
+     light mode where a pale chip on a pale screenshot would otherwise vanish. */
+  --chip-bg: rgba(2, 2, 2, 0.82);
+  --chip-fg: #ffffff;
+  --chip-line: rgba(255, 255, 255, 0.16);
+  --chip-hover: rgba(255, 255, 255, 0.18);
+  --chip-shadow: 0 2px 8px rgba(0, 0, 0, 0.34);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.30), 0 10px 30px -14px rgba(0, 0, 0, 0.75);
+  --shadow-lift: 0 2px 4px rgba(0, 0, 0, 0.28), 0 22px 48px -20px rgba(0, 0, 0, 0.85);
+  --shadow-pop: 0 40px 90px -30px rgba(0, 0, 0, 0.85);
+
+  --card-radius: 14px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-pill: 999px;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-swift: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --gutter: 40px;
+  --header-h: 60px;
+  --nav-h: 40px;
+  --card-min: 250px;
+}
+
+@media (min-width: 1200px) { :root { --card-min: 280px; } }
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f6f6f7;
+    --fg: #0b0c0e;
+    /* The dark ranking is bg < interactive with overlays *below* both. Light
+       has no equivalent move — going darker than the page would read as a
+       shadow, not a plane — so both planes stay white and separate from the
+       page by lightness alone. */
+    --overlay: #ffffff;
+    --interactive: #ffffff;
+    --panel: rgba(0, 0, 0, 0.030);
+    --panel-2: rgba(0, 0, 0, 0.062);
+    --line: rgba(0, 0, 0, 0.10);
+    --line-strong: rgba(0, 0, 0, 0.22);
+    --scrim: rgba(255, 255, 255, 0.72);
+    --danger: #d92d20;
+    --ok: #067647;
+    --shadow-card: 0 1px 2px rgba(16, 18, 22, 0.06), 0 8px 24px -12px rgba(16, 18, 22, 0.16);
+    --shadow-lift: 0 2px 6px rgba(16, 18, 22, 0.08), 0 18px 40px -16px rgba(16, 18, 22, 0.22);
+    --shadow-pop: 0 40px 90px -30px rgba(16, 18, 22, 0.28);
+
+    --chip-bg: rgba(255, 255, 255, 0.88);
+    --chip-fg: #0b0c0e;
+    --chip-line: rgba(0, 0, 0, 0.12);
+    --chip-hover: rgba(0, 0, 0, 0.08);
+    --chip-shadow: 0 1px 2px rgba(16, 18, 22, 0.10), 0 6px 18px -8px rgba(16, 18, 22, 0.34);
+
+    --icon-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'><path d='M1 1.2l3.5 3.4L8 1.2' fill='none' stroke='%236b6b70' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  }
 }
 
 html, body {
   height: 100%;
   width: 100%;
-  background: #000000;
-  color: #ffffff;
+  background: var(--bg);
+  color: var(--fg);
   font-family: var(--font);
   font-weight: 400;
   font-size: 14px;
   line-height: 1.5;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
 
-::selection { background: #ffffff; color: #000000; }
+::selection { background: var(--fg); color: var(--bg); }
 
-button, input, select, textarea {
-  font: inherit;
-  color: inherit;
-}
-
+button, input, select, textarea { font: inherit; color: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 
 :focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.85);
+  outline: 2px solid var(--fg);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 #app { position: absolute; inset: 0; overflow: hidden; }
 #app > div { height: 100%; display: flex; flex-direction: column; }
 
-/* The machined substrate: a barely-there dot lattice and a cold glow from
-   above. Quiet enough to read as texture, not pattern. Themes that set their
-   own body background paint straight over it. */
+/* A single cool wash from the top edge. Quiet enough to read as depth, not
+   decoration. Themes that paint their own body background cover it. */
 #app > div::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image:
-    radial-gradient(1100px 480px at 50% -120px, rgba(255, 255, 255, 0.055), transparent 70%),
-    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.2px);
-  background-size: auto, 26px 26px;
-  background-position: center top, center center;
-  -webkit-mask: radial-gradient(120% 100% at 50% 0%, #000 30%, rgba(0, 0, 0, 0.55) 100%);
-  mask: radial-gradient(120% 100% at 50% 0%, #000 30%, rgba(0, 0, 0, 0.55) 100%);
+  background: radial-gradient(1200px 520px at 50% -260px, var(--fg), transparent 70%);
+  opacity: 0.05;
 }
 
-/* Cosmic substrate stays parked in the minimal theme. */
+/* The old cosmic substrate is retired; the classes stay so themes that
+   reference them keep working. */
 .starfield, .aurora, .star, .star-layer, .nebula, .grain, .comet,
 .card-gleam, .empty-glyph {
   display: none !important;
 }
 
-/* ── Grid ── */
+/* ══ Grid view ══ */
 
 .grid-view {
   position: relative;
@@ -85,102 +166,277 @@ button { -webkit-tap-highlight-color: transparent; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 52px 64px 88px;
+  overscroll-behavior-y: contain;
   scrollbar-width: none;
+  padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
 }
 
 .grid-view::-webkit-scrollbar { display: none; }
 
+/* ── Header (sticky) ── */
+
 .grid-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  margin: 0 auto 12px;
-  max-width: 1680px;
-  padding-bottom: 22px;
-  position: relative;
+  align-items: center;
+  gap: 16px;
+  height: var(--header-h);
+  padding: 0 var(--gutter);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s var(--ease-swift), background 0.2s var(--ease-swift);
 }
 
-/* Hairline rule that dissolves at both ends. */
-.grid-header::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--hairline) 12%, var(--hairline) 88%, transparent);
-}
+.grid-view.is-scrolled .grid-header { border-bottom-color: var(--line); }
 
-.grid-title-block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.grid-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
 
 .grid-title {
-  font-size: 38px;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  color: #ffffff;
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.024em;
+  color: var(--fg);
   line-height: 1;
+  white-space: nowrap;
 }
 
 .grid-subtitle {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
+  font-size: 12.5px;
   color: var(--fg-faint);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+.grid-header-spacer { flex: 1; min-width: 8px; }
 
 .grid-meta {
   display: flex;
   align-items: center;
-  gap: 20px;
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
+  gap: 14px;
+  font-size: 12px;
+  color: var(--fg-faint);
   white-space: nowrap;
-  padding-bottom: 2px;
 }
 
-.grid-meta-count {
-  color: #ffffff;
+.grid-meta-count { font-variant-numeric: tabular-nums; }
+
+.grid-version {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg-ghost);
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Header actions ──
+   Icon affordances, so they read as one cluster rather than three unrelated
+   controls. They are clickable, so they rest transparent and take the
+   interactive plane on hover — the same lift a card gets. */
+
+.grid-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.grid-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color 0.15s var(--ease-swift), background 0.15s var(--ease-swift);
+}
+
+.grid-icon-btn:hover { color: var(--fg); background: var(--interactive); }
+.grid-icon-btn:active { transform: scale(0.94); }
+.grid-icon-btn svg { display: block; }
+
+/* ── Release notice ──
+   Lives in the grid header meta row: noticeable because it is the only
+   bordered thing up there, unobtrusive because it borrows the row's own
+   mono/uppercase treatment instead of shouting in a banner. */
+
+.update-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  /* One fixed height for every state. The Update button (24px) is taller than
+     the text line box (18px), so a padding-driven pill grew 6px the moment the
+     button appeared — a visible jump in the meta row exactly when the user
+     clicks Update. align-items: center parks both inside the same 30px box. */
+  height: 30px;
+  padding: 0 6px 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  color: var(--fg-muted);
+  max-width: min(46vw, 520px);
+}
+
+.update-notice[hidden] { display: none; }
+
+.update-notice-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-notice--available .update-notice-text,
+.update-notice--error .update-notice-text { color: var(--fg); }
+.update-notice--error { border-color: var(--danger); }
+.update-notice--busy .update-notice-text { animation: update-pulse 1.6s ease-in-out infinite; }
+
+@keyframes update-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.update-notice-btn,
+.update-notice-x {
+  font-family: inherit;
+  font-size: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  /* hold the pill at one height: the button only exists in some states, and a
+     meta row that grows 8px mid-update is jank you notice */
+  padding: 2px 10px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background 0.15s linear, color 0.15s linear, border-color 0.15s linear;
+}
+
+.update-notice-btn:hover,
+.update-notice-x:hover {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+.update-notice-x {
+  border: none;
+  padding: 3px 6px;
+  color: var(--fg-faint);
+  line-height: 1;
 }
 
 .grid-meta-live {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   color: var(--fg-faint);
   transition: color 0.3s var(--ease-swift);
 }
 
 .grid-meta-live::after { content: "offline"; }
 .grid-meta.online .grid-meta-live { color: var(--fg-muted); }
-.grid-meta.online .grid-meta-live::after { content: "online"; }
+.grid-meta.online .grid-meta-live::after { content: "live"; }
 
 .live-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1px solid var(--fg-faint);
-  background: transparent;
-  transition: background 0.3s var(--ease-swift), border-color 0.3s var(--ease-swift);
+  background: var(--fg-ghost);
+  transition: background 0.3s var(--ease-swift), box-shadow 0.3s var(--ease-swift);
 }
 
 .grid-meta.online .live-dot {
-  background: #ffffff;
-  border-color: #ffffff;
-  animation: dot-breathe 2.6s ease-in-out infinite;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+  animation: dot-breathe 3s ease-in-out infinite;
 }
 
 @keyframes dot-breathe {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.45); }
-  50%      { box-shadow: 0 0 8px 1px rgba(255, 255, 255, 0.45); }
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 }
+
+/* ── Search ── */
+
+.grid-search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: clamp(180px, 24vw, 280px);
+}
+
+.grid-search-wrap::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  background: currentColor;
+  color: var(--fg-faint);
+  -webkit-mask: var(--icon-search) center / contain no-repeat;
+  mask: var(--icon-search) center / contain no-repeat;
+}
+
+:root {
+  --icon-search: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-3.6-3.6'/></svg>");
+  --icon-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='9' height='6' viewBox='0 0 9 6'><path d='M1 1.2l3.5 3.4L8 1.2' fill='none' stroke='%23a0a0a4' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+
+.grid-search {
+  width: 100%;
+  background: var(--interactive);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--fg);
+  padding: 7px 46px 7px 32px;
+  font-size: 13px;
+  outline: none;
+  caret-color: var(--fg);
+  transition: border-color 0.18s var(--ease-swift), background 0.18s var(--ease-swift), box-shadow 0.18s var(--ease-swift);
+}
+
+.grid-search::placeholder { color: var(--fg-faint); }
+.grid-search:hover { border-color: var(--line-strong); }
+
+.grid-search:focus {
+  border-color: var(--line-strong);
+  background: var(--interactive);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg) 8%, transparent);
+}
+
+.grid-kbd {
+  position: absolute;
+  right: 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 5px;
+  cursor: pointer;
+  transition: color 0.15s var(--ease-swift), border-color 0.15s var(--ease-swift);
+}
+
+.grid-kbd:hover { color: var(--fg); border-color: var(--line-strong); }
 
 /* ── Toolbar ── */
 
@@ -188,255 +444,237 @@ button { -webkit-tap-highlight-color: transparent; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin: 22px auto 44px;
-  max-width: 1680px;
-  flex-wrap: wrap;
+  gap: 12px;
+  padding: 20px var(--gutter) 18px;
 }
 
+/* Chips and the sort control are pills with internal padding; pulled out by
+   that padding so their *text* lines up with the grid's left and right edges
+   rather than their invisible boxes. */
 .grid-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  margin-left: -12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.grid-search-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  margin-right: 8px;
-}
-
-.grid-search {
-  width: 240px;
-  background: var(--surface-1);
-  border: 1px solid var(--hairline);
-  color: #ffffff;
-  padding: 8px 56px 8px 12px;
-  font: inherit;
-  font-size: 13px;
-  font-family: var(--font);
-  outline: none;
-  caret-color: #ffffff;
-  transition: border-color 0.2s var(--ease-swift), background 0.2s var(--ease-swift), box-shadow 0.2s var(--ease-swift);
-}
-
-.grid-search::placeholder { color: var(--fg-faint); }
-
-.grid-search:hover { border-color: rgba(255, 255, 255, 0.26); }
-
-.grid-search:focus {
-  border-color: var(--hairline-strong);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06);
-}
-
-.grid-kbd {
-  position: absolute;
-  right: 7px;
-  top: 50%;
-  transform: translateY(-50%);
-  border: 1px solid var(--hairline);
-  background: transparent;
-  color: var(--fg-faint);
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.05em;
-  line-height: 1;
-  padding: 4px 6px;
-  cursor: pointer;
-  transition: color 0.15s var(--ease-swift), border-color 0.15s var(--ease-swift);
-}
-
-.grid-kbd:hover { color: #ffffff; border-color: var(--hairline-strong); }
+.grid-toolbar-left::-webkit-scrollbar { display: none; }
 
 .grid-chip {
+  flex: 0 0 auto;
   background: transparent;
-  border: 1px solid var(--hairline);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   color: var(--fg-muted);
-  padding: 8px 13px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  line-height: 1.2;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  line-height: 1.35;
   cursor: pointer;
-  transition: background 0.18s var(--ease-swift), color 0.18s var(--ease-swift), border-color 0.18s var(--ease-swift);
+  white-space: nowrap;
+  transition: background 0.15s var(--ease-swift), color 0.15s var(--ease-swift), border-color 0.15s var(--ease-swift);
 }
 
-.grid-chip:hover { color: #ffffff; border-color: var(--hairline-strong); }
+.grid-chip:hover { color: var(--fg); background: var(--interactive); }
 
 .grid-chip--active {
-  background: #ffffff;
-  color: #000000;
-  border-color: #ffffff;
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
 }
 
-.grid-chip--active:hover { color: #000000; }
+.grid-chip--active:hover { background: var(--fg); color: var(--bg); }
 
 .grid-sort {
+  flex: 0 0 auto;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'><path d='M1 1l3 3 3-3' fill='none' stroke='rgba(255,255,255,0.5)' stroke-width='1.2'/></svg>");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  border: 1px solid var(--hairline);
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
   color: var(--fg-muted);
-  padding: 8px 32px 8px 13px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  padding: 5px 22px 5px 11px;
+  margin-right: -11px;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
-  outline: none;
-  transition: color 0.18s var(--ease-swift), border-color 0.18s var(--ease-swift);
+  /* A background image, not a mask: a mask on a <select> clips the element
+     itself, text and all, to the chevron. The URI carries the stroke colour, so
+     there is one per scheme rather than the hardcoded #888 that used to sit
+     unchanged on a white toolbar. */
+  background-image: var(--icon-chevron);
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  transition: color 0.15s var(--ease-swift), background-color 0.15s var(--ease-swift);
 }
 
-.grid-sort:hover { color: #ffffff; border-color: var(--hairline-strong); }
-.grid-sort option { background: #000000; color: #ffffff; }
+/* A pointer click on a <select> raises the browser's own focus ring in some
+   engines, which is what the blanket `outline: none` here was for — but it
+   took the keyboard ring with it, and this control had no other focus state.
+   Suppress the one and restore the other. */
+.grid-sort:focus { outline: none; }
 
-.grid-empty {
-  grid-column: 1 / -1;
-  text-align: center;
-  color: var(--fg-muted);
-  font-size: 13px;
-  padding: 56px 0;
+.grid-sort:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+  color: var(--fg);
 }
 
+.grid-sort:hover { color: var(--fg); background-color: var(--interactive); }
+.grid-sort option { background: var(--overlay); color: var(--fg); }
+
+/* ── The grid ── */
+
+/* Column width is set per breakpoint rather than left to one auto-fill minimum:
+   a single 248px floor gives a wide desktop a tidy 5-up but strands a 820px
+   tablet on two 370px monsters. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-  gap: 48px 30px;
-  max-width: 1680px;
-  margin: 0 auto;
-  background: transparent;
-  border: none;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min), 1fr));
+  gap: 26px 22px;
+  padding: 0 var(--gutter);
+  align-content: start;
 }
 
-/* ── Card ──
-   Each surface is a porthole: a circular disc holding the live preview,
-   machined with a hairline ring, a glass highlight, and an inner vignette.
-   The disc lifts and tilts toward the pointer; status (live, pending,
-   listening, handling) reads as monochrome instrumentation around it. */
+/* A filter or a query with nothing behind it. One line and a way back — not a
+   sentence stranded at the top of an empty page. */
+.grid-empty {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: var(--fg-faint);
+  font-size: 13.5px;
+  padding: clamp(56px, 16vh, 140px) 20px;
+}
+
+.grid-empty-line {
+  max-width: 34ch;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.grid-empty-reset {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--fg);
+  font-size: 12.5px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease-swift), color 0.14s var(--ease-swift), border-color 0.14s var(--ease-swift);
+}
+
+.grid-empty-reset:hover {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg);
+}
+
+.grid-empty-reset:active { transform: scale(0.97); }
+
+/* ══ Card ══
+   A framed preview with a two-line caption. The screenshot is the card; the
+   chrome around it is one hairline and nothing else. */
 
 .surface-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 16px;
+  gap: 11px;
+  /* The card must never be the thing that decides how wide its column is. */
+  min-width: 0;
   cursor: pointer;
-  color: #ffffff;
+  color: var(--fg);
   background: transparent;
   border: 0;
-  text-align: center;
+  text-align: left;
+  /* Off-screen cards skip layout and paint entirely. The intrinsic size is the
+     measured card box, so the scrollbar stays honest and nothing jumps as rows
+     enter and leave. */
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
   -webkit-tap-highlight-color: transparent;
-  animation: card-enter 0.6s var(--ease-out) both;
+  animation: card-enter 0.42s var(--ease-out) both;
   animation-delay: var(--card-delay, 0s);
 }
 
 @keyframes card-enter {
-  from { opacity: 0; transform: translateY(16px) scale(0.96); }
+  from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: none; }
 }
 
 .surface-card.removing {
-  animation: card-remove 0.38s var(--ease-swift) both;
+  animation: card-remove 0.3s var(--ease-swift) both;
   pointer-events: none;
 }
 
 @keyframes card-remove {
-  from { opacity: 1; transform: none; filter: blur(0); }
-  to   { opacity: 0; transform: scale(0.86); filter: blur(4px); }
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: scale(0.94); }
 }
 
-.card-disc {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background:
-    linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.05) 50%, transparent 70%) no-repeat,
-    #0a0a0a;
-  background-size: 250% 100%;
-  animation: disc-shimmer 2.2s var(--ease-swift) infinite;
-  overflow: hidden;
+.card-preview {
   position: relative;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 24px 56px -28px rgba(0, 0, 0, 0.9);
-  transform: translateY(var(--lift, 0px)) scale(var(--zoom, 1));
-  transition: box-shadow 0.4s var(--ease-out), transform 0.34s var(--ease-out);
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  /* Sizing context for the cover's excerpt — see .card-fallback. */
+  container-type: inline-size;
+  background: var(--panel-solid);
+  box-shadow: var(--shadow-card);
+  transition: transform 0.24s var(--ease-out), box-shadow 0.24s var(--ease-out);
+  transform: translateZ(0);
 }
 
-@keyframes disc-shimmer {
-  from { background-position: 125% 0, 0 0; }
-  to   { background-position: -25% 0, 0 0; }
-}
-
-.surface-card:hover .card-disc,
-.surface-card:focus-within .card-disc {
-  --lift: -6px;
-  --zoom: 1.015;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.42),
-    0 0 0 7px rgba(255, 255, 255, 0.04),
-    0 30px 70px -24px rgba(0, 0, 0, 0.9),
-    0 8px 44px -18px rgba(255, 255, 255, 0.18);
-}
-
-/* Pointer tilt (set by bindCardTilt as --rx/--ry on the card). */
-.surface-card.tilt .card-disc {
-  transform: perspective(1100px) rotateY(var(--rx, 0deg)) rotateX(var(--ry, 0deg)) translateY(var(--lift, 0px)) scale(var(--zoom, 1));
-}
-
-/* Glass curvature: a cold highlight across the upper arc + a soft inner
-   vignette so previews sit *inside* the porthole rather than on it. */
-.card-disc::after {
+/* Hairline drawn on top so it survives the image bleed. Stronger than the
+   shell's --line: a near-black screenshot on a near-black page has nothing but
+   this ring to say where the card ends. */
+.card-preview::after {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  z-index: 2;
+  border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(120% 76% at 30% -18%, rgba(255, 255, 255, 0.16), transparent 52%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg) 16%, transparent);
+  transition: box-shadow 0.24s var(--ease-out);
+  z-index: 3;
+}
+
+.surface-card:hover .card-preview,
+.surface-card:focus-visible .card-preview,
+.surface-card:focus-within .card-preview {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift);
+}
+
+.surface-card:hover .card-preview::after,
+.surface-card:focus-within .card-preview::after {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--fg) 34%, transparent);
+}
+
+/* The card carries `contain: paint`, which clips anything drawn outside its
+   border box — including the global focus outline. A keyboard user got the
+   hover treatment and no ring at all. The ring is drawn inside instead, on the
+   hairline that already frames the preview. */
+.surface-card:focus-visible { outline: none; }
+
+.surface-card:focus-visible .card-preview::after {
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-    inset 0 -26px 48px -28px rgba(0, 0, 0, 0.55);
-  opacity: 0.85;
-  transition: opacity 0.3s var(--ease-swift);
+    inset 0 0 0 2px var(--fg),
+    inset 0 0 0 4px color-mix(in oklab, var(--bg) 70%, transparent);
 }
 
-.surface-card:hover .card-disc::after { opacity: 1; }
-
-/* Listening: a slow-revolving dashed ring just outside the porthole. */
-.card-disc:has(.card-listening)::before {
-  content: "";
-  position: absolute;
-  inset: 4px;
-  border-radius: 50%;
-  border: 1px dashed rgba(255, 255, 255, 0.45);
-  z-index: 3;
-  pointer-events: none;
-  animation: ring-revolve 14s linear infinite;
-}
-
-.card-disc:has(.card-handling)::before {
-  content: "";
-  position: absolute;
-  inset: 4px;
-  border-radius: 50%;
-  border: 1px dashed rgba(255, 255, 255, 0.65);
-  z-index: 3;
-  pointer-events: none;
-  animation: ring-revolve 2.4s linear infinite;
-}
-
-@keyframes ring-revolve {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
+.surface-card:active .card-preview { transform: translateY(-1px) scale(0.995); }
 
 .card-thumb {
   position: absolute;
@@ -444,10 +682,12 @@ button { -webkit-tap-highlight-color: transparent; }
   width: 100%;
   height: 100%;
   object-fit: cover;
+  /* Surfaces lead with a headline; crop from the top so it survives. */
+  object-position: top center;
   display: block;
   border: 0;
-  background: #f4f4f4;
-  animation: thumb-in 0.5s var(--ease-swift) both;
+  z-index: 1;
+  animation: thumb-in 0.32s var(--ease-swift) both;
 }
 
 @keyframes thumb-in {
@@ -455,123 +695,172 @@ button { -webkit-tap-highlight-color: transparent; }
   to   { opacity: 1; }
 }
 
-.card-disc-icon {
+/* ── The cover with no capture behind it ──
+   Not a placeholder: the surface's own opening lines, set on the page's own
+   paper. A card whose screenshot has not been taken should still look like the
+   document it stands for, so this is typography — not a coloured tile with the
+   title printed on it a second time.
+
+   Type scales with the card, not with the viewport: the same grid renders one
+   350px card on a phone and five 250px cards on a desktop, and a fixed 11px
+   line looks starved in the first and cramped in the second. Container units
+   off .card-preview keep the excerpt at a constant fraction of the card. */
+.card-fallback {
   position: absolute;
   inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  padding: clamp(11px, 5cqw, 22px) clamp(12px, 5.4cqw, 24px) 0;
+  background:
+    /* A whisper of the surface's own hue, so neighbouring cards are
+       distinguishable at a glance without the grid turning into a paint chart.
+       At 9% it reads as a tint on paper, not as a colour. */
+    radial-gradient(150% 110% at -5% -25%,
+      color-mix(in oklab, hsl(var(--seed-h, 220) 62% 52%) 10%, transparent),
+      transparent 72%),
+    var(--panel-solid);
+  color: var(--fg);
+}
+
+.card-fallback-doc {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.card-fallback--sparse {
+  display: flex;
+  align-items: center;
+  padding-bottom: clamp(11px, 5cqw, 22px);
+}
+
+.card-fallback--sparse .card-fallback-doc { width: 100%; }
+.card-fallback--sparse::after { display: none; }
+
+/* The excerpt runs past the bottom edge on purpose — a document continues. The
+   scrim lands it softly instead of guillotining a half-height line. It is drawn
+   in the cover's own background colour, so a two-line excerpt that never
+   reaches it is untouched. */
+.card-fallback::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 30%;
+  background: linear-gradient(to bottom, transparent, var(--panel-solid) 88%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.card-fallback-line {
+  min-height: 1em; /* a blank line in a log is a line */
+  overflow: hidden;
+}
+
+.card-fallback--prose .card-fallback-line {
+  font-size: clamp(9.5px, 4cqw, 13px);
+  line-height: 1.5;
+  color: var(--fg-faint);
+  letter-spacing: -0.004em;
+  /* Prose wraps; two lines of one paragraph is a preview, ten is a wall. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* A sub-heading inside the excerpt: the author's structure, kept. */
+.card-fallback--prose .card-fallback-line--head {
+  color: var(--fg-muted);
+  font-weight: 600;
+  margin-top: clamp(3px, 1.4cqw, 7px);
+  -webkit-line-clamp: 1;
+}
+
+.card-fallback--prose .card-fallback-line--lead {
+  font-size: clamp(12.5px, 5cqw, 17px);
+  font-weight: 600;
+  line-height: 1.26;
+  letter-spacing: -0.018em;
+  color: var(--fg);
+  margin-bottom: clamp(5px, 2.2cqw, 10px);
+  -webkit-line-clamp: 2;
+}
+
+/* A log or a source file is a transcript: fixed pitch, no wrapping, lines
+   running off the right edge exactly as they do in the terminal it came from. */
+.card-fallback--code .card-fallback-line {
+  font-family: var(--mono);
+  font-size: clamp(8px, 3.4cqw, 11.5px);
+  line-height: 1.62;
+  color: var(--fg-muted);
+  white-space: pre;
+}
+
+.card-fallback--code .card-fallback-line:first-child { color: var(--fg); }
+
+/* Nothing readable to show. One quiet word, centred, and no invented texture. */
+.card-fallback--bare {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+}
+
+.card-fallback-kind {
+  position: relative;
   font-family: var(--mono);
-  font-size: 16px;
-  font-weight: 500;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
-  color: var(--fg-faint);
-  background:
-    radial-gradient(closest-side, rgba(255, 255, 255, 0.05), transparent),
-    #0a0a0a;
+  font-size: clamp(9px, 3.4cqw, 11px);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-ghost);
 }
 
 /* ── Card instrumentation ── */
 
-.card-live {
-  position: absolute;
-  top: 7%;
-  left: 50%;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #ffffff;
-  background: rgba(0, 0, 0, 0.66);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  padding: 4px 9px;
-  border-radius: 999px;
-  z-index: 4;
-  transform: translateX(-50%);
-  animation: pill-in 0.35s var(--ease-out) both;
-}
-
-.card-live::before {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #ffffff;
-  animation: dot-breathe 1.6s ease-in-out infinite;
-}
-
-.card-badge {
-  position: absolute;
-  top: 13%;
-  right: 13%;
-  min-width: 24px;
-  height: 24px;
-  border-radius: 12px;
-  background: #ffffff;
-  color: #000000;
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  line-height: 24px;
-  text-align: center;
-  padding: 0 7px;
-  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 255, 255, 0.35);
-  z-index: 4;
-  animation: badge-pop 0.45s var(--ease-out) both;
-}
-
-@keyframes badge-pop {
-  0%   { opacity: 0; transform: scale(0.4); }
-  70%  { transform: scale(1.12); }
-  100% { opacity: 1; transform: scale(1); }
-}
-
+.card-live,
 .card-listening,
 .card-handling {
   position: absolute;
-  bottom: 7%;
-  left: 50%;
-  transform: translateX(-50%);
+  z-index: 4;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: -0.002em;
   white-space: nowrap;
-  color: #ffffff;
-  background: rgba(0, 0, 0, 0.66);
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  padding: 4px 10px;
-  border-radius: 999px;
-  z-index: 4;
-  animation: pill-in 0.35s var(--ease-out) both;
+  color: var(--chip-fg);
+  /* Opaque enough to sit on text. These pills used to land only on
+     screenshots, where a 0.62 scrim reads as frosted glass; over an excerpt's
+     own lines it read as two paragraphs printed on top of each other. */
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-line);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  animation: pill-in 0.28s var(--ease-out) both;
 }
+
+.card-live { top: 9px; left: 9px; }
+.card-listening, .card-handling { bottom: 9px; left: 9px; }
 
 @keyframes pill-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
 }
 
+.card-live::before,
 .card-listening::before {
   content: "";
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #ffffff;
-  animation: dot-breathe 2.2s ease-in-out infinite;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 30%, transparent);
+  animation: dot-breathe 2.4s ease-in-out infinite;
 }
 
 .card-handling::before {
@@ -579,22 +868,65 @@ button { -webkit-tap-highlight-color: transparent; }
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #ffffff;
-  animation: ring-revolve 0.9s linear infinite;
+  border: 1.4px solid color-mix(in oklab, var(--chip-fg) 30%, transparent);
+  border-top-color: var(--chip-fg);
+  animation: spin 0.85s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.card-badge {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  min-width: 21px;
+  height: 21px;
+  border-radius: var(--r-pill);
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 21px;
+  text-align: center;
+  padding: 0 6px;
+  z-index: 5;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  animation: badge-pop 0.36s var(--ease-out) both;
+}
+
+@keyframes badge-pop {
+  0%   { opacity: 0; transform: scale(0.5); }
+  70%  { transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 /* ── Card hover actions ── */
 
+/* Bottom-right, not top-right. The cover leads with a headline — a screenshot's
+   and an excerpt's alike — so a tray parked in the top corner covers the one
+   line worth reading. The bottom of the cover is where the content has already
+   faded under the scrim, and it keeps the tray clear of the pending-action
+   badge without having to dodge it. */
 .card-actions {
   position: absolute;
-  top: -6px;
-  right: -6px;
+  bottom: 8px;
+  right: 8px;
   display: flex;
-  gap: 6px;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-line);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
   opacity: 0;
-  transform: translateY(4px);
-  transition: opacity 0.2s var(--ease-swift), transform 0.25s var(--ease-out);
+  transform: translateY(4px) scale(0.96);
+  transition: opacity 0.16s var(--ease-swift), transform 0.2s var(--ease-out);
   z-index: 6;
   pointer-events: none;
 }
@@ -602,103 +934,101 @@ button { -webkit-tap-highlight-color: transparent; }
 .surface-card:hover .card-actions,
 .surface-card:focus-within .card-actions {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
   pointer-events: auto;
 }
 
 .card-action {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(8, 8, 8, 0.85);
-  color: rgba(255, 255, 255, 0.75);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in oklab, var(--chip-fg) 82%, transparent);
+  border: 0;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: background 0.15s var(--ease-swift), color 0.15s var(--ease-swift), border-color 0.15s var(--ease-swift), transform 0.12s var(--ease-swift);
-  pointer-events: auto;
+  transition: background 0.13s var(--ease-swift), color 0.13s var(--ease-swift);
 }
 
-.card-action:hover {
-  background: #ffffff;
-  color: #000000;
-  border-color: #ffffff;
-}
-
+.card-action:hover { background: var(--chip-hover); color: var(--chip-fg); }
 .card-action:active { transform: scale(0.92); }
-
 .card-action svg { display: block; }
+.card-action--danger:hover { background: var(--danger); color: #fff; }
 
-.card-action--danger:hover {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #ffffff;
-}
-
-/* ── Card text ── */
-
-input.card-title {
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.005em;
-  color: #ffffff;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.4);
-  text-align: center;
-  padding: 0 4px 2px;
-  outline: none;
-  max-width: 100%;
-  font-family: var(--font);
-  cursor: text;
-}
-
-input.card-title:focus { border-bottom-color: #ffffff; }
+/* ── Card caption ── */
 
 .card-body {
   display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.card-text {
+  display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  max-width: 100%;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
 }
 
 .card-title {
   font-size: 13.5px;
-  font-weight: 500;
-  letter-spacing: -0.005em;
-  color: #ffffff;
-  line-height: 1.3;
+  font-weight: 550;
+  letter-spacing: -0.011em;
+  color: var(--fg);
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
 }
 
+input.card-title {
+  font-family: var(--font);
+  background: var(--interactive);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 1px 6px;
+  margin: -2px -7px;
+  outline: none;
+  width: calc(100% + 14px);
+  cursor: text;
+  transition: border-color 0.14s var(--ease-swift), box-shadow 0.14s var(--ease-swift);
+}
+
+/* The card clips outlines (`contain: paint`), so the focus ring is a shadow. */
+input.card-title:focus {
+  border-color: var(--fg);
+  box-shadow: 0 0 0 1px var(--fg);
+}
+
+/* The field opens with its text selected. The global selection style is a solid
+   block of --fg, which turns the whole rename field into a white bar in dark
+   mode — a wash, not a selection. */
+input.card-title::selection {
+  background: color-mix(in oklab, var(--fg) 24%, transparent);
+  color: var(--fg);
+}
+
 .card-sub {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 400;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12px;
   color: var(--fg-faint);
-  line-height: 1.5;
+  line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-  transition: color 0.2s var(--ease-swift);
+  transition: color 0.18s var(--ease-swift);
 }
 
 .surface-card:hover .card-sub { color: var(--fg-muted); }
 
-/* ── Empty state ── */
+/* ══ Empty state ══ */
 
 .empty-state {
   position: absolute;
@@ -708,65 +1038,82 @@ input.card-title:focus { border-bottom-color: #ffffff; }
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 64px 80px;
-  gap: 80px;
+  padding: 56px clamp(28px, 6vw, 88px);
+  gap: clamp(32px, 6vw, 88px);
   text-align: left;
-  background: #000000;
+  background: var(--bg);
+  overflow: hidden;
 }
 
-/* Same substrate as the grid — the empty state paints over the app. */
 .empty-state::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image:
-    radial-gradient(1100px 480px at 32% -120px, rgba(255, 255, 255, 0.05), transparent 70%),
-    radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1.2px);
-  background-size: auto, 26px 26px;
-  -webkit-mask: radial-gradient(120% 100% at 40% 0%, #000 30%, rgba(0, 0, 0, 0.5) 100%);
-  mask: radial-gradient(120% 100% at 40% 0%, #000 30%, rgba(0, 0, 0, 0.5) 100%);
+  background: radial-gradient(900px 480px at 22% -120px, var(--fg), transparent 68%);
+  opacity: 0.06;
 }
 
 .empty-text {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 18px;
-  max-width: 560px;
+  gap: 16px;
+  max-width: 540px;
   flex: 1;
   min-width: 0;
   position: relative;
 }
 
+.empty-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-faint);
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  padding: 5px 12px 5px 9px;
+  animation: rise-in 0.7s var(--ease-out) both;
+}
+
+.empty-eyebrow::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+}
+
 .empty-prompt {
-  font-size: 60px;
-  font-weight: 600;
-  color: #ffffff;
-  line-height: 1.04;
-  letter-spacing: -0.03em;
-  max-width: 16ch;
-  animation: rise-in 0.8s var(--ease-out) both;
+  font-size: clamp(38px, 5.2vw, 62px);
+  font-weight: 630;
+  color: var(--fg);
+  line-height: 1.03;
+  letter-spacing: -0.035em;
+  max-width: 14ch;
+  animation: rise-in 0.7s var(--ease-out) 0.06s both;
 }
 
 @keyframes rise-in {
-  from { opacity: 0; transform: translateY(18px); }
+  from { opacity: 0; transform: translateY(14px); }
   to   { opacity: 1; transform: none; }
 }
 
 .empty-suggestions {
   display: flex;
   align-items: center;
+  gap: 9px;
   font-family: var(--mono);
   font-size: 14px;
-  font-weight: 400;
   color: var(--fg-muted);
-  gap: 8px;
   min-height: 24px;
-  animation: rise-in 0.8s var(--ease-out) 0.12s both;
+  animation: rise-in 0.7s var(--ease-out) 0.12s both;
 }
 
-.empty-suggestion-arrow { color: var(--fg-faint); }
+.empty-suggestion-arrow { color: var(--fg-ghost); }
 .empty-suggestion-text { white-space: pre; }
 
 .empty-suggestion-text::after {
@@ -775,7 +1122,7 @@ input.card-title:focus { border-bottom-color: #ffffff; }
   vertical-align: text-bottom;
   width: 7px;
   height: 15px;
-  background: rgba(255, 255, 255, 0.65);
+  background: var(--fg-faint);
   margin-left: 3px;
   animation: caret-blink 1.1s steps(1) infinite;
 }
@@ -786,62 +1133,46 @@ input.card-title:focus { border-bottom-color: #ffffff; }
 }
 
 .empty-sub {
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
+  font-size: 12.5px;
   color: var(--fg-faint);
-  margin-top: 6px;
-  animation: rise-in 0.8s var(--ease-out) 0.2s both;
+  animation: rise-in 0.7s var(--ease-out) 0.18s both;
 }
 
 .empty-tour-btn {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 18px;
-  background: transparent;
-  border: 1px solid var(--hairline-strong);
-  color: #ffffff;
-  padding: 11px 20px;
-  border-radius: 0;
-  font-family: var(--font);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
+  gap: 8px;
+  margin-top: 6px;
+  background: var(--fg);
+  border: 1px solid var(--fg);
+  color: var(--bg);
+  padding: 10px 18px;
+  border-radius: var(--r-md);
+  font-size: 13.5px;
+  font-weight: 550;
+  letter-spacing: -0.008em;
   cursor: pointer;
-  position: relative;
-  transition: background-color 0.2s var(--ease-swift), color 0.2s var(--ease-swift), border-color 0.2s var(--ease-swift), box-shadow 0.25s var(--ease-swift);
-  animation: rise-in 0.8s var(--ease-out) 0.28s both;
+  transition: opacity 0.18s var(--ease-swift), transform 0.18s var(--ease-out), box-shadow 0.2s var(--ease-swift);
+  animation: rise-in 0.7s var(--ease-out) 0.24s both;
 }
 
 .empty-tour-btn::after {
   content: "→";
-  font-weight: 400;
-  transition: transform 0.25s var(--ease-out);
+  transition: transform 0.22s var(--ease-out);
 }
 
-.empty-tour-btn:hover {
-  background: #ffffff;
-  color: #000000;
-  border-color: #ffffff;
-  box-shadow: 0 0 32px rgba(255, 255, 255, 0.22);
-}
-
+.empty-tour-btn:hover { opacity: 0.88; box-shadow: var(--shadow-card); }
 .empty-tour-btn:hover::after { transform: translateX(3px); }
+.empty-tour-btn:active { transform: scale(0.985); }
 
-.empty-tour-glyph { display: none; }
-
-/* ── Portal gallery (empty-state right column) ── */
+/* ── Demo gallery (empty-state right column) ── */
 
 .empty-portal {
   display: block;
   flex-shrink: 0;
-  height: 80vh;
-  max-height: 920px;
-  width: clamp(360px, 40vw, 560px);
+  height: 86vh;
+  max-height: 900px;
+  width: clamp(340px, 44vw, 620px);
   -webkit-tap-highlight-color: transparent;
   position: relative;
 }
@@ -850,57 +1181,54 @@ input.card-title:focus { border-bottom-color: #ffffff; }
   height: 100%;
   overflow: hidden;
   position: relative;
-  -webkit-mask: linear-gradient(to bottom, transparent 0%, #000 12%, #000 88%, transparent 100%);
-  mask: linear-gradient(to bottom, transparent 0%, #000 12%, #000 88%, transparent 100%);
+  /* A short fade, not a long one: the band has to read as the edge of the
+     viewport, and anything wider smears a whole demo card into the page. */
+  -webkit-mask: linear-gradient(to bottom, transparent 0%, #000 5%, #000 95%, transparent 100%);
+  mask: linear-gradient(to bottom, transparent 0%, #000 5%, #000 95%, transparent 100%);
 }
 
 .portal-track {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 56px;
-  padding: 60px 0;
+  align-items: stretch;
+  gap: 34px;
+  padding: 44px 0;
   will-change: transform;
 }
 
 .portal-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 24px;
+  gap: 14px;
   flex-shrink: 0;
 }
 
 .portal-disc {
-  width: clamp(320px, 36vw, 480px);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: #ffffff;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--card-radius);
+  background: var(--panel-solid);
   overflow: hidden;
   position: relative;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.18),
-    0 32px 90px -36px rgba(0, 0, 0, 0.9);
+  box-shadow: var(--shadow-lift);
 }
 
-/* The same glass arc as live cards, so demos read as the real thing. */
 .portal-disc::after {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 50%;
+  border-radius: inherit;
   z-index: 2;
   pointer-events: none;
-  background: radial-gradient(120% 76% at 30% -18%, rgba(255, 255, 255, 0.14), transparent 52%);
-  box-shadow: inset 0 -26px 48px -28px rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .portal-scrollbar {
   position: absolute;
-  top: 64px;
-  bottom: 64px;
-  right: 16px;
-  width: 14px;
+  top: 56px;
+  bottom: 56px;
+  right: -14px;
+  width: 12px;
   z-index: 4;
   cursor: pointer;
 }
@@ -911,7 +1239,7 @@ input.card-title:focus { border-bottom-color: #ffffff; }
   bottom: 0;
   left: 50%;
   width: 1px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--line);
   transform: translateX(-0.5px);
 }
 
@@ -920,31 +1248,35 @@ input.card-title:focus { border-bottom-color: #ffffff; }
   top: 0;
   left: 50%;
   transform: translateX(-50%);
-  width: 4px;
-  height: 84px;
+  width: 3px;
+  height: 76px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.38);
+  background: var(--fg-ghost);
   cursor: grab;
   will-change: top;
-  transition: width 0.18s var(--ease-swift), background 0.18s var(--ease-swift), box-shadow 0.18s var(--ease-swift);
+  transition: width 0.18s var(--ease-swift), background 0.18s var(--ease-swift);
 }
 
 .portal-scrollbar:hover .portal-scrollbar-thumb,
 .portal-scrollbar-thumb.is-dragging {
-  width: 6px;
-  background: #ffffff;
-  box-shadow: 0 0 16px rgba(255, 255, 255, 0.45);
+  width: 5px;
+  background: var(--fg-muted);
 }
 
 .portal-scrollbar-thumb.is-dragging { cursor: grabbing; }
-
 body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
+/* Render each demo at a laptop-ish viewport and scale it down, so the frame
+   shows the whole surface the way a screenshot would — not a zoomed crop of its
+   top-left corner. */
 .portal-demo {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 0;
+  left: 0;
+  width: 150%;
+  height: 150%;
+  transform: scale(0.6667);
+  transform-origin: top left;
   border: none;
   pointer-events: none;
   background: transparent;
@@ -953,85 +1285,83 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 .portal-meta {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  text-align: center;
-  gap: 5px;
-  max-width: 360px;
+  gap: 3px;
+  padding: 0 2px;
 }
 
 .portal-label {
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 400;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
+  font-size: 11.5px;
   color: var(--fg-faint);
-  margin-bottom: 5px;
+  margin-bottom: 2px;
 }
 
 .portal-title {
-  font-size: 18px;
-  font-weight: 500;
-  color: #ffffff;
-  letter-spacing: -0.01em;
-  line-height: 1.2;
+  font-size: 15px;
+  font-weight: 570;
+  color: var(--fg);
+  letter-spacing: -0.014em;
+  line-height: 1.25;
 }
 
 .portal-sub {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--fg-muted);
+  font-size: 12.5px;
+  color: var(--fg-faint);
   line-height: 1.4;
 }
 
 .portal-prompt {
   background: none;
   border: 0;
-  padding: 6px 0;
-  margin-top: 8px;
+  padding: 5px 0 0;
   display: inline-flex;
   align-items: baseline;
   gap: 7px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--fg-muted);
   cursor: pointer;
   transition: color 0.15s var(--ease-swift);
   -webkit-tap-highlight-color: transparent;
   max-width: 100%;
+  text-align: left;
 }
 
-.portal-prompt:hover,
-.portal-prompt:focus-visible { color: #ffffff; outline: none; }
+.portal-prompt:hover { color: var(--fg); }
 
-.portal-prompt-arrow { color: var(--fg-faint); transition: transform 0.2s var(--ease-out), color 0.15s var(--ease-swift); }
+/* Colour alone is not a focus indicator. */
+.portal-prompt:focus-visible {
+  color: var(--fg);
+  outline: 2px solid var(--fg);
+  outline-offset: 3px;
+  border-radius: var(--r-sm);
+}
+
+.portal-prompt-arrow { color: var(--fg-ghost); transition: transform 0.2s var(--ease-out), color 0.15s var(--ease-swift); }
 .portal-prompt:hover .portal-prompt-arrow,
-.portal-prompt:focus-visible .portal-prompt-arrow { color: #ffffff; transform: translateX(2px); }
+.portal-prompt:focus-visible .portal-prompt-arrow { color: var(--fg); transform: translateX(2px); }
 
 .portal-prompt-text {
-  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 320px;
 }
 
-.portal-prompt--copied { color: #ffffff; }
-.portal-prompt--copied .portal-prompt-arrow { color: #ffffff; }
+.portal-prompt--copied,
+.portal-prompt--copied .portal-prompt-arrow { color: var(--fg); }
 
-/* ── Modal ── */
+/* ══ Modal ══ */
 
 .modal-overlay {
   position: fixed;
   inset: 0;
   z-index: 2000;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--overlay) 70%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px;
+  padding: 28px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s var(--ease-swift);
@@ -1041,131 +1371,117 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
 .modal-panel {
   position: relative;
-  width: min(540px, 100%);
-  background: rgba(5, 5, 5, 0.96);
-  border: 1px solid var(--hairline-strong);
-  border-radius: 0;
-  padding: 44px 44px 36px;
-  color: #ffffff;
-  box-shadow: 0 60px 140px -40px rgba(0, 0, 0, 0.9), 0 0 80px -30px rgba(255, 255, 255, 0.12);
-  transform: translateY(10px) scale(0.985);
-  transition: transform 0.28s var(--ease-out);
+  width: min(520px, 100%);
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 32px 32px 28px;
+  color: var(--fg);
+  box-shadow: var(--shadow-pop);
+  transform: translateY(8px) scale(0.99);
+  transition: transform 0.26s var(--ease-out);
 }
 
 .modal-overlay--visible .modal-panel { transform: none; }
 
 .modal-close {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 32px;
-  height: 32px;
-  border: 1px solid transparent;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--r-sm);
   background: transparent;
-  color: var(--fg-muted);
+  color: var(--fg-faint);
   cursor: pointer;
   font-size: 18px;
-  font-weight: 400;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.15s var(--ease-swift), border-color 0.15s var(--ease-swift);
+  transition: color 0.15s var(--ease-swift), background 0.15s var(--ease-swift);
 }
 
-.modal-close:hover { color: #ffffff; border-color: var(--hairline); }
+.modal-close:hover { color: var(--fg); background: var(--interactive); }
 
 .modal-eyebrow {
   font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 400;
-  letter-spacing: 0.26em;
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--fg-faint);
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .modal-title {
-  font-weight: 600;
-  font-size: 25px;
-  color: #ffffff;
-  line-height: 1.15;
-  letter-spacing: -0.02em;
-  margin: 0 0 12px;
+  font-weight: 620;
+  font-size: 23px;
+  color: var(--fg);
+  line-height: 1.18;
+  letter-spacing: -0.024em;
+  margin: 0 0 10px;
 }
 
 .modal-lede {
-  font-size: 14px;
-  font-weight: 400;
+  font-size: 13.5px;
   color: var(--fg-muted);
   line-height: 1.55;
-  margin: 0 0 22px;
+  margin: 0 0 20px;
 }
 
 .modal-prompt {
-  background: var(--surface-1);
-  border: 1px solid var(--hairline);
-  border-left: 2px solid rgba(255, 255, 255, 0.5);
-  border-radius: 0;
-  padding: 15px 17px;
+  background: var(--interactive);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
   font-family: var(--mono);
   font-size: 12.5px;
-  font-weight: 400;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--fg);
   white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0 0 22px;
+  overflow-wrap: break-word;
+  margin: 0 0 20px;
   user-select: all;
 }
 
-.modal-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }
+.modal-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; }
 
 .modal-copy-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #ffffff;
-  border: 1px solid #ffffff;
-  color: #000000;
-  padding: 10px 18px;
-  border-radius: 0;
-  font-family: var(--font);
+  background: var(--fg);
+  border: 1px solid var(--fg);
+  color: var(--bg);
+  padding: 9px 16px;
+  border-radius: var(--r-md);
   font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
+  font-weight: 550;
   cursor: pointer;
-  transition: background-color 0.18s var(--ease-swift), color 0.18s var(--ease-swift), box-shadow 0.2s var(--ease-swift);
+  transition: opacity 0.18s var(--ease-swift);
 }
 
-.modal-copy-btn:hover {
-  background: transparent;
-  color: #ffffff;
-  box-shadow: 0 0 24px rgba(255, 255, 255, 0.15);
-}
-
-.modal-copy-btn--done { background: transparent; color: #ffffff; }
-
+.modal-copy-btn:hover { opacity: 0.86; }
+.modal-copy-btn--done { background: var(--ok); border-color: var(--ok); color: #fff; }
 .modal-copy-glyph { display: none; }
 
 .modal-sub {
   font-size: 12px;
-  font-weight: 400;
-  color: var(--fg-muted);
+  color: var(--fg-faint);
   line-height: 1.5;
 }
 
 .modal-mono {
   font-family: var(--mono);
   font-size: 11px;
-  color: #ffffff;
-  font-weight: 500;
-  background: var(--surface-2);
+  color: var(--fg-muted);
+  background: var(--interactive);
+  border-radius: 4px;
   padding: 2px 5px;
 }
 
-/* ── Surface view ── */
+/* ══ Surface view ══ */
 
 .surface-view {
   position: absolute;
@@ -1173,8 +1489,8 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #000000;
-  animation: view-in 0.3s var(--ease-out) both;
+  background: var(--bg);
+  animation: view-in 0.24s var(--ease-out) both;
 }
 
 @keyframes view-in {
@@ -1182,92 +1498,134 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   to   { opacity: 1; }
 }
 
+/* ── The bar ──
+   40px. One row. Back, identity, state. It sits above the artifact and gives
+   the artifact everything else. */
+
 .surface-nav {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 18px;
-  background: rgba(0, 0, 0, 0.78);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--hairline);
+  gap: 8px;
+  height: var(--nav-h);
+  padding: 0 8px;
+  padding-top: env(safe-area-inset-top, 0px);
+  height: calc(var(--nav-h) + env(safe-area-inset-top, 0px));
   flex-shrink: 0;
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  box-shadow: inset 0 -1px 0 var(--line);
+  color: var(--fg);
 }
 
 .back-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-sm);
   background: transparent;
-  border: 1px solid var(--hairline);
-  color: #ffffff;
-  width: 34px;
-  height: 34px;
-  border-radius: 0;
+  color: var(--fg-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: 400;
-  flex-shrink: 0;
-  transition: background-color 0.18s var(--ease-swift), color 0.18s var(--ease-swift), border-color 0.18s var(--ease-swift);
+  transition: background 0.14s var(--ease-swift), color 0.14s var(--ease-swift);
 }
 
-.back-btn:hover { background: #ffffff; color: #000000; border-color: #ffffff; }
-.back-btn:active { transform: scale(0.95); }
+.back-btn svg { display: block; }
+.back-btn:hover { background: var(--interactive); color: var(--fg); }
+.back-btn:active { transform: scale(0.94); }
 
-.surface-nav-titlewrap { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.surface-nav-titlewrap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
 
 .surface-nav-title {
-  font-weight: 500;
-  font-size: 14px;
-  letter-spacing: -0.005em;
-  color: #ffffff;
+  font-weight: 550;
+  font-size: 13px;
+  letter-spacing: -0.012em;
+  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .surface-nav-meta {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 400;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--fg-faint);
   display: flex;
+  align-items: baseline;
   gap: 0;
-  align-items: center;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+  overflow: hidden;
 }
 
 .surface-nav-meta > span:not(.surface-nav-meta-dot) { white-space: nowrap; }
 
+/* A separator between meta items. `vertical-align` does nothing to a flex item,
+   so the old rule left a 2px box sitting on the row's baseline — a full stop
+   after "HTML", not a middot between it and the next word. */
 .surface-nav-meta-dot {
-  display: inline-block;
-  width: 2px;
-  height: 2px;
+  align-self: center;
+  flex: 0 0 auto;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
-  background: var(--fg-faint);
-  margin: 0 8px;
-}
-
-.surface-nav-meta > span:first-child ~ span:not(.surface-nav-meta-dot)::before {
-  content: "";
+  background: var(--fg-ghost);
+  margin: 0 7px;
 }
 
 .surface-nav-live {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--fg-muted);
+  color: var(--fg-faint);
 }
 
 .surface-nav-live::before {
   content: "";
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: #ffffff;
-  animation: dot-breathe 2.2s ease-in-out infinite;
+  background: var(--ok);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok) 26%, transparent);
+  animation: dot-breathe 2.6s ease-in-out infinite;
 }
+
+.surface-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.nav-action {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.14s var(--ease-swift), color 0.14s var(--ease-swift);
+}
+
+.nav-action svg { display: block; }
+.nav-action:hover { background: var(--interactive); color: var(--fg); }
+.nav-action:active { transform: scale(0.94); }
 
 .surface-frame {
   flex: 1;
@@ -1275,72 +1633,80 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   width: 100%;
   height: 100%;
   min-height: 0;
+  /* White, because a surface that declares no background of its own is an HTML
+     document expecting the browser's default page. But an empty white rectangle
+     is also what this element paints *before* the content arrives — a
+     full-screen strobe every time a dark shell opens a dark surface, for as
+     long as the load takes. So the frame is transparent until it has something
+     to show, and the shell's own background sits behind it in the meantime. */
   background: #ffffff;
+  display: block;
 }
 
-/* Agent re-rendered the surface — a brief optical refocus. */
-.surface-frame.refreshing {
-  animation: frame-refresh 0.55s var(--ease-swift);
+iframe.surface-frame {
+  opacity: 0;
+  transition: opacity 0.12s var(--ease-swift);
 }
+
+iframe.surface-frame.is-loaded { opacity: 1; }
+
+.surface-frame-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 40px;
+  color: var(--fg-muted);
+  font-size: 13.5px;
+  background: var(--bg);
+}
+
+.surface-frame.refreshing { animation: frame-refresh 0.5s var(--ease-swift); }
 
 @keyframes frame-refresh {
-  0%   { opacity: 1; filter: blur(0); }
-  35%  { opacity: 0.55; filter: blur(5px); }
-  100% { opacity: 1; filter: blur(0); }
+  0%   { opacity: 1; }
+  40%  { opacity: 0.62; }
+  100% { opacity: 1; }
 }
 
-/* ── Toast ── */
+/* ══ Toast ══ */
 
 .toast {
   position: fixed;
-  top: 20px;
-  right: 20px;
-  background: rgba(5, 5, 5, 0.92);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--hairline-strong);
-  border-left: 2px solid #ffffff;
-  color: #ffffff;
-  padding: 11px 16px;
-  border-radius: 0;
-  font-family: var(--font);
+  top: calc(12px + env(safe-area-inset-top, 0px));
+  right: 12px;
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  color: var(--fg);
+  padding: 10px 15px;
+  border-radius: var(--r-md);
   font-size: 13px;
-  font-weight: 400;
   z-index: 1000;
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.22s var(--ease-swift), transform 0.3s var(--ease-out);
   pointer-events: none;
-  max-width: min(380px, 80vw);
-  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
+  max-width: min(380px, calc(100vw - 24px));
+  box-shadow: var(--shadow-lift);
 }
 
-.toast--visible { opacity: 1; transform: translateY(0); }
+.toast--visible { opacity: 1; transform: none; }
+.toast--success { border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); }
+.toast--error { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
 
-.toast--success {
-  background: #ffffff;
-  border-color: #ffffff;
-  color: #000000;
-}
-
-.toast--error {
-  border-left-color: var(--danger);
-  color: #ffffff;
-}
-
-/* ── Surface finder (Cmd+K) ── */
+/* ══ Finder (⌘K) ══ */
 
 .finder-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.72);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--overlay) 66%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
   z-index: 100;
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 16vh;
+  padding-top: 14vh;
   opacity: 0;
   transition: opacity 0.18s var(--ease-swift);
 }
@@ -1349,31 +1715,36 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
 
 .finder-panel {
   width: 100%;
-  max-width: 580px;
-  margin: 0 24px;
-  background: rgba(5, 5, 5, 0.96);
-  border: 1px solid var(--hairline-strong);
+  max-width: 560px;
+  margin: 0 20px;
+  background: var(--overlay);
+  border: 1px solid var(--line);
+  border-radius: 18px;
   overflow: hidden;
-  transform: translateY(-8px) scale(0.99);
+  transform: translateY(-6px) scale(0.99);
   transition: transform 0.26s var(--ease-out);
-  box-shadow: 0 60px 140px -40px rgba(0, 0, 0, 0.9), 0 0 80px -30px rgba(255, 255, 255, 0.10);
+  box-shadow: var(--shadow-pop);
 }
 
 .finder-overlay--visible .finder-panel { transform: none; }
 
 .finder-input-wrap {
-  border-bottom: 1px solid var(--hairline);
-  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+  padding: 15px 18px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
 }
 
 .finder-input-wrap::before {
-  content: "›";
+  content: "";
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  background: currentColor;
   color: var(--fg-faint);
-  font-size: 18px;
-  line-height: 1;
+  -webkit-mask: var(--icon-search) center / contain no-repeat;
+  mask: var(--icon-search) center / contain no-repeat;
 }
 
 .finder-input {
@@ -1381,90 +1752,84 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   background: transparent;
   border: 0;
   outline: none;
-  color: #ffffff;
-  font-size: 17px;
-  font-family: var(--font);
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  caret-color: #ffffff;
+  color: var(--fg);
+  font-size: 16px;
+  letter-spacing: -0.014em;
+  caret-color: var(--fg);
 }
 
 .finder-input::placeholder { color: var(--fg-faint); }
 
 .finder-results {
-  max-height: 50vh;
+  max-height: 46vh;
   overflow-y: auto;
+  padding: 6px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+  scrollbar-color: var(--fg-ghost) transparent;
 }
 
 .finder-results::-webkit-scrollbar { width: 6px; }
-.finder-results::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.25); }
+.finder-results::-webkit-scrollbar-thumb { background: var(--fg-ghost); border-radius: 3px; }
 .finder-results::-webkit-scrollbar-track { background: transparent; }
 
 .finder-result {
-  padding: 12px 22px;
+  padding: 9px 12px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  border-left: 2px solid transparent;
-  transition: background 0.12s var(--ease-swift), border-color 0.12s var(--ease-swift);
+  gap: 2px;
+  border-radius: var(--r-sm);
+  transition: background 0.1s var(--ease-swift);
 }
 
-.finder-result--active {
-  background: rgba(255, 255, 255, 0.06);
-  border-left-color: #ffffff;
-}
+.finder-result--active { background: var(--interactive); }
 
 .finder-result-title {
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 500;
-  color: #ffffff;
+  color: var(--fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.finder-result-sub {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--fg-faint);
-}
+.finder-result-sub { font-size: 11.5px; color: var(--fg-faint); }
 
 .finder-empty {
-  padding: 28px 22px;
+  padding: 26px 18px;
   text-align: center;
-  color: var(--fg-muted);
+  color: var(--fg-faint);
   font-size: 13px;
 }
 
+/* Keybinding hints. At --fg-ghost they were decoration you had to squint at;
+   a hint nobody can read is a row of wasted pixels. */
 .finder-footer {
-  border-top: 1px solid var(--hairline);
-  padding: 10px 22px;
+  border-top: 1px solid var(--line);
+  padding: 9px 18px;
   display: flex;
-  gap: 22px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
+  gap: 18px;
+  font-size: 11px;
   color: var(--fg-faint);
 }
 
-/* ── Home widget ── */
+/* ══ Home widget / overlay ══ */
 
+/* The home slot is an iframe, so it has to be inset with margins: padding would
+   shrink the content box out from under the auto-height measurement the shell
+   takes from its scrollHeight. */
 .home-widget {
-  width: 100%;
-  border: none;
-  border-radius: 0;
-  margin: 0 0 36px;
-  max-width: 1200px;
   display: block;
+  width: calc(100% - 2 * var(--gutter));
+  /* An iframe with no height is 150px tall. That default is what the dashboard
+     shows while the widget loads, and what it keeps if the frame never fires
+     `load` — so the reserved height is the sizer's own floor instead. */
+  height: 60px;
+  margin: 4px var(--gutter) 8px;
+  border: none;
+  border-radius: var(--card-radius);
   background: transparent;
 }
-
-/* ── Display overlay ── */
 
 #display-overlay {
   position: fixed;
@@ -1475,40 +1840,116 @@ body.is-grabbing-scrollbar { cursor: grabbing; user-select: none; }
   background: transparent;
 }
 
-/* ── Mobile ── */
+/* ══ Responsive ══ */
 
-@media (max-width: 1000px) {
+@media (max-width: 1100px) {
+  :root { --gutter: 28px; --card-min: 215px; }
+  /* The empty state is `inset: 0` inside .grid-view, so it spans the full
+     height *including* the strip the sticky header occupies. Centred on the
+     full height, its first element — the "Surface is listening" pill — was
+     printed under the header: 4px lost at this width and 22px on a phone.
+     Reserve the header's height instead of centring through it. */
   .empty-state {
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
+    padding-top: calc(var(--header-h) + 32px);
   }
-  .empty-portal { display: none; }
-  .portal-scrollbar { display: none; }
+  .empty-portal, .portal-scrollbar { display: none; }
 }
 
-@media (max-width: 640px) {
-  .grid-view { padding: 32px 20px 56px; }
-  .grid { grid-template-columns: repeat(2, 1fr); gap: 32px 20px; }
-  .grid-header { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .grid-title { font-size: 30px; }
-  .grid-toolbar { margin-bottom: 32px; }
-  .grid-search { width: 100%; }
-  .grid-search-wrap { width: 100%; margin-right: 0; }
+@media (max-width: 760px) {
+  :root { --gutter: 18px; --header-h: 54px; }
+
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 14px; }
+  .grid-header { gap: 8px; }
+  .grid-subtitle { display: none; }
+  .grid-meta-count { display: none; }
+  /* The version is a diagnostic, not navigation — first thing to go when the
+     bar is fighting for room. The two icons stay: on a phone they are the only
+     way to reach the tutorial or the repo at all. */
+  .grid-version { display: none; }
+  .grid-icon-btn { width: 30px; height: 30px; }
+  .grid-search-wrap { width: auto; }
+  .grid-search-wrap::before { left: 10px; }
+  .grid-search {
+    width: 34px;
+    height: 34px;
+    padding: 0 0 0 30px;
+    cursor: pointer;
+    transition: width 0.24s var(--ease-out), padding 0.24s var(--ease-out), background 0.18s var(--ease-swift), border-color 0.18s var(--ease-swift);
+  }
+  .grid-search:focus, .grid-search:not(:placeholder-shown) { width: min(56vw, 240px); padding-right: 12px; }
+  /* Collapsed, the field is narrower than its own placeholder — which leaks a
+     sliver of the first glyph past the icon. Hide it until it opens. */
+  .grid-search::placeholder { color: transparent; }
+  .grid-search:focus::placeholder { color: var(--fg-faint); }
   .grid-kbd { display: none; }
-  .empty-state { padding: 36px 24px; }
-  .empty-prompt { font-size: 42px; }
-  .empty-suggestions { font-size: 13px; }
-  .modal-panel { padding: 36px 26px 28px; }
-  .toast { left: 14px; right: 14px; max-width: none; }
+  .grid-toolbar { padding: 14px var(--gutter) 14px; }
+  .card-title { font-size: 13px; }
+  .card-sub { font-size: 11.5px; }
+  .empty-state { padding: calc(var(--header-h) + 24px) 22px 32px; gap: 22px; }
+  .modal-panel { padding: 26px 22px 22px; border-radius: 16px; }
+  .toast { left: 12px; right: 12px; max-width: none; }
+
+  /* Narrow bar: the surface's name is the only identity worth the width. Kind
+     and age are a tap away in the grid; the live dot stays because it is state. */
+  .surface-nav-meta > span:not(.surface-nav-live) { display: none; }
 }
 
-/* ── Reduced motion ── */
+@media (max-width: 380px) {
+  /* minmax(0, 1fr), never a bare 1fr: `1fr` is `minmax(auto, 1fr)`, and that
+     `auto` floor is the item's min-content width. A card whose cover sets a log
+     in `white-space: pre` has a min-content width of the longest line, so a bare
+     1fr track grew to ~460px inside a 360px viewport and the grid ran off the
+     side of the screen. */
+  .grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Coarse pointers have no hover, so the tray needs a handle. It lives in the
+   caption, not on the picture: a chip floating over every preview is a toolbar
+   pretending to be a gallery. */
+.card-more {
+  display: none;
+  flex: 0 0 auto;
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  margin-right: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-more svg { display: block; }
+.card-more:active { background: var(--interactive); color: var(--fg); }
+
+@media (hover: none) {
+  .card-more { display: flex; }
+  .surface-card.is-menu-open .card-more { color: var(--fg); background: var(--interactive); }
+  .surface-card.is-menu-open .card-actions { opacity: 1; transform: none; pointer-events: auto; }
+}
+
+/* ══ Reduced motion ══ */
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    /* Delays too, not just durations. The grid's entrance is staggered with
+       `animation-delay`, and a `both` fill holds each card at opacity 0 until
+       its turn — so zeroing only the duration left a reduced-motion user
+       watching twelve cards pop in one at a time over half a second, which is
+       the part of the effect that reads as motion in the first place. */
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
   }
+  .surface-card:hover .card-preview { transform: none; }
 }

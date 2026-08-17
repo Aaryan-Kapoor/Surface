@@ -38,8 +38,30 @@ The roles are `system` and `device` (the earlier `owner`/`client` names are gone
 | Mint pairing tokens, revoke sessions | ✓ | ✗ |
 | Display control (navigate, notify, theme, reset) | ✓ | ✗ (agents drive the display) |
 | Third-party proxies (LLM chat, Nexlayer deploy, PDF proxy) | ✓ | ✗ (spends credentials / outbound network) |
+| See the release notice (`GET /api/update/status`) | ✓ | ✓ (the version is already on screen) |
+| Apply an update (`POST /api/update/apply`) | ✓ | ✗ (installs and runs new code on the host) |
 
 The line is drawn at anything that touches the host filesystem, executes code, mints credentials, spends server-side credentials, or dictates what every screen shows. A phone left in a cab can still browse and click the user's dashboard, but it can never register a binding that runs a shell command, pair additional devices, pull files off the disk, or force-navigate/restyle the host display. Devices can only *fire* pre-registered bindings by clicking — never create them. Display control (forcing navigation, pushing notifications, theming, reset) is an agent-plane push: a device renders what it's shown but cannot drive what other screens show.
+
+### Why the update button is system-only
+
+The PWA home shows "Surface X available" with an **Update** button
+([../operations/install.md](../operations/install.md#update-notification-and-one-click-update)).
+Clicking it runs `npm install -g surface-display@<latest>` and restarts the
+service — code fetched from the network, executed on the host, replacing the
+binary that answers every other endpoint. That is the definition of "executes
+code", so it sits on the `system` side of the line above, alongside `exec` and
+bindings.
+
+The consequence is deliberate: a paired phone **sees** the notice and is told
+where to act ("open Surface on the host, or run `surface upgrade` there"), but
+cannot press the button. The notification is information; the install is
+authority. Splitting them keeps the useful half available everywhere without
+handing a lost tablet an install-arbitrary-code button.
+
+The content plane inherits the refusal for free — it resolves to `device` by
+construction, so device-authored surface JS can never `fetch()` its way into an
+install (asserted in `test/updates.ts`).
 
 ### Why device artifact CRUD is scoped to device-authored content
 

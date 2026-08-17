@@ -45,8 +45,35 @@ function inline(text: string): string {
   return out;
 }
 
+/**
+ * YAML front matter is metadata for a tool, not the opening of a document. A
+ * skill file rendered as a doc was leading with `name: surface description: …`
+ * as its first paragraph — the machinery, printed as prose.
+ *
+ * Only a block that closes counts. A lone `---` on the first line is a
+ * thematic rule in the body, and swallowing the rest of the file would be a
+ * great deal worse than rendering a horizontal line.
+ */
+function stripFrontMatter(lines: string[]): string[] {
+  if (lines[0]?.trim() !== "---") return lines;
+  for (let i = 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed === "---" || trimmed === "...") return lines.slice(i + 1);
+  }
+  return lines;
+}
+
+/**
+ * Front matter belongs to a *document*, not to any fragment that happens to be
+ * parsed. Blockquotes recurse through the renderer, so stripping inside the
+ * recursion ate the body of any quote written as `> ---` / text / `> ---`,
+ * leaving an empty <blockquote> behind.
+ */
 export function renderMarkdown(src: string): string {
-  const lines = String(src ?? "").replace(/\r\n/g, "\n").split("\n");
+  return renderBlocks(stripFrontMatter(String(src ?? "").replace(/\r\n/g, "\n").split("\n")));
+}
+
+function renderBlocks(lines: string[]): string {
   const html: string[] = [];
   let i = 0;
   let para: string[] = [];
@@ -105,7 +132,7 @@ export function renderMarkdown(src: string): string {
         buf.push(lines[i].replace(/^>\s?/, ""));
         i++;
       }
-      html.push(`<blockquote>${renderMarkdown(buf.join("\n"))}</blockquote>`);
+      html.push(`<blockquote>${renderBlocks(buf)}</blockquote>`);
       continue;
     }
 

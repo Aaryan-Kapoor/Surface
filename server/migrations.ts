@@ -15,10 +15,10 @@ interface Migration {
   up: (db: Database.Database) => void;
 }
 
-// Exported so tests can address a migration by description rather than by a
-// hard-coded version number. Two open branches both wanted to be v15, and
-// whichever lands second has to renumber — a test that pins the number breaks
-// on a rename that is otherwise entirely correct.
+// Exported so tests can assert the ordering invariant the runner depends on,
+// and so they can address a migration by description rather than by a
+// hard-coded version number — three branches in flight had to renumber, and a
+// test that pins the number breaks on a rename that is otherwise correct.
 export const migrations: Migration[] = [
   {
     version: BASELINE_VERSION,
@@ -284,6 +284,30 @@ export const migrations: Migration[] = [
     },
   },
   {
+    version: 15,
+    description: "artifacts.content_rev: a monotonic per-change counter",
+    up: (db) => {
+      // The thumbnail generation (server/thumbs.ts) is the identity of the
+      // revision a cached capture is a picture of. It was hashed from
+      // current_version_id + updated_at, and neither moves usefully for a
+      // *linked* artifact's touch: the version row is unchanged and updated_at
+      // is SQLite's one-second-resolution clock, so two touches inside one
+      // second produced the same generation and an in-flight capture of the
+      // first could be written — and then deduplicated against — as the
+      // picture of the second.
+      //
+      // Nothing already on the row is monotonic (metadata is the only other
+      // mutable field, and updateArtifact replaces that document wholesale,
+      // which would reset a counter kept there and let a generation repeat).
+      // So: one integer, bumped by every write that declares the rendered
+      // content changed, and never reset.
+      const columns = db.pragma("table_info(artifacts)") as Array<{ name: string }>;
+      if (!columns.some((column) => column.name === "content_rev")) {
+        db.exec(`ALTER TABLE artifacts ADD COLUMN content_rev INTEGER NOT NULL DEFAULT 0`);
+      }
+    },
+  },
+  {
     // 16, not 15. The UI-refresh branch claims 15 (artifacts.content_rev) and
     // the tour branch claims 17, and runMigrations SILENTLY SKIPS any version
     // at or below the database's current one — so these three have to land in
@@ -318,9 +342,39 @@ export const migrations: Migration[] = [
   },
 ];
 
+/**
+ * Apply every migration the database has not seen, oldest first.
+ *
+ * The sort is not tidiness. `user_version` only ever moves forward and a
+ * migration at or below it is skipped, so a single out-of-order entry is
+ * silently fatal: run 15, then 17, and 16 is now unreachable forever — no
+ * error, no log line, just a column or a backfill that never happened on every
+ * database that took that path. This is not hypothetical. Three branches were
+ * once in flight numbered 15, 16 and 17, and resolving the merge conflict
+ * between them the obvious way produced the array in the order 15, 17, 16.
+ *
+ * The array itself is authored in order and should stay that way — but the
+ * correctness of every future merge should not depend on whoever resolves it
+ * noticing. Sorting a copy here costs nothing and removes the hazard from the
+ * class of things a human has to get right.
+ */
 export function runMigrations(db: Database.Database): void {
-  const current = db.pragma("user_version", { simple: true }) as number;
+  // Two migrations claiming one number is an authoring mistake that sorting
+  // cannot fix — the second would still be skipped — so it fails loudly, in
+  // development, rather than quietly on a user's machine.
+  const seen = new Set<number>();
   for (const m of migrations) {
+    if (seen.has(m.version)) {
+      throw new Error(
+        `two migrations both claim version ${m.version} ("${m.description}") — ` +
+        `renumber one of them; the later would never run`,
+      );
+    }
+    seen.add(m.version);
+  }
+
+  const current = db.pragma("user_version", { simple: true }) as number;
+  for (const m of [...migrations].sort((a, b) => a.version - b.version)) {
     if (m.version <= current) continue;
     console.log(`[migrations] applying v${m.version}: ${m.description}`);
     db.transaction(() => {

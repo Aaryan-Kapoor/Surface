@@ -347,39 +347,130 @@ function registryUrl(): string {
   return (process.env.SURFACE_NPM_REGISTRY || "https://registry.npmjs.org").replace(/\/$/, "");
 }
 
+// SURFACE_NPM_REGISTRY may carry credentials (`https://token@registry.internal`
+// is how private registries are usually pointed at), and errors about it travel
+// a long way: into the progress file, into `check_error`, out of
+// GET /api/update/status — which is deliberately readable by a paired DEVICE —
+// and over SSE. Node itself is the worst offender: it rejects a credential-
+// bearing URL with a message containing the whole URL.
+//
+// So no URL reaches an error string unlaundered. Userinfo, query and fragment
+// are the parts that carry secrets; host and path are what makes the message
+// useful, and they stay.
+export function sanitizeUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "[redacted url]";
+  }
+}
+
+const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)\]}]+/gi;
+
+/** Launder every URL inside an arbitrary message (an error from Node, say). */
+export function redactUrls(text: unknown): string {
+  return String(text).replace(URL_IN_TEXT, (match) => {
+    const trailing = /[.,;:!?]+$/.exec(match);
+    const core = trailing ? match.slice(0, -trailing[0].length) : match;
+    return sanitizeUrl(core) + (trailing ? trailing[0] : "");
+  });
+}
+
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$/;
 
 async function latestVersion(): Promise<string> {
   const url = `${registryUrl()}/surface-display/latest`;
+  const shown = sanitizeUrl(url); // never put the raw (possibly credentialed) URL in an error
   let res: Response;
   try {
     res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   } catch (e: any) {
-    throw new Error(`could not reach the npm registry at ${url} (${e?.cause?.code || e?.code || e?.message || e})`);
+    throw new Error(`could not reach the npm registry at ${shown} (${redactUrls(e?.cause?.code || e?.code || e?.message || e)})`);
   }
-  if (!res.ok) throw new Error(`registry answered ${res.status} for ${url}`);
+  if (!res.ok) throw new Error(`registry answered ${res.status} for ${shown}`);
   const body: any = await res.json();
   // strict gate: this string reaches a shell-backed npm spawn on Windows
   if (typeof body?.version !== "string" || !SEMVER.test(body.version)) {
-    throw new Error(`registry returned an invalid version (${JSON.stringify(body?.version).slice(0, 60)}) from ${url}`);
+    throw new Error(`registry returned an invalid version (${JSON.stringify(body?.version).slice(0, 60)}) from ${shown}`);
   }
   return body.version;
 }
 
-function newerThan(a: string, b: string): boolean {
-  const parse = (v: string) => v.split(/[.+-]/, 3).map((n) => Number(n) || 0);
-  const [a0, a1, a2] = parse(a);
-  const [b0, b1, b2] = parse(b);
-  return a0 !== b0 ? a0 > b0 : a1 !== b1 ? a1 > b1 : a2 > b2;
+interface ParsedVersion {
+  core: [number, number, number];
+  pre: string[]; // empty = a stable release
 }
 
-type InstallContext = "global" | "local" | "dev";
+// `1.2.3-rc.1` used to parse as `[1,2,3]`, because the old splitter cut on
+// `-` as if it were a separator between core numbers. A prerelease therefore
+// compared EQUAL to its own stable release, so an installed `1.2.3-rc.1` never
+// saw `1.2.3` as an update, and — after the restart check below started using
+// this — a service still running the rc would have been called "done" on the
+// stable version. Precedence follows SemVer §11: build metadata is ignored, a
+// prerelease is lower than its stable release, and prerelease identifiers are
+// compared field by field (numeric < alphanumeric).
+function parseVersion(value: string): ParsedVersion {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(String(value ?? "").trim());
+  // Anything unparseable ("unknown", an empty string) sorts as 0.0.0 with no
+  // prerelease, so it is never *newer* than a real version — the conservative
+  // answer everywhere this is used.
+  if (!m) return { core: [0, 0, 0], pre: [] };
+  return {
+    core: [Number(m[1]), Number(m[2]), Number(m[3])],
+    pre: m[4] ? m[4].split(".") : [],
+  };
+}
+
+/** SemVer precedence: negative when a < b, 0 when equal, positive when a > b. */
+export function compareVersions(a: string, b: string): number {
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  for (let i = 0; i < 3; i++) {
+    if (pa.core[i] !== pb.core[i]) return pa.core[i] - pb.core[i];
+  }
+  if (!pa.pre.length && !pb.pre.length) return 0;
+  if (!pa.pre.length) return 1; // a stable release outranks its prereleases
+  if (!pb.pre.length) return -1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    // "A larger set of pre-release fields has a higher precedence than a
+    // smaller set, if all of the preceding identifiers are equal."
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xNum = /^\d+$/.test(x);
+    const yNum = /^\d+$/.test(y);
+    if (xNum && yNum) {
+      if (Number(x) !== Number(y)) return Number(x) - Number(y);
+      continue;
+    }
+    // "Numeric identifiers always have lower precedence than non-numeric."
+    if (xNum !== yNum) return xNum ? -1 : 1;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+export function newerThan(a: string, b: string): boolean {
+  return compareVersions(a, b) > 0;
+}
+
+export type InstallContext = "global" | "local" | "dev";
 
 function npmCmd(): string {
   return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
-function installContext(): InstallContext {
+// Exported for the server's update endpoint (server/updates.ts): the one-click
+// update in the PWA must offer `npm install -g` only where `surface upgrade`
+// would actually run it. Blocking (spawns `npm root -g`) — callers memoize and
+// keep it off the request path.
+export function installContext(): InstallContext {
   const root = packageRoot();
   if (path.basename(path.dirname(root)) !== "node_modules") return "dev";
   const probe = spawnSync(npmCmd(), ["root", "-g"], {
@@ -398,12 +489,70 @@ function installContext(): InstallContext {
   return "local";
 }
 
+// ── progress reporting (--progress-file) ──
+//
+// `surface upgrade` restarts the service it is converging, which on systemd
+// also kills this process (the child lives in the unit's cgroup). A file is
+// therefore the only channel that survives the step it is reporting: the
+// server writes nothing here, it only reads. Writes are atomic (tmp+rename) so
+// a reader never sees a half-written phase, and the phase is written *before*
+// the step it names, so a killed run still leaves an honest last-known state
+// that the restarted server reconciles against its own version.
+
+export type UpgradePhase = "checking" | "installing" | "restarting" | "done" | "failed";
+
+export interface UpgradeProgress {
+  phase: UpgradePhase;
+  started_at: string;
+  updated_at: string;
+  pid: number;
+  from: string;
+  to?: string | null;
+  installed?: string | null;
+  context?: InstallContext;
+  error?: string | null;
+  // Identifies WHICH run wrote this record. The server mints it, claims the
+  // progress file with it before spawning, and passes it in via --run-id; it is
+  // how a record left by some other run is told apart from this one's.
+  run_id?: string | null;
+}
+
+function makeProgressWriter(file: string | null, from: string, runId: string | null): (patch: Partial<UpgradeProgress>) => void {
+  if (!file) return () => {};
+  const started = new Date().toISOString();
+  let state: UpgradeProgress = { phase: "checking", started_at: started, updated_at: started, pid: process.pid, from, run_id: runId };
+  return (patch) => {
+    state = { ...state, ...patch, updated_at: new Date().toISOString() };
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const tmp = `${file}.tmp-${process.pid}`;
+      fs.writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
+      fs.renameSync(tmp, file);
+    } catch {
+      // progress is advisory — never fail the upgrade because we couldn't report it
+    }
+  };
+}
+
 export async function runUpgrade({ flags }: Ctx): Promise<void> {
   const json = flags.json === true;
   const timeoutSec = typeof flags.timeout === "string" ? Number(flags.timeout) : 30;
   const name = typeof flags.name === "string" ? flags.name : undefined;
+  const progressFile = typeof flags["progress-file"] === "string" ? path.resolve(flags["progress-file"]) : null;
+  const runId = typeof flags["run-id"] === "string" ? flags["run-id"] : null;
   const current = localVersion();
-  const latest = await latestVersion();
+  const progress = makeProgressWriter(progressFile, current, runId);
+  progress({ phase: "checking" });
+
+  let latest: string;
+  try {
+    latest = await latestVersion();
+  } catch (err: any) {
+    // The progress file is read by a device-readable endpoint — launder it here
+    // too, in case the error came from somewhere other than latestVersion().
+    progress({ phase: "failed", error: redactUrls(err?.message || err) });
+    throw err;
+  }
   const available = newerThan(latest, current);
   const context = installContext();
 
@@ -422,6 +571,7 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
 
   let installed = current;
   let packageStep = "unchanged";
+  progress({ phase: "installing", to: latest, context });
   if (available && context === "global") {
     const res = spawnSync(npmCmd(), ["install", "-g", `surface-display@${latest}`], {
       // --json promises pure JSON on stdout — npm's install chatter goes to
@@ -432,11 +582,23 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
     });
     if (res.status !== 0) {
       if (json && res.stdout) process.stderr.write(res.stdout);
+      progress({ phase: "failed", error: `npm install -g surface-display@${latest} failed (exit ${res.status ?? "?"})` });
       console.error(`npm install -g surface-display@${latest} failed (exit ${res.status ?? "?"})`);
       process.exit(1);
     }
-    // npm replaced the package in place; re-read the version from disk.
+    // npm replaced the package in place; re-read the version from disk — and
+    // check it. A zero exit is npm saying "I finished", not "the new version is
+    // on disk": a cached tarball, a different prefix than the one `npm root -g`
+    // reported, or a dist-tag that resolved elsewhere all exit 0 while leaving
+    // the old package in place. Reporting `done` from that state is precisely
+    // the dishonesty the progress file exists to prevent, so it is a failure.
     installed = localVersion();
+    if (newerThan(latest, installed)) {
+      const message = `npm install -g surface-display@${latest} exited 0 but ${installed} is still installed at ${packageRoot()}`;
+      progress({ phase: "failed", installed, error: message });
+      console.error(message);
+      process.exit(1);
+    }
     packageStep = `updated ${current} → ${installed}`;
   } else if (available) {
     packageStep = `skipped (${context} install)`;
@@ -445,13 +607,41 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   // Always converge skill + service, even when already on the latest version —
   // this is what finishes a manual `npm update -g` someone ran without us.
   const skill = syncSkill([], false, false, name);
+  // Written before the restart: on systemd this process dies inside
+  // `restartServiceIfStale`, so "restarting" is the last thing the file may
+  // ever hold. The restarted server resolves it against its own version.
+  progress({ phase: "restarting", installed, to: latest });
   const service = await restartServiceIfStale(timeoutSec, name);
   const failedLinks = skill.links.filter((l) => l.mode === "failed");
 
-  const report = { previous: current, installed, latest, package: packageStep, context, skill, service };
+  // A healthy restart is not the same as a successful one. `waitHealthy` only
+  // asks "is something answering on this port?" — if the supervisor's ExecStart
+  // still points at an older installation (a stale unit file, a second prefix,
+  // a `--name` whose saved entry was never rewritten), the old server comes
+  // back green and we would write `done` while it keeps serving. That is the
+  // same lie the npm step above refuses, one layer down, and it is the lie the
+  // PWA repeats as "Updated to X". Same rule the boot-time reconciler applies
+  // (reconcileRun in server/updates.ts): the version actually answering has to
+  // be at least the one on disk.
+  const stale = staleServiceError(service, installed);
+  const report = {
+    previous: current, installed, latest, package: packageStep, context, skill,
+    service: stale ? { ...service, stale } : service,
+  };
+  const serviceFailed = (service.restarted && service.error) || stale;
+  const failed = Boolean(serviceFailed) || failedLinks.length > 0;
+  progress(failed
+    ? {
+      phase: "failed",
+      installed,
+      error: service.restarted && service.error
+        ? `the service restarted but did not come back healthy: ${service.error}`
+        : stale || `${failedLinks.length} skill target(s) could not be written`,
+    }
+    : { phase: "done", installed });
   if (json) {
     console.log(JSON.stringify(report, null, 2));
-    if ((service.restarted && service.error) || failedLinks.length) process.exit(1);
+    if (serviceFailed || failedLinks.length) process.exit(1);
     return;
   }
   console.log(available && packageStep.startsWith("updated") ? packageStep : `package: ${packageStep === "unchanged" ? `up to date (${current})` : packageStep}`);
@@ -462,6 +652,9 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   else if (service.restarted && service.error) {
     console.error(`service: restarted but not healthy — ${service.error}`);
     process.exit(1);
+  } else if (stale) {
+    console.error(`service: ${stale}`);
+    process.exit(1);
   } else if (service.restarted) console.log(`service: restarted, now ${service.version}`);
   else if (service.version) console.log(`service: already on ${service.version} — no restart needed`);
   else console.log(`service: ${service.state || "stopped"} — left as-is (start it with: surface service start)`);
@@ -471,7 +664,41 @@ export async function runUpgrade({ flags }: Ctx): Promise<void> {
   }
 }
 
-function contextAdvice(context: InstallContext): string {
+/**
+ * Did the service that came back actually land on the version now on disk?
+ *
+ * Returns the failure message, or null when the claim "the update is done" is
+ * honest. Pure so the rule can be unit-tested without a supervisor — and so it
+ * can be read side by side with `reconcileRun` in server/updates.ts, which
+ * resolves the *same* claim from the other direction (the restarted server
+ * reading the progress file the killed child left behind). The two must agree:
+ *
+ *   - a running version at or beyond the target is done — a version NEWER than
+ *     expected still counts, matching reconcileRun's `!newerThan(to, version)`;
+ *   - an older one is a failure that names the version actually running;
+ *   - "unknown" on our side means we have nothing to compare against, so we do
+ *     not manufacture a failure out of it.
+ *
+ * A restart that reported no version at all is not evidence of success either:
+ * the port answered, but nothing said what answered.
+ */
+export function staleServiceError(
+  service: { installed?: boolean; restarted?: boolean; version?: string; error?: string },
+  installed: string,
+): string | null {
+  if (!service.installed || !service.restarted) return null; // nothing was replaced
+  if (service.error) return null; // already failing as "restarted but not healthy"
+  if (!installed || installed === "unknown") return null;
+  if (!service.version) {
+    return `restarted but did not report a version, so ${installed} could not be confirmed running`;
+  }
+  if (newerThan(installed, service.version)) {
+    return `restarted but is still running ${service.version} (expected ${installed})`;
+  }
+  return null;
+}
+
+export function contextAdvice(context: InstallContext): string {
   return context === "dev"
     ? "this is a repo clone — update with: git pull && npm install && npm test"
     : "surface-display is installed locally here — update with: npm update surface-display (in that project)";

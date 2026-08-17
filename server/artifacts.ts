@@ -23,6 +23,10 @@ export interface Artifact {
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+  // Bumped by every write that declares the rendered content changed. It is
+  // what makes a thumbnail generation distinct for two touches inside one
+  // second, which `updated_at` alone cannot be (see server/thumbs.ts).
+  content_rev: number;
 }
 
 export interface ArtifactVersion {
@@ -63,6 +67,7 @@ export interface SurfaceCard {
   artifact_kind: string;
   artifact_mime: string | null;
   current_version_id: string | null;
+  content_rev: number;
   first_file_path: string | null;
   pending_actions: number;
   preview_url?: string;
@@ -204,7 +209,9 @@ export function setCurrentArtifactVersion(
       ? (db.prepare(`SELECT * FROM artifact_versions WHERE artifact_id = ? AND version = ?`).get(artifactId, Number(version)) as ArtifactVersion | undefined)
       : getArtifactVersion(db, String(version));
   if (!versionRow || versionRow.artifact_id !== artifactId) return undefined;
-  db.prepare(`UPDATE artifacts SET current_version_id = ?, updated_at = datetime('now') WHERE id = ?`).run(versionRow.id, artifactId);
+  db.prepare(
+    `UPDATE artifacts SET current_version_id = ?, updated_at = datetime('now'), content_rev = content_rev + 1 WHERE id = ?`,
+  ).run(versionRow.id, artifactId);
   return readArtifact(db, artifactId);
 }
 
@@ -263,6 +270,11 @@ export function listArtifactCards(
         a.kind AS artifact_kind,
         a.mime AS artifact_mime,
         a.current_version_id AS current_version_id,
+        -- The thumbnail generation is computed from the card row here (to
+        -- answer has_thumb) and from the artifact row in /thumb; leaving this
+        -- out of one of them would make the two disagree about which capture
+        -- is current.
+        a.content_rev AS content_rev,
         (
           SELECT af.path
           FROM artifact_files af
@@ -313,6 +325,11 @@ export function getArtifactCard(db: Database.Database, id: string): SurfaceCard 
         a.kind AS artifact_kind,
         a.mime AS artifact_mime,
         a.current_version_id AS current_version_id,
+        -- The thumbnail generation is computed from the card row here (to
+        -- answer has_thumb) and from the artifact row in /thumb; leaving this
+        -- out of one of them would make the two disagree about which capture
+        -- is current.
+        a.content_rev AS content_rev,
         (
           SELECT af.path
           FROM artifact_files af
@@ -344,6 +361,32 @@ export function readArtifact(db: Database.Database, id: string) {
   const version = getCurrentArtifactVersion(db, id);
   const files = version ? getArtifactFiles(db, version.id) : [];
   return { artifact, version, files };
+}
+
+// An image surface is its own best thumbnail. Screenshotting the viewer instead
+// centre-crops the picture into a 600x600 square, which the card then crops
+// again to 16:10 — two crops deep, a chart comes out as a zoomed fragment.
+// Above this size the bytes are too heavy for a grid, so those fall back to a
+// capture.
+export const IMAGE_PASSTHROUGH_MAX_BYTES = 4 * 1024 * 1024;
+
+// The file to serve as-is for an image artifact's thumbnail, or undefined when
+// there isn't one (not an image, or too big to put in a grid).
+export function imageThumbPassthrough(
+  db: Database.Database,
+  id: string,
+): ArtifactFile | undefined {
+  const result = readArtifact(db, id);
+  if (!result || !result.version) return undefined;
+  const mime = result.artifact.mime || "";
+  if (!mime.startsWith("image/")) return undefined;
+  const file =
+    result.files.find((f) => f.mime === mime) ||
+    result.files.find((f) => (f.mime || "").startsWith("image/")) ||
+    result.files[0];
+  if (!file) return undefined;
+  if (file.size_bytes > IMAGE_PASSTHROUGH_MAX_BYTES) return undefined;
+  return file;
 }
 
 export function createArtifact(
@@ -449,7 +492,8 @@ export function updateArtifact(
     const metadata = JSON.stringify(sealArtifactMetadata(baseMeta, plane));
     db.prepare(
       `UPDATE artifacts
-       SET title = ?, kind = ?, mime = ?, metadata = ?, updated_at = datetime('now')
+       SET title = ?, kind = ?, mime = ?, metadata = ?, updated_at = datetime('now'),
+           content_rev = content_rev + 1
        WHERE id = ?`
     ).run(
       params.title ?? existing.title,
@@ -658,7 +702,13 @@ export function linkArtifact(
 export function touchArtifact(db: Database.Database, id: string): boolean {
   const artifact = getArtifact(db, id);
   if (!artifact) return false;
-  db.prepare(`UPDATE artifacts SET updated_at = datetime('now') WHERE id = ?`).run(id);
+  // `updated_at` has one-second resolution and a linked artifact's touch moves
+  // nothing else, so the counter is the only thing that tells two touches in
+  // the same second apart — which is what stops the first one's screenshot
+  // being pinned as the picture of the second (server/thumbs.ts).
+  db.prepare(
+    `UPDATE artifacts SET updated_at = datetime('now'), content_rev = content_rev + 1 WHERE id = ?`,
+  ).run(id);
   return true;
 }
 
