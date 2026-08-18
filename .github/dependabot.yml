@@ -13,6 +13,35 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # better-sqlite3 majors are proposed, never taken automatically.
+      #
+      # v13 dropped the `install` script (`prebuild-install || node-gyp
+      # rebuild`) in favour of prebuildify binaries bundled in the tarball —
+      # genuinely better, and it ships Node-API prebuilds for eight
+      # platform/arch pairs. But it still ships `binding.gyp`, and npm's
+      # default for a package with a binding.gyp and no install script is to
+      # run `node-gyp rebuild`. Under `npm ci` that default fires and wants
+      # Python and a C++ toolchain, which no ordinary user machine has.
+      #
+      # Re-measured on 13.0.3 (2026-08-17), the newest release: `npm install`
+      # succeeds, `npm ci` fails with `gyp ERR! find Python` on toolchain-free
+      # Node 22 and 24 alike. The two install paths disagree, which is exactly
+      # why this hid for a month the first time. The `npm ci without a
+      # toolchain` CI job would catch a regression; this stops the same PR
+      # being reopened weekly in the meantime.
+      #
+      # Revisit when upstream drops binding.gyp from the published files, or
+      # adds an install script that prefers the bundled prebuilds. Check by
+      # running `npm ci` in node:22-slim, not `npm install`.
+      - dependency-name: better-sqlite3
+        update-types: ["version-update:semver-major"]
+      # @types/node tracks the runtime floor, not the newest Node. `engines`
+      # is >=22, so types from a later line describe APIs that are not there
+      # at runtime on the minimum supported version — the compiler stops being
+      # the thing that catches it. Bump this deliberately, with the floor.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
