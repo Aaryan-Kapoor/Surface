@@ -86,6 +86,6 @@
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.12",
-    "typescript": "^5.8.3"
+    "typescript": "^7.0.2"
   }
 }
