@@ -49,6 +49,10 @@ if command -v surface; then echo "surface unexpectedly preinstalled" >&2; exit 1
 npm install -g "$INSTALL_SPEC"
 surface --version
 surface service install --timeout 90
+# service install now links the skill itself — assert the machine is
+# agent-ready before any explicit `surface skill install` runs.
+test -f "$HOME/.agents/skills/surface/SKILL.md"
+test -f "$HOME/.claude/skills/surface/SKILL.md"
 surface service health
 surface service status
 set_state service running

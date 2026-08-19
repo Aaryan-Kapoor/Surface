@@ -1,11 +1,12 @@
 import { execFileSync } from "child_process";
+import readline from "readline";
 import { randomUUID } from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { buildHostedPairingUrl, buildPairingUrl, renderTerminalQrCode } from "../server/startupAccess.js";
-import { runService, savedServiceBaseUrl, SERVICE_HELP } from "./service.js";
-import { runSkill, runUpgrade } from "./upgrade.js";
+import { runService, savedServiceBaseUrl, checkHealth, SERVICE_HELP } from "./service.js";
+import { runSkill, runUpgrade, syncSkill } from "./upgrade.js";
 import { runCodex, CODEX_HELP } from "./codex.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -76,6 +77,7 @@ Commands:
   clear-demos                Hide every surface tagged metadata.demo === true (tour cleanup)
   service <sub>              Manage the background service: install|uninstall|start|stop|
                              restart|status|health|logs (systemd / launchd / Scheduled Task)
+                             (install also links SKILL.md for your agents)
   skill install              Link SKILL.md into agent skill dirs (canonical copy in the data dir)
   codex <setup|status>       Codex integration: realtime flowback into the creating codex session
   upgrade                    Update to the latest release, refresh the skill, restart the service
@@ -181,8 +183,26 @@ const COMMANDS: Record<string, CommandSpec> = {
   "clear-demos": command("surface clear-demos"),
   service: {
     help: SERVICE_HELP,
-    flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM },
-    run: (ctx) => runService(ctx),
+    flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM, "no-skill": BOOL },
+    run: async (ctx) => {
+      await runService(ctx);
+      // A freshly installed service should leave the machine agent-ready in the
+      // same breath: link SKILL.md into the default agent skill dirs. Failure
+      // to link must not fail a healthy install — report it and point at the
+      // manual command.
+      if (ctx.positional[0] === "install" && ctx.flags["no-skill"] !== true) {
+        try {
+          const name = typeof ctx.flags.name === "string" ? ctx.flags.name : undefined;
+          const report = syncSkill([], false, false, name);
+          console.log(`  skill      : linked for your agents`);
+          for (const l of report.links) {
+            console.log(`    ${l.mode === "failed" ? "✗" : "•"} ${l.path}${l.note ? ` (${l.note})` : ""}`);
+          }
+        } catch (e: any) {
+          console.error(`  skill      : not linked (${e?.message || e}) — run: surface skill install`);
+        }
+      }
+    },
   },
   skill: {
     help: [
@@ -920,10 +940,69 @@ async function waitForAction(opts: {
   return { action };
 }
 
+const SUPERVISOR_LABEL =
+  process.platform === "darwin" ? "launchd agent" :
+  process.platform === "win32" ? "Scheduled Task" : "systemd user unit";
+
+async function firstRunWizard(): Promise<void> {
+  console.log("");
+  console.log(`  Surface ${cliVersion()} — first run, nothing is set up yet.`);
+  console.log("");
+  console.log("  This will:");
+  console.log(`    • install a background service (${SUPERVISOR_LABEL}) → http://127.0.0.1:3000`);
+  console.log("    • link the Surface skill for your agents");
+  console.log("");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => rl.question("  Proceed? [Y/n] ", resolve));
+  rl.close();
+  if (/^n/i.test(answer.trim())) {
+    console.log("");
+    console.log("  Nothing installed. When you're ready: surface service install");
+    console.log("  Explore first: surface --help");
+    return;
+  }
+  console.log("");
+  await COMMANDS.service.run({ cmd: "service", positional: ["install"], flags: {}, multi: {} });
+  console.log("");
+  console.log("  ┌─────────────────────────────────────────────────────┐");
+  console.log("  │  Add your phone or another screen:                  │");
+  console.log("  │                                                     │");
+  console.log("  │      surface pair                                   │");
+  console.log("  │                                                     │");
+  console.log("  │  Prints a one-time URL + QR code to scan.           │");
+  console.log("  └─────────────────────────────────────────────────────┘");
+  console.log("");
+  console.log("  Useful commands:");
+  console.log("    surface service health     is it up, what version");
+  console.log("    surface service logs       one log file, every platform");
+  console.log("    surface upgrade            package + skill + service in one step");
+  console.log("    surface --help             everything else");
+  console.log("");
+  console.log("  Next: open http://127.0.0.1:3000, then tell your agent");
+  console.log("  \"give me the Surface tour\".");
+  console.log("");
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
-  if (!cmd || cmd === "--help" || cmd === "-h") {
+  if (!cmd) {
+    // Bare `surface` on a machine with nothing set up is someone who just ran
+    // `npm install -g` and typed the obvious next thing — offer the setup
+    // instead of a wall of help. Interactive terminals only: scripts and
+    // pipes keep getting plain help, and a machine with a service (or even a
+    // saved config for one) is not a first run.
+    if (process.stdin.isTTY && process.stdout.isTTY && savedServiceBaseUrl() === undefined) {
+      const health = await checkHealth(3000);
+      if (!health.ok) {
+        await firstRunWizard();
+        return;
+      }
+    }
+    console.log(HELP);
+    return;
+  }
+  if (cmd === "--help" || cmd === "-h") {
     console.log(HELP);
     return;
   }

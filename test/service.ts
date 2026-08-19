@@ -125,7 +125,11 @@ if (!userSystemdAvailable()) {
   const common = ["--name", NAME, "--port", String(PORT), "--content-port", String(CONTENT_PORT), "--data-dir", dataDir];
   try {
     test("live: service install is health-gated and reports identity", () => {
-      const r = cli(["service", "install", ...common, "--timeout", "30"]);
+      // --no-skill: this loop runs against the real HOME (systemd needs it),
+      // and the skill link step would write ~/.agents/skills/surface and
+      // ~/.claude/skills/surface pointing into this test's throwaway data dir —
+      // dangling links on the developer's actual machine once cleanup runs.
+      const r = cli(["service", "install", ...common, "--timeout", "30", "--no-skill"]);
       assert.equal(r.code, 0, r.output);
       assert.ok(r.output.includes("installed and healthy"), r.output);
       assert.ok(r.output.includes(`:${PORT}`), r.output);
@@ -138,7 +142,8 @@ if (!userSystemdAvailable()) {
       assert.equal(health.content_port, CONTENT_PORT);
       assert.equal(health.content_plane_ok, true);
       assert.match(health.version, /^\d+\.\d+\.\d+/);
-      // Upgrade-drift fields ride along in --json (skill copy is absent in this fresh data dir)
+      // Upgrade-drift fields ride along in --json (install ran --no-skill, so
+      // the copy is genuinely absent from this fresh data dir)
       assert.match(health.cli_version, /^\d+\.\d+\.\d+/);
       assert.equal(health.skill_copy_state, "missing");
     });

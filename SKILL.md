@@ -39,6 +39,7 @@ A live display the user *acts on*, not a chat transcript or file viewer — **tw
 | `status` · `stream` · `devices` | Presence (who's connected/awake — check before `--on`); tail every event; paired screens. |
 | `init` · `sync` | Scaffold `.surface/` + `SURFACE.md`; reconcile project manifests across machines. |
 | `pair` · `auth` | Pair a new screen; mint/revoke remote `SURFACE_SESSION` bearers. |
+| **The Surface tour** | When the user explicitly asks for the *Surface* tour/demo (not a tour of their own project): read `docs/TUTORIAL.md` from the installed package (`npm root -g` → `surface-display/docs/TUTORIAL.md`) and follow it — its rules section first. |
 | `clear-demos` | Hide every tour-built surface (`metadata.demo === true`) in one step — the tour's cleanup; don't `delete` them one by one. |
 
 ## The two-way loop

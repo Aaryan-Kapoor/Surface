@@ -168,12 +168,15 @@ for **the Surface tour** to watch working ones get built.
 
 ```bash
 npm install -g surface-display
-surface service install    # → http://127.0.0.1:3000, supervised + health-gated
+surface                    # first run: offers setup → http://127.0.0.1:3000
 ```
 
-`surface service install` registers the native per-user supervisor — a systemd
-user unit, a launchd agent, or a Scheduled Task — starts the server, and
-succeeds only once it answers health checks. (There is deliberately no
+Bare `surface` on a fresh machine walks you through setup interactively; in a
+script, `surface service install` does the same thing with no questions. Either
+way it registers the native per-user supervisor — a systemd user unit, a
+launchd agent, or a Scheduled Task — starts the server, succeeds only once it
+answers health checks, and links the Surface skill into your agents' skill
+directories (`~/.agents/skills`, `~/.claude/skills`). (There is deliberately no
 foreground `serve` command: a supervised service is the only sanctioned way to
 run Surface, so nothing ends up squatting the port unnoticed.)
 

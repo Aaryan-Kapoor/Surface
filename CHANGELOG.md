@@ -4,6 +4,21 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- **`surface` with no arguments is now the installer.** On an interactive
+  terminal with no service installed, bare `surface` offers first-run setup —
+  install the background service, link the agent skill — then points at
+  `surface pair` and the tour. Non-TTY invocations and machines with a service
+  keep getting plain help, so scripts never hang on a hidden prompt.
+- **`surface service install` now links SKILL.md into the default agent skill
+  dirs** (`~/.agents/skills`, `~/.claude/skills`) as part of a successful
+  install, so one command leaves the machine agent-ready. A failed link is
+  reported and never fails a healthy install; `--no-skill` opts out, and
+  `surface skill install` remains for `--to`/`--copy`/`--force` control.
+- **SKILL.md now routes "the Surface tour"**: a fresh agent that has only the
+  skill knows to read `docs/TUTORIAL.md` from the installed package when the
+  user asks for the Surface tour — scoped explicitly to *Surface's* tour so it
+  never hijacks a request to tour the user's own project.
+
 - **Removed `surface seed-demos`.** It duplicated the tour's job with the
   weaker medium: a gallery of static HTML renderings, which is exactly what
   Surface is not. The guided tour (`docs/TUTORIAL.md`) is the one showcase,

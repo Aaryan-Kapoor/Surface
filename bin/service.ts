@@ -464,7 +464,8 @@ async function followFile(file: string): Promise<never> {
 // ---------- command entry ----------
 
 export const SERVICE_HELP = [
-  "surface service install    register + start the background service, then health-gate it",
+  "surface service install    register + start the background service (health-gated),",
+  "                           then link SKILL.md into the default agent skill dirs",
   "surface service uninstall  stop + remove the service (data in ~/.surface is kept)",
   "surface service start|stop|restart",
   "surface service status     supervisor view: registered? running? where?",
@@ -473,6 +474,7 @@ export const SERVICE_HELP = [
   "",
   "Options: --name <svc> --port <n> --content-port <n> --bind <addr> --data-dir <dir>",
   "         --timeout <s> (install/restart health gate, default 20) --json --lines <n> --follow",
+  "         --no-skill (install only: skip linking SKILL.md into agent skill dirs)",
   "",
   "install remembers its flags per --name (~/.surface/services/<name>.json);",
   "every other subcommand reuses them, so flags never need repeating.",

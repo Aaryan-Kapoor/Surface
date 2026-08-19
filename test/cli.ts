@@ -14,6 +14,15 @@ function run(args: string[], env: Record<string, string> = {}): Promise<{ code: 
   });
 }
 
+// Bare `surface` with no TTY must stay plain help — the first-run wizard is
+// interactive-terminal-only, and a script that shells out to `surface` with no
+// args must never hang on a hidden prompt or start installing things.
+const bare = await run([]);
+assert.equal(bare.code, 0);
+assert.match(bare.stdout, /surface — universal display CLI/);
+assert.doesNotMatch(bare.stdout, /first run/);
+assert.doesNotMatch(bare.stdout, /Proceed\?/);
+
 const unknown = await run(["ask", "Ship?", "--optoins", "yes,no"]);
 assert.equal(unknown.code, 2);
 assert.match(unknown.stderr, /unknown flag --optoins/);
