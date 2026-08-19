@@ -167,11 +167,10 @@ surface auth session revoke <id>
 ## Demos (maintenance)
 
 ```bash
-surface seed-demos                             # link every examples/demos/*.html as a demo surface (idempotent)
 surface clear-demos                            # soft-hide (metadata.hidden=true) every metadata.demo===true surface
 ```
 
-`seed-demos` links each bundled demo (titles from `DEMO_TITLES`), reviving previously hidden ones instead of duplicating. `clear-demos` flips `metadata.hidden` rather than deleting, so demos can be re-seeded.
+`clear-demos` is the tour's cleanup: it flips `metadata.hidden` on every tour-built surface rather than deleting, so nothing the user watched get built is destroyed behind their back. The bundled `examples/demos/` files back the empty-state idea portal (served at `/demos/`).
 
 ## Related
 - [http-api.md](http-api.md) — the endpoints each command calls

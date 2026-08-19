@@ -159,8 +159,8 @@ Surfaces are self-contained — inline CSS and JS, no CDNs — so they render
 offline and screenshot cleanly.
 
 **The possibilities are the point.** Surface ships no whiteboard, no cube, no
-map. It ships the loop that makes all three a short prompt. Run
-`surface seed-demos` for a gallery of working ones to poke at.
+map. It ships the loop that makes all three a short prompt. Ask your agent
+for **the Surface tour** to watch working ones get built.
 
 ## Quick start
 
@@ -286,7 +286,6 @@ surface set board claude-code '{"status":"tests green"}'  # shared multi-agent s
 surface devices                           # paired screens, live, what each is viewing
 surface slot renderer <id>                # an artifact takes over the whole homescreen
 surface theme '{"colors":{"accent":"#ff0080"}}'        # restyle the display
-surface seed-demos                        # the built-in gallery, idempotent
 surface sync                              # reconstitute a project's surfaces from .surface/
 ```
 

@@ -4,6 +4,13 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- **Removed `surface seed-demos`.** It duplicated the tour's job with the
+  weaker medium: a gallery of static HTML renderings, which is exactly what
+  Surface is not. The guided tour (`docs/TUTORIAL.md`) is the one showcase,
+  and the bundled `examples/demos/` files keep their real home backing the
+  empty-state idea portal on the display (served at `/demos/`).
+  `surface clear-demos` stays — it is the tour's cleanup step.
+
 - New update notification on the Surface home: when a newer `surface-display`
   release exists on npm, the grid header shows `Surface X available` with an
   **Update** button that runs the existing `surface upgrade` converger and

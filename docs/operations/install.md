@@ -201,14 +201,13 @@ The canonical first-run routine for agents. Install state lives at **`~/.surface
 
 The flow: check the service with `surface service health` (offer `surface service install` if absent — never an improvised background process), copy `SKILL.md` into the agent's skills directory, optionally run the tutorial, then stamp the state. An early-exit clause lets re-runs skip when the service is running, `SKILL.md` is in place, and the tutorial is done/skipped.
 
-## Demo seeding
+## Demo cleanup
 
-The tutorial uses the bundled example surfaces in `examples/demos/`:
+The tour tags every surface it builds `metadata.demo = true` and finishes with:
 
-- `surface seed-demos` — links each demo as a linked artifact tagged `metadata.demo = true`. Idempotent: if a previous `clear-demos` left a row archived, it un-hides it in place rather than re-linking.
-- `surface clear-demos` — flips `metadata.hidden = true` on every demo-tagged row so they vanish from the dashboard. The artifact records are kept, so `seed-demos` can revive them.
+- `surface clear-demos` — flips `metadata.hidden = true` on every demo-tagged row so they vanish from the dashboard. Rows are kept, not deleted; `surface delete` removes one for real.
 
-The same demos back the empty-state idea portal in the PWA (served at `/demos/`, `server/index.ts`).
+The bundled examples in `examples/demos/` back the empty-state idea portal in the PWA (served at `/demos/`, `server/index.ts`).
 
 ## Tutorial
 

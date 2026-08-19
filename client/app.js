@@ -779,8 +779,7 @@ window.showTutorialModal = showTutorialModal;
 
 // Each idea has a `src` field — URL of a real surface served from
 // /demos/ (the server serves examples/demos/ there). The portal iframe
-// loads it directly; `surface seed-demos` links the same files as live
-// artifacts with surface.js injection.
+// loads it directly.
 
 const SURFACE_IDEAS = [
   {

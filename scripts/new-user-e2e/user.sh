@@ -77,9 +77,8 @@ surface status
 surface actions
 
 # Step 3 — tutorial. The walkthrough itself is LLM-driven and can't run
-# here; exercise the deterministic half (seed/clear are idempotent) and
-# record the documented "skipped" outcome.
-surface seed-demos
+# here; exercise its deterministic cleanup half and record the documented
+# "skipped" outcome.
 surface clear-demos
 set_state tutorial skipped
 

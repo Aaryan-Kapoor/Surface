@@ -73,8 +73,7 @@ Commands:
   pair                       Create a one-time pairing URL for a new device
   devices [revoke <name>]    List paired displays / revoke one by name
   auth <pairing|session> ... Manage pairing tokens and durable sessions
-  seed-demos                 Link every example demo as a tutorial surface (idempotent)
-  clear-demos                Hide every surface tagged metadata.demo === true (seed-demos revives them)
+  clear-demos                Hide every surface tagged metadata.demo === true (tour cleanup)
   service <sub>              Manage the background service: install|uninstall|start|stop|
                              restart|status|health|logs (systemd / launchd / Scheduled Task)
   skill install              Link SKILL.md into agent skill dirs (canonical copy in the data dir)
@@ -179,7 +178,6 @@ const COMMANDS: Record<string, CommandSpec> = {
     "surface auth session list",
     "surface auth session revoke <id>",
   ].join("\n"), { ttl: DUR, label: STR, "base-url": STR, role: STR }),
-  "seed-demos": command("surface seed-demos"),
   "clear-demos": command("surface clear-demos"),
   service: {
     help: SERVICE_HELP,
@@ -227,19 +225,6 @@ const COMMANDS: Record<string, CommandSpec> = {
 const CMD_HELP: Record<string, string> = Object.fromEntries(
   Object.entries(COMMANDS).map(([name, spec]) => [name, spec.help]),
 );
-
-// Hand-mapped titles for the bundled example demos. Filenames are derived from
-// the file basename; everything else is the same human label the empty-state
-// gallery uses, so the same prompts the agent reads in SKILL.md still apply.
-const DEMO_TITLES: Record<string, string> = {
-  "action-panel.html": "Action Panel",
-  "ask-approval.html": "Ask Approval",
-  "board-ops.html": "Agent Board",
-  "live-link.html": "Linked File",
-  "report-brief.html": "Report Brief",
-  "state-gauge.html": "State Gauge",
-  "stream-build.html": "Build Stream",
-};
 
 interface ParsedArgs {
   positional: string[];
@@ -1357,55 +1342,10 @@ async function runCommand({ cmd, positional, flags, multi }: CommandContext): Pr
       return;
     }
 
-    case "seed-demos": {
-      const demosDir = path.resolve(__dirname, "..", "examples", "demos");
-      if (!fs.existsSync(demosDir)) {
-        fail(new Error(`Demo directory not found: ${demosDir}`));
-      }
-      const files = fs.readdirSync(demosDir).filter((f) => f.endsWith(".html")).sort();
-      // Include hidden rows so a previous `clear-demos` archive can be revived
-      // by flipping the hidden flag back off, rather than creating duplicates.
-      const existing: any[] = await call("GET", "/artifacts?include_hidden=1");
-      const byPath = new Map<string, any>();
-      for (const s of existing) {
-        const meta = parseMetadataField(s.metadata);
-        if (meta && typeof meta.original_path === "string") byPath.set(meta.original_path as string, s);
-      }
-      const seeded: Array<{ id: string; title: string; file: string }> = [];
-      const restored: Array<{ id: string; title: string; file: string }> = [];
-      const skipped: string[] = [];
-      for (const file of files) {
-        const abs = path.join(demosDir, file);
-        const found = byPath.get(abs);
-        if (found) {
-          const meta = parseMetadataField(found.metadata) || {};
-          if (meta.hidden === true) {
-            const nextMeta: Record<string, unknown> = { ...meta };
-            delete nextMeta.hidden;
-            await call("PUT", `/artifacts/${encodeURIComponent(found.id)}`, { metadata: nextMeta });
-            restored.push({ id: found.id, title: found.title, file });
-          } else {
-            skipped.push(file);
-          }
-          continue;
-        }
-        const title = DEMO_TITLES[file] || file.replace(/\.html$/, "");
-        const result = await call("POST", "/artifacts/link", {
-          path: abs,
-          title,
-          metadata: { demo: true },
-          open: false,
-        });
-        seeded.push({ id: result.artifact.id, title, file });
-      }
-      out({ seeded: seeded.length, restored: restored.length, skipped: skipped.length, items: [...seeded, ...restored] });
-      return;
-    }
-
     case "clear-demos": {
       // Soft-hide rather than delete: flip metadata.hidden = true on every
-      // demo-tagged surface. Artifact rows stay intact so `seed-demos` can
-      // revive them later instead of re-linking from disk.
+      // demo-tagged surface. Rows stay intact so nothing the tour built is
+      // destroyed behind the user's back; `surface delete` removes one for real.
       const existing: any[] = await call("GET", "/artifacts?include_hidden=1");
       const hidden: string[] = [];
       const alreadyHidden: string[] = [];

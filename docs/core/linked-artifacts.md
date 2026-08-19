@@ -20,7 +20,7 @@ surface link /abs/path/to/site --entry index.html --title "Site"
 surface touch <id>
 ```
 
-`metadata.linked: true` and `metadata.original_path` are recorded so the dashboard and `seed-demos` can recognize linked rows.
+`metadata.linked: true` and `metadata.original_path` are recorded so the dashboard can recognize linked rows.
 
 ## Behavior
 
@@ -39,7 +39,7 @@ Because `storage_kind` is `external`, `readArtifactFileContent` reads `storage_p
 ### Immutable version chain
 Linked artifacts have exactly one version and no history:
 - `POST /artifacts/:id/rollback` returns **409** for linked artifacts (`server/routes/artifacts.ts`): *"Linked artifacts have no version history; git is the source of truth."*
-- `PUT /artifacts/:id` with new file content returns **409** when the target is linked: *"Linked artifacts are edited on disk. Use POST /artifacts/:id/touch after editing."* (A metadata-only PUT — no `files`/`content` — is still allowed, which is how `clear-demos`/`seed-demos` toggle `metadata.hidden`.)
+- `PUT /artifacts/:id` with new file content returns **409** when the target is linked: *"Linked artifacts are edited on disk. Use POST /artifacts/:id/touch after editing."* (A metadata-only PUT — no `files`/`content` — is still allowed, which is how `clear-demos` toggles `metadata.hidden`.)
 
 ## Security notes
 

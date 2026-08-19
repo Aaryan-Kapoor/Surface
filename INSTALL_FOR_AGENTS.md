@@ -158,9 +158,7 @@ If yes:
    before running anything** — the tour is a demo, and most of the ways it goes
    wrong are things it explicitly tells you not to do.
 3. The tour builds its own surfaces from shipped templates. Do not improvise
-   markup for it, and do not run `surface seed-demos` — that seeds a different
-   set of example cards, and the tour would then compete with them for the
-   screen. It ends by running `surface clear-demos` itself.
+   markup for it. It ends by running `surface clear-demos` itself.
 4. Set `tutorial: "complete"` when it finishes.
 
 If no:
@@ -172,8 +170,8 @@ The tour is the single best onboarding mechanism, and it is the only place the
 user is told what Surface is *for* rather than what it can do. Skipping is
 fine; silently bypassing is not.
 
-`surface seed-demos` still exists for the gallery of bundled examples
-(`examples/demos/`), and both it and `clear-demos` are idempotent.
+The bundled examples in `examples/demos/` back the empty-state idea portal
+on the display itself; `clear-demos` is idempotent.
 
 ## Step 4 — Stamp the install
 
@@ -214,7 +212,7 @@ See `SKILL.md` — it is the contract. Quick reference:
 - `surface create <title> --content -` — ad-hoc HTML from stdin; `--template <name> --param k=v` for reusable UI.
 - `surface set <id> <key> <value>` — live state; never rewrite HTML to change a number.
 - `surface present <abs-path>` — one-shot snapshot of a PDF/image/markdown.
-- `surface seed-demos` / `surface clear-demos` — tutorial-only example surfaces (clear hides; seed revives).
+- `surface clear-demos` — hide every tour-built surface in one step.
 - `surface list`, `surface read`, `surface delete`, `surface open --on <device>`, `surface exec`, `surface actions`, `surface reply`, `surface notify`, `surface theme`, `surface stream`, `surface devices`.
 
 ## Operating rules

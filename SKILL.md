@@ -9,7 +9,7 @@ Surface is the user's universal display. When the user says "surface this", "sho
 
 ## Surface-native
 
-A live display the user *acts on*, not a chat transcript or file viewer — **two-way and current**: the user answers, clicks, or watches a value change, and you react. **Pick by shape before writing HTML** — match the source to its verb: markdown → `doc --toc`, video/URL → `video`, PDF/image → `present`, a file you keep editing → `link`, a yes/no or pick-one → `ask --options`, a scrolling log → `create --template stream`. **Decompose a multi-source request first** — a "presenter view", a "home screen", "a card next to it" is *several* surfaces (one verb each: `present` the PDF, `video` the clip, a bound chart…), composed with `slot`, never one HTML blob with tabs. Hand-build interactive HTML (`create --content -` — charts, maps, tools, anything in the shape of the bundled demo gallery — `surface seed-demos` to see it) **only when no verb fits**; rendering markdown as HTML or faking a decision card with buttons is the classic miss — the verb is shorter, hot-reloads, and renders natively everywhere. Dynamism earns its place when it adds a decision, a live value, or a visual relationship text can't carry — never less interactive than the task wants, never more.
+A live display the user *acts on*, not a chat transcript or file viewer — **two-way and current**: the user answers, clicks, or watches a value change, and you react. **Pick by shape before writing HTML** — match the source to its verb: markdown → `doc --toc`, video/URL → `video`, PDF/image → `present`, a file you keep editing → `link`, a yes/no or pick-one → `ask --options`, a scrolling log → `create --template stream`. **Decompose a multi-source request first** — a "presenter view", a "home screen", "a card next to it" is *several* surfaces (one verb each: `present` the PDF, `video` the clip, a bound chart…), composed with `slot`, never one HTML blob with tabs. Hand-build interactive HTML (`create --content -` — charts, maps, tools, anything in the shape of the bundled demo gallery on the empty display) **only when no verb fits**; rendering markdown as HTML or faking a decision card with buttons is the classic miss — the verb is shorter, hot-reloads, and renders natively everywhere. Dynamism earns its place when it adds a decision, a live value, or a visual relationship text can't carry — never less interactive than the task wants, never more.
 
 ## Session start
 
@@ -39,7 +39,7 @@ A live display the user *acts on*, not a chat transcript or file viewer — **tw
 | `status` · `stream` · `devices` | Presence (who's connected/awake — check before `--on`); tail every event; paired screens. |
 | `init` · `sync` | Scaffold `.surface/` + `SURFACE.md`; reconcile project manifests across machines. |
 | `pair` · `auth` | Pair a new screen; mint/revoke remote `SURFACE_SESSION` bearers. |
-| `seed-demos` · `clear-demos` | Built-in demo gallery — the fast "show me what Surface can do" tour; `clear-demos` hides it again (don't `delete` them one by one; `seed-demos` revives). |
+| `clear-demos` | Hide every tour-built surface (`metadata.demo === true`) in one step — the tour's cleanup; don't `delete` them one by one. |
 
 ## The two-way loop
 

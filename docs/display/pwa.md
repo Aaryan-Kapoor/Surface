@@ -75,7 +75,7 @@ Modern artifacts use the injected `surface.js` runtime: `Surface.action(name, da
 
 ## Global SSE
 
-`connectGlobalSSE()` opens `/stream` and drives the grid live: `surface_created` (prepends a card, removes the empty state), `surface_updated` (patches card, handles `metadata.hidden` removal and un-hide re-fetch — used by `clear-demos`/`seed-demos`), `surface_deleted` (animated removal), `surface_action`/`actions_acked` (pending-badge counts), `waiter_status` ("listening" pill), `thumb_ready` (swaps in the freshly captured PNG, replacing the card's own cover once the image has decoded), plus agent display commands: `display_navigate`, `display_notify` (toast), and `display_theme` (re-applies theme, re-renders if a custom renderer was added/removed).
+`connectGlobalSSE()` opens `/stream` and drives the grid live: `surface_created` (prepends a card, removes the empty state), `surface_updated` (patches card, handles `metadata.hidden` removal and un-hide re-fetch — used by `clear-demos`), `surface_deleted` (animated removal), `surface_action`/`actions_acked` (pending-badge counts), `waiter_status` ("listening" pill), `thumb_ready` (swaps in the freshly captured PNG, replacing the card's own cover once the image has decoded), plus agent display commands: `display_navigate`, `display_notify` (toast), and `display_theme` (re-applies theme, re-renders if a custom renderer was added/removed).
 
 ## Toasts
 
