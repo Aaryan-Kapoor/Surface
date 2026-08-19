@@ -183,7 +183,7 @@ const COMMANDS: Record<string, CommandSpec> = {
   "clear-demos": command("surface clear-demos"),
   service: {
     help: SERVICE_HELP,
-    flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM, "no-skill": BOOL },
+    flags: { name: STR, port: NUM, "content-port": NUM, bind: STR, "data-dir": STR, timeout: NUM, json: BOOL, follow: BOOL, lines: NUM, "no-skill": BOOL, quiet: BOOL },
     run: async (ctx) => {
       await runService(ctx);
       // A freshly installed service should leave the machine agent-ready in the
@@ -194,9 +194,11 @@ const COMMANDS: Record<string, CommandSpec> = {
         try {
           const name = typeof ctx.flags.name === "string" ? ctx.flags.name : undefined;
           const report = syncSkill([], false, false, name);
-          console.log(`  skill      : linked for your agents`);
-          for (const l of report.links) {
-            console.log(`    ${l.mode === "failed" ? "✗" : "•"} ${l.path}${l.note ? ` (${l.note})` : ""}`);
+          if (ctx.flags.quiet !== true) {
+            console.log(`  skill      : linked for your agents`);
+            for (const l of report.links) {
+              console.log(`    ${l.mode === "failed" ? "✗" : "•"} ${l.path}${l.note ? ` (${l.note})` : ""}`);
+            }
           }
         } catch (e: any) {
           console.error(`  skill      : not linked (${e?.message || e}) — run: surface skill install`);
@@ -962,24 +964,22 @@ async function firstRunWizard(): Promise<void> {
     return;
   }
   console.log("");
-  await COMMANDS.service.run({ cmd: "service", positional: ["install"], flags: {}, multi: {} });
+  await COMMANDS.service.run({ cmd: "service", positional: ["install"], flags: { quiet: true }, multi: {} });
+
+  // One address, stated once. The server is the only thing that knows whether
+  // a SURFACE_PUBLIC_URL override or a wildcard bind makes the loopback URL
+  // the wrong one to hand a person.
+  const health = await checkHealth(3000);
+  const url = health.connection_string || "http://127.0.0.1:3000";
+
+  console.log(`  ✓ Surface ${cliVersion()} is running`);
+  console.log("  ✓ Skill linked for your agents (~/.agents/skills, ~/.claude/skills)");
   console.log("");
-  console.log("  ┌─────────────────────────────────────────────────────┐");
-  console.log("  │  Add your phone or another screen:                  │");
-  console.log("  │                                                     │");
-  console.log("  │      surface pair                                   │");
-  console.log("  │                                                     │");
-  console.log("  │  Prints a one-time URL + QR code to scan.           │");
-  console.log("  └─────────────────────────────────────────────────────┘");
+  console.log("  Open your display:");
+  console.log(`      ${url}`);
   console.log("");
-  console.log("  Useful commands:");
-  console.log("    surface service health     is it up, what version");
-  console.log("    surface service logs       one log file, every platform");
-  console.log("    surface upgrade            package + skill + service in one step");
-  console.log("    surface --help             everything else");
-  console.log("");
-  console.log("  Next: open http://127.0.0.1:3000, then tell your agent");
-  console.log("  \"give me the Surface tour\".");
+  console.log("  Add a phone or another screen   surface pair");
+  console.log("  Everything else                 surface --help");
   console.log("");
 }
 

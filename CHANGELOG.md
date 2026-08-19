@@ -14,6 +14,16 @@ All notable changes to Surface are recorded here.
   agent" bootstrap block is gone — setup links the skill itself, so there is
   nothing to paste. The new-user e2e now walks the README's user path.
 
+- **First run prints one address, not a manual.** The wizard's tail was the
+  service-install detail block, a boxed pairing call-out, a five-line command
+  list and a tour instruction — enough output that the thing the user actually
+  needs (the display URL) was lost in it. It now confirms two lines, prints the
+  display URL under "Open your display", and names `surface pair` and
+  `surface --help` on one line each. The tour is not mentioned in the terminal
+  at all: the display's own empty state already hands the user a copy-paste
+  prompt for their agent, which is where that belongs. `surface service
+  install --quiet` (new) is what the wizard uses to suppress the detail block;
+  the standalone command is unchanged.
 - **`surface` with no arguments is now the installer.** On an interactive
   terminal with no service installed, bare `surface` offers first-run setup —
   install the background service, link the agent skill — then points at

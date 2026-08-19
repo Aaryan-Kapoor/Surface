@@ -475,6 +475,7 @@ export const SERVICE_HELP = [
   "Options: --name <svc> --port <n> --content-port <n> --bind <addr> --data-dir <dir>",
   "         --timeout <s> (install/restart health gate, default 20) --json --lines <n> --follow",
   "         --no-skill (install only: skip linking SKILL.md into agent skill dirs)",
+  "         --quiet (install only: print nothing on success)",
   "",
   "install remembers its flags per --name (~/.surface/services/<name>.json);",
   "every other subcommand reuses them, so flags never need repeating.",
@@ -691,6 +692,10 @@ export async function runService({ positional, flags }: ServiceCtx): Promise<voi
         process.exit(1);
       }
       const st = b.status(cfg);
+      // --quiet: the first-run wizard prints its own two-line summary and the
+      // seven-line detail block on top of it was the bulk of what made first
+      // run unreadable. Failures above this point already exited non-zero.
+      if (flags.quiet === true) return;
       console.log(`surface service installed and healthy`);
       console.log(`  supervisor : ${st.location}`);
       // Print where it is actually listening, not where we happened to probe it.
