@@ -57,6 +57,24 @@ Surface is artifact-first and CLI-driven. The current implementation is organize
   template was deliberately removed (2026-07-05, owner decision — do not
   re-add); long-form output goes through `surface doc <file>.md --toc`.
 
+## Onboarding (decided 2026-08-19)
+
+**The user installs Surface; agents never do.** The agent-driven bootstrap
+(INSTALL_FOR_AGENTS.md as an executable routine with a state machine and
+ask-the-user checkpoints) is dead — it was finicky, and the checkpoints read
+as the model improvising. The flow is now: `npm install -g surface-display`,
+then bare `surface`, which on an interactive terminal with no service offers
+first-run setup (service + skill link) and closes by pointing at
+`surface pair` and the tour phrase. `surface service install` is the
+non-interactive equivalent and links the skill itself (`--no-skill` opts
+out — the live service test needs it because it runs against the real HOME).
+`SKILL.md` routes "the Surface tour" to `docs/TUTORIAL.md`, so a fresh agent
+knows the phrase with zero demo state in the skill. `seed-demos` was removed
+outright — the tour is the one showcase; `examples/demos/` stays because the
+empty-state idea portal serves those files at `/demos/`. `clear-demos` stays
+as the tour's cleanup. `~/.surface/install-state.json` persists only as CLI
+skill-link bookkeeping; the agent-maintained fields are vestigial.
+
 ## Verification
 
 The standard local gate is:
