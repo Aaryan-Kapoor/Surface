@@ -41,7 +41,7 @@ const down = await run(["list"], { SURFACE_URL: "http://127.0.0.1:9" });
 assert.equal(down.code, 1);
 assert.match(down.stderr, /unreachable at http:\/\/127\.0\.0\.1:9/);
 assert.match(down.stderr, /surface service health/);
-assert.match(down.stderr, /INSTALL_FOR_AGENTS\.md/);
+assert.match(down.stderr, /README\.md/);
 
 const dataDir = tmpDir("surface-cli-data-");
 const scratch = tmpDir("surface-cli-files-");

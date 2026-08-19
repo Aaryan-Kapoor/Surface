@@ -211,21 +211,16 @@ npm link           # put the local `surface` CLI on $PATH
 
 Surface is not an MCP server and there is nothing to register. The contract is
 a CLI plus a skill file, so **any agent that can run a shell command** works
-identically. Paste this to yours:
-
-```
-Read and follow https://raw.githubusercontent.com/Aaryan-Kapoor/Surface/master/INSTALL_FOR_AGENTS.md
-```
-
-It installs the CLI, starts the service, and runs `surface skill install` —
-which keeps a canonical [`SKILL.md`](SKILL.md) in your data dir and links it
-into `~/.agents/skills/` (the open skills standard: Codex CLI, Cursor, Gemini
-CLI, Copilot, Zed, Amp, Goose, OpenCode, Roo, Kilo, Windsurf) and
-`~/.claude/skills/` (Claude Code reads only its own directory).
+identically — and there is nothing to paste anywhere: setup already linked
+[`SKILL.md`](SKILL.md) into `~/.agents/skills/` (the open skills standard:
+Codex CLI, Cursor, Gemini CLI, Copilot, Zed, Amp, Goose, OpenCode, Roo, Kilo,
+Windsurf) and `~/.claude/skills/` (Claude Code reads only its own directory).
+Your agent finds the skill on its next session.
 
 That's the whole integration. [`SKILL.md`](SKILL.md) tells an agent *when* to
-reach for each verb; [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md) is the
-first-run bootstrap, including a guided tour it can narrate to a new user.
+reach for each verb; ask your agent for **the Surface tour** and it narrates
+the guided walkthrough. A harness with its own skills directory:
+`surface skill install --to <dir>` ([`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md)).
 
 ## Clicks always come back
 

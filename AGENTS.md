@@ -23,7 +23,7 @@ Universal display for AI agents. Agents push content via a single shared CLI (`s
 - `npm run test:startup-access` — pairing URL/QR helpers
 - `npx tsc --noEmit` — TypeScript check
 
-For first-time setup, follow `INSTALL_FOR_AGENTS.md` (state lives in `~/.surface/install-state.json`).
+First-time setup is the user's, not an agent's: `npm install -g surface-display && surface`. `INSTALL_FOR_AGENTS.md` is agent orientation for an already-installed machine.
 
 ## Architecture
 
@@ -40,8 +40,8 @@ For first-time setup, follow `INSTALL_FOR_AGENTS.md` (state lives in `~/.surface
 ## Agent Contract
 
 - **`SKILL.md`** (repo root) — when to use which `surface` subcommand. This is the agent-facing spec.
-- **`INSTALL_FOR_AGENTS.md`** — bootstrap routine; state in `~/.surface/install-state.json`.
-- **`docs/TUTORIAL.md`** — 7-step user onboarding the agent narrates on first install.
+- **`INSTALL_FOR_AGENTS.md`** — orientation for an installed machine (sanity check, tour routing, operating rules). Install is user-run; `~/.surface/install-state.json` holds only the CLI's own skill-link bookkeeping.
+- **`docs/TUTORIAL.md`** — the guided tour the agent narrates when the user asks for it.
 - Per-project: `.surface/` (manifests, config incl. wake-binding consent, templates) + `SURFACE.md`.
 
 ## Key Decisions

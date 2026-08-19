@@ -2,7 +2,7 @@
 # New-user end-to-end test.
 #
 # Boots a real systemd (Ubuntu 24.04) container with a fresh non-root user
-# and walks the INSTALL_FOR_AGENTS.md path exactly as a new user's agent
+# and walks the README install path exactly as a new user
 # would: user-owned Node 24, no compiler toolchain, global install,
 # `surface service install` against real systemd+logind, `surface skill
 # install`, the doc's sanity checks, demo seeding, a first surface with

@@ -688,8 +688,8 @@ async function copyToClipboard(text) {
 // ── Tutorial modal ──
 // The "Take the tour" button on the empty state opens this. It hands
 // the user a copy-pasteable prompt that activates their agent's
-// tutorial-walkthrough flow (defined in docs/TUTORIAL.md and gated by
-// INSTALL_FOR_AGENTS.md). Surface itself does not run the tutorial —
+// tutorial-walkthrough flow (defined in docs/TUTORIAL.md and routed by
+// SKILL.md's tour entry). Surface itself does not run the tutorial —
 // the agent does — so the modal is intentionally just a prompt + copy.
 
 // The header's fixed furniture.

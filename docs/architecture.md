@@ -21,7 +21,7 @@ The product thesis: **agent-generated UI doesn't mean agents writing HTML — it
 - **Service** (`server/`): Express 5 on `127.0.0.1:3000` by default; owns `~/.surface/` (DB, workspace artifacts, thumbnails) and re-serves linked files from the user's repos.
 - **CLI** (`bin/surface.ts`): the canonical client for every agent; mirrors the HTTP API.
 - **PWA** (`client/`): vanilla JS, no build step; grid of screenshot cards + full-screen surface view.
-- **SKILL.md / SURFACE.md / INSTALL_FOR_AGENTS.md**: the agent contract — global, per-project, and bootstrap respectively.
+- **SKILL.md / SURFACE.md / INSTALL_FOR_AGENTS.md**: the agent contract — global, per-project, and orientation respectively (installing is the user's job, not an agent's).
 
 ## Core concepts
 

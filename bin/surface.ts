@@ -510,8 +510,8 @@ async function call(method: string, pathname: string, body?: unknown, signal?: A
     const code = e?.cause?.code || e?.code;
     throw new Error(
       `Surface service unreachable at ${BASE}${code ? ` (${code})` : ""} — is it running? ` +
-      `Check: surface service health. Install/start: npm install -g surface-display && surface service install ` +
-      `(see INSTALL_FOR_AGENTS.md).`
+      `Check: surface service health. If Surface was never set up on this machine, ` +
+      `the user installs it: npm install -g surface-display && surface (see README.md).`
     );
   }
   const text = await res.text();

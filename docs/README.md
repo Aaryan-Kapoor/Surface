@@ -76,4 +76,4 @@ One file per feature, organized by concern. Every doc opens with a status line. 
 
 ## Agent contract files (repo root)
 
-`SKILL.md` (when/how to use the CLI — the doc agents copy into their skill dirs), `INSTALL_FOR_AGENTS.md` (bootstrap flow), `SECURITY.md` (full threat model), `USECASES.md` (vision/ideas).
+`SKILL.md` (when/how to use the CLI — the doc agents copy into their skill dirs), `INSTALL_FOR_AGENTS.md` (agent orientation; install is user-run), `SECURITY.md` (full threat model), `USECASES.md` (vision/ideas).

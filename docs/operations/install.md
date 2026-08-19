@@ -134,7 +134,7 @@ come back within two minutes the notice says so and points at
 `surface upgrade` and `surface upgrade --check` from a terminal remain the
 canonical path and are unchanged.
 
-The intended posture is to run Surface **once** as this user service — agents reuse the running instance rather than starting a second one (`INSTALL_FOR_AGENTS.md`, operating rules). Agents must never improvise a hidden background server when an install fails; recording `failed` and stopping is the sanctioned outcome.
+The intended posture is to run Surface **once** as this user service — agents reuse the running instance rather than starting a second one (`INSTALL_FOR_AGENTS.md`, operating rules). Agents must never improvise a hidden background server when an install fails; reporting the failure to the user is the sanctioned outcome.
 
 ## Environment variables
 
@@ -189,17 +189,11 @@ Pairing URL: http://<host>:<port>/pair#token=UKKD5N47XXZ8
 
 The token rides in the URL **fragment**, never the query string. A wildcard bind (`0.0.0.0`) resolves to a concrete interface address instead of printing `0.0.0.0` (`resolveConnectionHost`, `server/startupAccess.ts`). The terminal QR is rendered by `server/qrCode.ts` via `renderTerminalQrCode`. `SURFACE_PUBLIC_URL` overrides the printed origin. See [device pairing](../auth/device-pairing.md) and [security.md](security.md).
 
-## Agent bootstrap (`INSTALL_FOR_AGENTS.md`)
+## Agent orientation (`INSTALL_FOR_AGENTS.md`)
 
-The canonical first-run routine for agents. Install state lives at **`~/.surface/install-state.json`** — a JSON file the agent reads first and updates as it progresses (the doc itself stays clean; older installs that kept the state as YAML frontmatter inside `INSTALL_FOR_AGENTS.md` migrate their values into the JSON file). Fields:
+Installing is the user's job: `npm install -g surface-display && surface` (the first run offers setup interactively and links the skill; `surface service install` is the non-interactive equivalent). `INSTALL_FOR_AGENTS.md` is what an agent reads on an already-installed machine: the sanity check, tour routing ("the Surface tour" → `docs/TUTORIAL.md`), operating rules, and skill placement for non-default harnesses.
 
-- `service` — `pending | running | not_installed | failed` (is the service reachable on `127.0.0.1:3000`).
-- `skill_saved_to` — absolute path where `SKILL.md` was copied into the agent's skills directory, or null.
-- `tutorial` — `pending | in_progress | complete | skipped`.
-- `surface_version`, `installed_at` — stamped on first complete install.
-- `notes` — free-form for the next run.
-
-The flow: check the service with `surface service health` (offer `surface service install` if absent — never an improvised background process), copy `SKILL.md` into the agent's skills directory, optionally run the tutorial, then stamp the state. An early-exit clause lets re-runs skip when the service is running, `SKILL.md` is in place, and the tutorial is done/skipped.
+**`~/.surface/install-state.json`** persists, but only as the CLI's own bookkeeping: `surface skill install` stamps `skill_saved_to` / `skill_sha256` / `skill_links` there so upgrades can tell their own stale copies from user edits (`bin/upgrade.ts`). Agents never write it. The old agent-maintained fields (`service`, `tutorial`, `surface_version`, `installed_at`, `notes`) are vestigial and ignored.
 
 ## Demo cleanup
 
@@ -211,7 +205,7 @@ The bundled examples in `examples/demos/` back the empty-state idea portal in th
 
 ## Tutorial
 
-`docs/TUTORIAL.md` is the seven-step user-facing onboarding script the agent narrates on first install. The PWA's "Start Tutorial" button hands the user a copy-paste prompt pointing at it (`client/app.js`).
+`docs/TUTORIAL.md` is the seven-step user-facing onboarding script the agent narrates when the user asks for **the Surface tour**. The PWA's "Start Tutorial" button hands the user a copy-paste prompt pointing at it (`client/app.js`).
 
 ## Related
 - [security.md](security.md) — trust model, exposing beyond loopback

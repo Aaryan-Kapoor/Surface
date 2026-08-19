@@ -4,6 +4,16 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- **Installing Surface is the user's job now, in every document.**
+  `INSTALL_FOR_AGENTS.md` is no longer a bootstrap routine an agent executes —
+  it is orientation for an agent landing on an installed machine: sanity
+  check, tour routing, operating rules, skill placement for non-default
+  harnesses. The agent-maintained half of `~/.surface/install-state.json`
+  (`service`/`tutorial`/`installed_at`/`notes`) is dead; the file remains as
+  the CLI's own skill-link bookkeeping. The README's "paste this to your
+  agent" bootstrap block is gone — setup links the skill itself, so there is
+  nothing to paste. The new-user e2e now walks the README's user path.
+
 - **`surface` with no arguments is now the installer.** On an interactive
   terminal with no service installed, bare `surface` offers first-run setup —
   install the background service, link the agent skill — then points at
