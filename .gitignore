@@ -38,3 +38,8 @@ video/**/*.aac
 structures_symmetry_symbols.*
 planning/
 audit/
+
+# Second-generation skill videos: five autonomous agents' workspaces, raw takes
+# and renders. Only the finished out/*.gif is worth keeping, and that gets added
+# deliberately, never by `git add -A`.
+video/gen2/
