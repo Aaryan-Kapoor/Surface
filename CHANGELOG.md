@@ -2,7 +2,7 @@
 
 All notable changes to Surface are recorded here.
 
-## Unreleased
+## 0.2.4 - 2026-08-19
 
 - **Installing Surface is the user's job now, in every document.**
   `INSTALL_FOR_AGENTS.md` is no longer a bootstrap routine an agent executes —

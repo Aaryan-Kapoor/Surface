@@ -1,6 +1,6 @@
 {
   "name": "surface-display",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "A two-way interaction primitive for AI agents. Agents render live UI onto every screen you own, and every tap lands back in their context as intent.",
   "license": "MIT",
   "type": "module",
