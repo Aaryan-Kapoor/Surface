@@ -4,6 +4,25 @@ All notable changes to Surface are recorded here.
 
 ## Unreleased
 
+- **Fixed: the pairing page 404'd for anyone using a Node version manager.**
+  `GET /pair` served `client/pair.html` with `res.sendFile` and no options.
+  With no `root`, `send` applies its default `dotfiles: "ignore"` to *every*
+  segment of the absolute path — including segments of the install location,
+  which the request never chose. Node from nvm, fnm, volta or asdf lives under
+  `~/.nvm`, `~/.fnm`, `~/.volta`, `~/.asdf`, so a global install put the file
+  behind a dot segment and the route answered 404 with nothing missing and
+  nothing unreadable. The URL `surface pair` prints is the only way to add a
+  phone or a second screen, so for those users the feature did not exist.
+  Broken in every release through 0.2.4. It survived because CI runners and
+  containers install Node at `/usr/local`, which has no dot segment — every
+  test environment was immune, and only a real version-manager install shows
+  it. This is the same defect already fixed for artifact files under
+  `~/.surface` (`SEND_FILE_OPTS`); the `/pair` route was missed.
+- `test:source-hygiene` now asserts that every `res.sendFile` in `server/`
+  passes a dotfiles option. A functional test cannot catch this without a
+  dot-path install, so the call shape is asserted instead — which covers the
+  next call site rather than only this one.
+
 - **Test harness: a slow CI runner no longer looks like a broken server.**
   `waitForReady` had a fixed 15s boot budget and no way to tell a slow start
   from a dead process, so it failed release 0.2.4's master run on a healthy

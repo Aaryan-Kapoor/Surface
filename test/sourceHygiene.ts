@@ -162,6 +162,45 @@ check(
   );
 }
 
+// ── every res.sendFile must opt out of the dotfile check ──
+//
+// `send` defaults `dotfiles: "ignore"`, and with no `root` it applies that to
+// EVERY segment of the absolute path — including segments the request never
+// chose. Surface serves two kinds of file by absolute path, and both live
+// behind a dot on ordinary machines: artifacts under `~/.surface`, and the
+// package's own `client/pair.html` when Node came from nvm/fnm/volta/asdf
+// (`~/.nvm/...`). Both 404'd with nothing missing and nothing unreadable.
+//
+// The artifact case was found and fixed; the `/pair` route was missed and
+// shipped broken through 0.2.4 — the pairing page, which is the only way to
+// add a phone, 404'd for every version-manager user. CI never saw it because
+// runners install Node at /usr/local, which has no dot segment. No functional
+// test can catch this without a dot-path install, so assert the call shape
+// instead: it is cheap, and it covers the next call site rather than this one.
+{
+  const offenders: string[] = [];
+  for (const rel of files.filter((f) => f.startsWith("server/") && f.endsWith(".ts"))) {
+    let text: string;
+    try {
+      text = fs.readFileSync(path.join(ROOT, rel), "utf8");
+    } catch {
+      continue;
+    }
+    // Match a sendFile call through to its closing paren on the same statement.
+    for (const m of text.matchAll(/res\.sendFile\(([^;]*?)\);/gs)) {
+      const call = m[1];
+      if (/dotfiles/.test(call) || /SEND_FILE_OPTS/.test(call)) continue;
+      const line = text.slice(0, m.index).split("\n").length;
+      offenders.push(`${rel}:${line}`);
+    }
+  }
+  check(
+    "every res.sendFile passes a dotfiles option (a dot in the path is not a missing file)",
+    offenders.length === 0,
+    offenders.join("; "),
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} source-hygiene check(s) failed`);
   process.exit(1);

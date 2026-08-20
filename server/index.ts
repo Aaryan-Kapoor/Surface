@@ -316,7 +316,16 @@ app.get("/healthz", (req, res) => {
 });
 
 app.get("/pair", (_req, res) => {
-  res.sendFile(path.join(__dirname, "..", "client", "pair.html"));
+  // `dotfiles: "allow"` is load-bearing, not decoration. With no `root`, `send`
+  // checks every segment of the absolute path for a leading dot and 404s the
+  // request — and the package's own path is the one being checked here. Node
+  // installed by nvm/fnm/volta/asdf lives under `~/.nvm`, `~/.fnm`, `~/.volta`,
+  // `~/.asdf`, so a global install put this file behind a dot segment and the
+  // pairing page 404'd for anyone using a version manager. The pairing URL is
+  // the only way to add a phone, so that was the whole feature, gone. It
+  // survived because CI and containers install Node at /usr/local, which has no
+  // dot segment. Same defect, same fix as SEND_FILE_OPTS in routes/artifacts.ts.
+  res.sendFile(path.join(__dirname, "..", "client", "pair.html"), { dotfiles: "allow" });
 });
 
 app.use(router);
