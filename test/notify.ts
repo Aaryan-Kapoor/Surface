@@ -55,7 +55,7 @@ const call = makeClient(base);
 
 try {
   server = spawnServer(port, dataDir, {}, contentPort);
-  await waitForReady(base);
+  await waitForReady(base, undefined, undefined, server);
 
   const created = await call("POST", "/artifacts", {
     body: { title: "Notify host", mime: "text/html", content: "<h1>host</h1>" },
@@ -303,7 +303,7 @@ try {
 
   await killServer(server, port);
   server = spawnServer(port, dataDir, { SURFACE_TRUST_LOOPBACK: "0" }, contentPort);
-  await waitForReady(base);
+  await waitForReady(base, undefined, undefined, server);
 
   const targeted = await call("POST", "/display/notify", {
     token: SYS,

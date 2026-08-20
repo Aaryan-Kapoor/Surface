@@ -60,7 +60,7 @@ async function main() {
     SURFACE_CONTENT_ORIGIN: "http://content.test:4555",
   }, CONTENT_PORT);
 
-  await waitForReady(APP, "/display/config");
+  await waitForReady(APP, "/display/config", undefined, server);
   await waitForReady(CONTENT, "/display/config"); // the second listener must be up too
   console.log("\n=== Content-origin isolation Tests ===\n");
 

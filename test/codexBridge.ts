@@ -333,7 +333,7 @@ async function main() {
     SURFACE_CODEX_AUTOSTART: "0",
     SURFACE_TEST_CODEX_TURN_WATCH_MS: "8000",
   }, ports.contentPort);
-  await waitForReady(BASE, "/artifacts");
+  await waitForReady(BASE, "/artifacts", undefined, server);
 
   const liveCodexBin = path.join(dataDir, "codex-live-stand-in");
   fs.copyFileSync("/bin/sleep", liveCodexBin);

@@ -2,6 +2,19 @@
 
 All notable changes to Surface are recorded here.
 
+## Unreleased
+
+- **Test harness: a slow CI runner no longer looks like a broken server.**
+  `waitForReady` had a fixed 15s boot budget and no way to tell a slow start
+  from a dead process, so it failed release 0.2.4's master run on a healthy
+  server while the identical job passed on the concurrent tag run and on every
+  other platform. The budget is now 60s (`SURFACE_TEST_READY_TIMEOUT_MS`
+  overrides), and it takes the child handle: a server that exits during boot is
+  reported the instant it dies, with its exit code and stderr tail, rather than
+  waiting out the clock. Measured on a deliberately fatal start — 322ms with
+  the real reason, versus 15s of "did not become ready". Test-only; the
+  published package contains no test files.
+
 ## 0.2.4 - 2026-08-19
 
 - **Installing Surface is the user's job now, in every document.**

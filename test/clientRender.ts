@@ -427,7 +427,7 @@ try {
   const base = `http://127.0.0.1:${port}`;
   const contentBase = `http://127.0.0.1:${contentPort}`;
   server = spawnServer(port, dataDir, {}, contentPort);
-  await waitForReady(base, "/display/config");
+  await waitForReady(base, "/display/config", undefined, server);
   await waitForReady(contentBase, "/display/config");
   const appReq = makeClient(base);
   const contentReq = makeClient(contentBase);

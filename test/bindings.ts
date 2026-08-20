@@ -79,7 +79,7 @@ async function main() {
   BASE = `http://127.0.0.1:${PORT}`;
   call = makeClient(BASE);
   server = spawnServer(PORT, dataDir, {}, ports.contentPort);
-  await waitForReady(BASE, "/artifacts");
+  await waitForReady(BASE, "/artifacts", undefined, server);
   console.log("\n=== Wake-binding (revival path) Tests ===\n");
 
   const id = "wake-test-surface";

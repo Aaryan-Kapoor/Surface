@@ -163,7 +163,7 @@ const BASE = `http://127.0.0.1:${ports.port}`;
 try {
   server = spawnServer(ports.port, dataDir, {}, ports.contentPort);
   call = makeClient(BASE);
-  await waitForReady(BASE, "/artifacts");
+  await waitForReady(BASE, "/artifacts", undefined, server);
 
   await createSurface("dispatch-a", projectA);
   await createSurface("dispatch-b", projectB);
@@ -579,7 +579,7 @@ try {
     let w: Waiter;
     try {
       const shortBase = `http://127.0.0.1:${p.port}`;
-      await waitForReady(shortBase, "/artifacts");
+      await waitForReady(shortBase, "/artifacts", undefined, short);
       const created = await makeClient(shortBase)("POST", "/artifacts", {
         body: { id: "restart-me", title: "restart-me", kind: "html", mime: "text/html", content: "<h1>x</h1>" },
       });

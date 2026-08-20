@@ -96,16 +96,60 @@ export function spawnServer(
   return child;
 }
 
-export async function waitForReady(base: string, pathName = "/api/auth/session", timeoutMs = 15000): Promise<void> {
+// Boot budget. A `tsx` cold start plus migrations is comfortably under a second
+// on an idle machine, but CI runners are not idle: two workflow runs of the same
+// commit can execute concurrently on the same host, and 15s of wall clock has
+// been observed to expire mid-boot on a healthy server (release 0.2.4, master
+// run 32318938374 — same commit passed on every other platform and on the tag
+// run's identical job). The budget is generous because the cost of it being too
+// small is a red X on green code, while the cost of it being too large is only
+// paid when something is genuinely broken — and the `exited` check below makes
+// that case fail immediately rather than waiting this out.
+const READY_TIMEOUT_MS = Number(process.env.SURFACE_TEST_READY_TIMEOUT_MS || 60000);
+
+/**
+ * Wait for a spawned server to answer.
+ *
+ * Pass `child` wherever one is available: a server that died during boot (port
+ * collision, migration throw, syntax error) is then reported the instant it
+ * exits, with its exit code and whatever it wrote to stderr — instead of
+ * timing out and blaming the clock. Without it this can only report "did not
+ * become ready", which is true of both a slow boot and a corpse.
+ */
+export async function waitForReady(
+  base: string,
+  pathName = "/api/auth/session",
+  timeoutMs = READY_TIMEOUT_MS,
+  child?: ChildProcess,
+): Promise<void> {
+  let exit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
+  let stderr = "";
+  if (child) {
+    child.once("exit", (code, signal) => { exit = { code, signal }; });
+    // Keep the tail only: a server that fails to boot says why in its last few
+    // lines, and the rest is startup noise nobody reads.
+    child.stderr?.on("data", (d) => { stderr = (stderr + String(d)).slice(-2000); });
+  }
+
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    if (exit) {
+      const { code, signal } = exit as { code: number | null; signal: NodeJS.Signals | null };
+      throw new Error(
+        `server at ${base} exited during boot (${signal ? `signal ${signal}` : `code ${code}`})` +
+        (stderr.trim() ? `\n--- stderr ---\n${stderr.trim()}` : ""),
+      );
+    }
     try {
       const res = await fetch(`${base}${pathName}`, { signal: AbortSignal.timeout(500) });
       if (res.status < 500) return;
     } catch {}
     await sleep(150);
   }
-  throw new Error(`server did not become ready at ${base}`);
+  throw new Error(
+    `server did not become ready at ${base} within ${timeoutMs}ms` +
+    (stderr.trim() ? `\n--- stderr ---\n${stderr.trim()}` : ""),
+  );
 }
 
 /**

@@ -49,7 +49,7 @@ const ports = await isolatedPorts();
 const base = `http://127.0.0.1:${ports.port}`;
 const server = spawnServer(ports.port, dataDir, {}, ports.contentPort);
 try {
-  await waitForReady(base, "/artifacts");
+  await waitForReady(base, "/artifacts", undefined, server);
   const env = { SURFACE_URL: base };
   const bytesPath = path.join(scratch, "bytes.bin");
   fs.writeFileSync(bytesPath, Buffer.from([0, 127, 128, 255]));

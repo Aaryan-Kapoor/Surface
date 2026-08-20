@@ -26,7 +26,7 @@ const call = makeClient(base);
 const server = spawnServer(port, dataDir, {}, contentPort);
 
 try {
-  await waitForReady(base);
+  await waitForReady(base, undefined, undefined, server);
 
   const made = await call("POST", "/artifacts", {
     body: {

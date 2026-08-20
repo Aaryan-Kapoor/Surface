@@ -91,7 +91,7 @@ async function main() {
   server = spawnServer(serverPort, dataDir, {
     SURFACE_CHROME: path.join(dataDir, "no-such-chrome"),
   }, ports.contentPort);
-  await waitForReady(SURFACE_URL, "/artifacts");
+  await waitForReady(SURFACE_URL, "/artifacts", undefined, server);
 
   const suffix = Date.now().toString(36);
   const htmlId = `artifact-test-html-${suffix}`;
@@ -729,7 +729,7 @@ async function gracefulShutdownWithWarmChrome(): Promise<void> {
   const base = `http://127.0.0.1:${ports.port}`;
   const child = spawnServer(ports.port, shutdownDataDir, {}, ports.contentPort);
   try {
-    await waitForReady(base, "/artifacts");
+    await waitForReady(base, "/artifacts", undefined, child);
     const shutdownReq = makeClient(base);
     await shutdownReq("POST", "/artifacts", {
       body: {
