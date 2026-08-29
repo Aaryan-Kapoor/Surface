@@ -2,7 +2,7 @@
 
 All notable changes to Surface are recorded here.
 
-## Unreleased
+## 0.2.5 - 2026-08-29
 
 - **Fixed: the pairing page 404'd for anyone using a Node version manager.**
   `GET /pair` served `client/pair.html` with `res.sendFile` and no options.
